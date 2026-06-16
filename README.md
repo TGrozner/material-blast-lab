@@ -70,6 +70,14 @@ The score appears after the shot settles for a few seconds:
 - `src/input.ts`: mouse aiming and keyboard shortcuts
 - `src/ui.ts`: HUD and final score panel
 
-## CI
+## CI/CD
 
 GitHub Actions runs `npm ci` and `npm run build` on pushes and pull requests targeting `main`.
+
+GitHub Pages deployment runs on pushes to `main` and from manual workflow dispatch. The deploy workflow builds the Vite app with `BASE_PATH=/material-blast-lab/`, uploads `dist`, and deploys it through the `github-pages` environment.
+
+Published site:
+
+```text
+https://tgrozner.github.io/material-blast-lab/
+```
