@@ -31,7 +31,11 @@ class Game {
   private readonly ui: GameUI;
   private readonly input: InputController;
   private readonly timer = new THREE.Timer();
+  private readonly aimRaycaster = new THREE.Raycaster();
+  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly aimPoint = new THREE.Vector3(0, 0, -2.6);
   private readonly arenaObjects: THREE.Object3D[] = [];
+  private readonly levelDecorations: THREE.Object3D[] = [];
   private readonly triggeredIds = new Set<number>();
 
   private selectedProjectile: ProjectileId = "slug";
@@ -80,7 +84,9 @@ class Game {
       reset: () => this.reset(),
       clearDebris: () => this.clearDebris(),
       selectProjectile: (id) => this.selectProjectile(id),
-      nextLevel: () => this.nextLevel()
+      nextLevel: () => this.nextLevel(),
+      adjustPower: (delta) => this.adjustPower(delta),
+      adjustSize: (delta) => this.adjustSize(delta)
     });
 
     this.input = new InputController(this.renderer.domElement, {
@@ -99,6 +105,7 @@ class Game {
     this.loadLevel();
     this.resize();
     window.addEventListener("resize", () => this.resize());
+    window.visualViewport?.addEventListener("resize", () => this.resize());
     window.addEventListener("beforeunload", () => this.input.dispose());
   }
 
@@ -129,6 +136,8 @@ class Game {
       bodyCount: this.physics.getDynamicBodyCount(),
       levelName: this.currentLevel().name,
       levelDescription: this.currentLevel().description,
+      objective: this.currentLevel().objective,
+      protectedBrief: this.currentLevel().protectedBrief,
       status: this.status,
       score: this.score
     });
@@ -139,7 +148,7 @@ class Game {
     const active = this.projectiles.getActive();
     if (this.phase === "aim") {
       this.cannon.setTrajectoryVisible(true);
-      this.cameraRig.setCannonView(this.cannon.getMuzzlePosition(), this.cannon.getDirection());
+      this.cameraRig.setCityAimView(this.cannon.getCameraAnchor());
       return;
     }
 
@@ -160,7 +169,7 @@ class Game {
         this.score = this.scoreTracker.finalize(this.physics);
         this.phase = "scored";
         this.scoreRevealAt = null;
-        this.status = `Trial scored: ${this.score.totalScore}. R resets, Tab changes chamber.`;
+        this.status = `${this.score.containmentRating}: ${this.score.totalScore}. Retry to rebuild the city block.`;
       }
     }
   }
@@ -197,20 +206,25 @@ class Game {
       roughness: 0.72,
       metalness: 0.05
     });
+    const cannonDeckMaterial = new THREE.MeshStandardMaterial({
+      color: 0x27313a,
+      roughness: 0.76,
+      metalness: 0.08
+    });
 
     const floor = this.physics.addStaticBox({
       label: "Lab floor",
       position: new THREE.Vector3(0, -0.1, 0),
-      size: new THREE.Vector3(18, 0.2, 18),
+      size: new THREE.Vector3(24, 0.2, 24),
       material: floorMaterial
     });
     this.arenaObjects.push(floor);
 
     const wallSpecs = [
-      { position: new THREE.Vector3(0, 0.75, -9), size: new THREE.Vector3(18, 1.5, 0.35) },
-      { position: new THREE.Vector3(0, 0.75, 9), size: new THREE.Vector3(18, 1.5, 0.35) },
-      { position: new THREE.Vector3(-9, 0.75, 0), size: new THREE.Vector3(0.35, 1.5, 18) },
-      { position: new THREE.Vector3(9, 0.75, 0), size: new THREE.Vector3(0.35, 1.5, 18) }
+      { position: new THREE.Vector3(0, 0.75, -12), size: new THREE.Vector3(24, 1.5, 0.35) },
+      { position: new THREE.Vector3(0, 0.75, 12), size: new THREE.Vector3(24, 1.5, 0.35) },
+      { position: new THREE.Vector3(-12, 0.75, 0), size: new THREE.Vector3(0.35, 1.5, 24) },
+      { position: new THREE.Vector3(12, 0.75, 0), size: new THREE.Vector3(0.35, 1.5, 24) }
     ];
     for (const spec of wallSpecs) {
       const wall = this.physics.addStaticBox({ label: "Arena wall", material: wallMaterial, ...spec });
@@ -218,7 +232,27 @@ class Game {
       this.arenaObjects.push(wall);
     }
 
-    const grid = new THREE.GridHelper(18, 36, 0x3f8da0, 0x26333a);
+    const cannonDeck = this.physics.addStaticBox({
+      label: "Cannon overlook deck",
+      position: new THREE.Vector3(0, 0.8, 10.0),
+      size: new THREE.Vector3(4.7, 1.6, 3.1),
+      material: cannonDeckMaterial
+    });
+    cannonDeck.castShadow = true;
+    this.arenaObjects.push(cannonDeck);
+
+    for (const x of [-2.42, 2.42]) {
+      const curb = this.physics.addStaticBox({
+        label: "Cannon deck curb",
+        position: new THREE.Vector3(x, 1.73, 10.0),
+        size: new THREE.Vector3(0.18, 0.26, 3.0),
+        material: cannonDeckMaterial
+      });
+      curb.castShadow = true;
+      this.arenaObjects.push(curb);
+    }
+
+    const grid = new THREE.GridHelper(24, 48, 0x3f8da0, 0x26333a);
     grid.position.y = 0.012;
     grid.material.transparent = true;
     grid.material.opacity = 0.35;
@@ -228,6 +262,7 @@ class Game {
 
   private loadLevel(): void {
     this.physics.clearDynamic();
+    this.clearLevelDecorations();
     this.projectiles.clearActive();
     this.triggeredIds.clear();
     this.score = null;
@@ -238,14 +273,21 @@ class Game {
     this.currentLevel().setup({
       physics: this.physics,
       materials: this.materials,
-      bioGore: this.bioGore
+      bioGore: this.bioGore,
+      addDecoration: (object) => this.addDecoration(object)
     });
-    this.status = `${this.currentLevel().name}: choose a projectile and make one shot count.`;
+    this.status = `${this.currentLevel().name}: ${this.currentLevel().objective}`;
   }
 
   private aim(pointer: THREE.Vector2): void {
     if (this.phase === "aim") {
-      this.cannon.aim(pointer);
+      this.aimRaycaster.setFromCamera(pointer, this.cameraRig.camera);
+      if (this.aimRaycaster.ray.intersectPlane(this.groundPlane, this.aimPoint)) {
+        this.aimPoint.y = 0.16;
+        this.cannon.aimAtWorldPoint(this.aimPoint);
+      } else {
+        this.cannon.aim(pointer);
+      }
     }
   }
 
@@ -269,7 +311,7 @@ class Game {
     const current = vectorFromRapier(active.object.body.translation());
     const previous = active.previousPosition.clone();
 
-    if (current.y < 0.18 || Math.abs(current.x) > 8.6 || current.z < -8.6 || current.z > 9.1) {
+    if (current.y < 0.18 || Math.abs(current.x) > 11.6 || current.z < -11.6 || current.z > 11.9) {
       active.previousPosition.copy(current);
       return { point: current, object: null };
     }
@@ -479,7 +521,21 @@ class Game {
   }
 
   private resize(): void {
-    this.cameraRig.resize(window.innerWidth, window.innerHeight);
+    const viewport = window.visualViewport;
+    this.cameraRig.resize(Math.round(viewport?.width ?? window.innerWidth), Math.round(viewport?.height ?? window.innerHeight));
+  }
+
+  private addDecoration(object: THREE.Object3D): void {
+    this.scene.add(object);
+    this.levelDecorations.push(object);
+  }
+
+  private clearLevelDecorations(): void {
+    for (const object of this.levelDecorations) {
+      this.scene.remove(object);
+      disposeObject(object);
+    }
+    this.levelDecorations.length = 0;
   }
 }
 
@@ -501,6 +557,18 @@ function distancePointToSegment(point: THREE.Vector3, a: THREE.Vector3, b: THREE
   }
   const t = THREE.MathUtils.clamp(point.clone().sub(a).dot(segment) / lengthSq, 0, 1);
   return point.distanceTo(a.add(segment.multiplyScalar(t)));
+}
+
+function disposeObject(object: THREE.Object3D): void {
+  object.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry.dispose();
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const material of materials) {
+        material.dispose();
+      }
+    }
+  });
 }
 
 boot().catch((error: unknown) => {

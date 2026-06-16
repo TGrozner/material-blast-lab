@@ -19,7 +19,7 @@ export class Cannon {
   );
   private readonly trajectory: THREE.Line;
   private readonly trajectoryPositions = new Float32Array(24 * 3);
-  private readonly basePosition = new THREE.Vector3(0, 0.65, 8.15);
+  private readonly basePosition = new THREE.Vector3(0, 1.98, 10.35);
 
   private yaw = 0;
   private pitch = -0.03;
@@ -82,6 +82,19 @@ export class Cannon {
     this.updateTransforms();
   }
 
+  aimAtWorldPoint(point: THREE.Vector3): void {
+    const origin = this.group.position.clone().add(new THREE.Vector3(0, 0.42, 0));
+    const direction = point.clone().sub(origin);
+    direction.y = Math.max(-1.2, Math.min(2.4, direction.y));
+    if (direction.lengthSq() < 0.001) {
+      return;
+    }
+    direction.normalize();
+    this.yaw = THREE.MathUtils.clamp(Math.atan2(direction.x, -direction.z), -0.72, 0.72);
+    this.pitch = THREE.MathUtils.clamp(Math.asin(direction.y), -0.18, 0.34);
+    this.updateTransforms();
+  }
+
   update(deltaSeconds: number, projectile: ProjectileDefinition, powerScale: number): void {
     this.recoil = THREE.MathUtils.damp(this.recoil, 0, 9, deltaSeconds);
     this.charge = (this.charge + deltaSeconds * 2.2) % 1;
@@ -117,7 +130,7 @@ export class Cannon {
   }
 
   private updateTransforms(): void {
-    this.group.rotation.y = this.yaw;
+    this.group.rotation.y = -this.yaw;
     this.barrelPivot.rotation.x = this.pitch;
   }
 

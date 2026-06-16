@@ -4,6 +4,7 @@ import type { MaterialDefinition, MaterialId } from "./materialCatalog";
 
 export type PhysicsCategory = "structure" | "bio" | "trigger" | "projectile" | "debris";
 export type TriggerType = "shockCanister" | "gelTank" | "springPad";
+export type ScoreRole = "target" | "protected" | "chain" | "neutral";
 
 export interface PhysicsObject {
   id: number;
@@ -20,6 +21,8 @@ export interface PhysicsObject {
   category: PhysicsCategory;
   triggerType?: TriggerType;
   scoreValue: number;
+  scoreRole: ScoreRole;
+  zoneId?: string;
   radius: number;
   hasTriggered: boolean;
 }
@@ -39,6 +42,8 @@ interface DynamicBoxOptions {
   category?: PhysicsCategory;
   triggerType?: TriggerType;
   scoreValue?: number;
+  scoreRole?: ScoreRole;
+  zoneId?: string;
   density?: number;
   friction?: number;
   restitution?: number;
@@ -65,6 +70,8 @@ interface DynamicSphereOptions {
   category?: PhysicsCategory;
   triggerType?: TriggerType;
   scoreValue?: number;
+  scoreRole?: ScoreRole;
+  zoneId?: string;
   density?: number;
   friction?: number;
   restitution?: number;
@@ -171,6 +178,8 @@ export class PhysicsWorld {
       category: options.category ?? (options.isDebris ? "debris" : "structure"),
       triggerType: options.triggerType,
       scoreValue: options.scoreValue ?? scoreValueForSize(options.size),
+      scoreRole: options.scoreRole ?? defaultScoreRole(options.category, options.triggerType, options.isDebris),
+      zoneId: options.zoneId,
       radius: options.size.length() * 0.5,
       hasTriggered: false
     };
@@ -230,6 +239,8 @@ export class PhysicsWorld {
       category: options.category ?? (options.isDebris ? "debris" : "structure"),
       triggerType: options.triggerType,
       scoreValue: options.scoreValue ?? scoreValueForSize(dimensions),
+      scoreRole: options.scoreRole ?? defaultScoreRole(options.category, options.triggerType, options.isDebris),
+      zoneId: options.zoneId,
       radius: options.radius,
       hasTriggered: false
     };
@@ -269,6 +280,12 @@ export class PhysicsWorld {
     }
     this.scene.remove(object.mesh);
     object.mesh.geometry.dispose();
+    if (object.mesh.userData.disposeMaterial === true) {
+      const materials = Array.isArray(object.mesh.material) ? object.mesh.material : [object.mesh.material];
+      for (const material of materials) {
+        material.dispose();
+      }
+    }
     this.world.removeRigidBody(object.body);
     this.objects.delete(id);
   }
@@ -333,4 +350,17 @@ export class PhysicsWorld {
 
 function scoreValueForSize(size: THREE.Vector3): number {
   return Math.round(Math.max(1, size.x * size.y * size.z * 45));
+}
+
+function defaultScoreRole(category?: PhysicsCategory, triggerType?: TriggerType, isDebris?: boolean): ScoreRole {
+  if (isDebris) {
+    return "neutral";
+  }
+  if (triggerType) {
+    return "chain";
+  }
+  if (category === "projectile") {
+    return "neutral";
+  }
+  return "target";
 }

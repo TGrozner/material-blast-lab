@@ -3,34 +3,41 @@ import { PhysicsWorld } from "./physics";
 import type { ProjectileDefinition } from "./projectile";
 
 export interface ScoreBreakdown {
-  structureDamage: number;
-  materialChaos: number;
-  bioGelSplash: number;
+  targetDamage: number;
+  cityChaos: number;
+  contaminationPurge: number;
   chainReactionBonus: number;
+  protectedPenalty: number;
   remainingDebrisMotion: number;
+  containmentRating: string;
   totalScore: number;
   shotName: string;
 }
 
 export class ShotScoreTracker {
-  private structureDamage = 0;
-  private materialChaos = 0;
-  private bioGelSplash = 0;
+  private targetDamage = 0;
+  private cityChaos = 0;
+  private contaminationPurge = 0;
   private chainReactionBonus = 0;
+  private protectedPenalty = 0;
   private currentProjectile: ProjectileDefinition | null = null;
+  private readonly scoredObjects = new Map<number, { positive: number; penalty: number }>();
 
   beginShot(projectile: ProjectileDefinition): void {
-    this.structureDamage = 0;
-    this.materialChaos = 0;
-    this.bioGelSplash = 0;
+    this.targetDamage = 0;
+    this.cityChaos = 0;
+    this.contaminationPurge = 0;
     this.chainReactionBonus = 0;
+    this.protectedPenalty = 0;
     this.currentProjectile = projectile;
+    this.scoredObjects.clear();
   }
 
   addExplosion(result: ExplosionResult, extraBioSplash = 0): void {
-    this.structureDamage += result.structureDamage;
-    this.materialChaos += result.materialChaos;
-    this.bioGelSplash += result.bioGelSplash + extraBioSplash;
+    this.targetDamage += this.dedupPositive(result);
+    this.cityChaos += result.materialChaos;
+    this.contaminationPurge += result.bioGelSplash + extraBioSplash;
+    this.protectedPenalty += this.dedupPenalty(result);
   }
 
   addChainReaction(points: number): void {
@@ -38,7 +45,7 @@ export class ShotScoreTracker {
   }
 
   addBioGelSplash(points: number): void {
-    this.bioGelSplash += points;
+    this.contaminationPurge += points;
   }
 
   finalize(physics: PhysicsWorld): ScoreBreakdown {
@@ -46,7 +53,7 @@ export class ShotScoreTracker {
     const remainingDebrisMotion = Math.round(
       physics
         .getDynamicObjects()
-        .filter((object) => object.category !== "projectile")
+        .filter((object) => object.category !== "projectile" && object.scoreRole !== "protected")
         .reduce((sum, object) => {
           const velocity = object.body.linvel();
           const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
@@ -55,19 +62,74 @@ export class ShotScoreTracker {
     );
     const modifier = projectile?.scoreModifier ?? 1;
     const raw =
-      this.structureDamage +
-      this.materialChaos +
-      this.bioGelSplash +
+      this.targetDamage +
+      this.cityChaos +
+      this.contaminationPurge +
       this.chainReactionBonus +
-      remainingDebrisMotion;
+      remainingDebrisMotion -
+      this.protectedPenalty;
+    const totalScore = Math.max(0, Math.round(raw * modifier));
+    const protectedPenalty = Math.round(this.protectedPenalty * modifier);
     return {
-      structureDamage: Math.round(this.structureDamage * modifier),
-      materialChaos: Math.round(this.materialChaos * modifier),
-      bioGelSplash: Math.round(this.bioGelSplash * modifier),
+      targetDamage: Math.round(this.targetDamage * modifier),
+      cityChaos: Math.round(this.cityChaos * modifier),
+      contaminationPurge: Math.round(this.contaminationPurge * modifier),
       chainReactionBonus: Math.round(this.chainReactionBonus * modifier),
+      protectedPenalty,
       remainingDebrisMotion: Math.round(remainingDebrisMotion * modifier),
-      totalScore: Math.round(raw * modifier),
+      containmentRating: containmentRating(protectedPenalty, totalScore),
+      totalScore,
       shotName: projectile?.name ?? "No Shot"
     };
   }
+
+  private dedupPositive(result: ExplosionResult): number {
+    let points = 0;
+    for (const object of result.affectedObjects) {
+      if (object.scoreRole !== "target") {
+        continue;
+      }
+      const next = Math.max(0, Math.round(object.weightedDamage * (object.fractured ? 1.1 : 0.55)));
+      const previous = this.scoredObjects.get(object.id) ?? { positive: 0, penalty: 0 };
+      if (next > previous.positive) {
+        points += next - previous.positive;
+        previous.positive = next;
+        this.scoredObjects.set(object.id, previous);
+      }
+    }
+    return points;
+  }
+
+  private dedupPenalty(result: ExplosionResult): number {
+    let penalty = 0;
+    for (const object of result.affectedObjects) {
+      if (object.scoreRole !== "protected") {
+        continue;
+      }
+      const next = Math.max(0, Math.round(object.weightedDamage * (object.fractured ? 1.8 : 1)));
+      const previous = this.scoredObjects.get(object.id) ?? { positive: 0, penalty: 0 };
+      if (next > previous.penalty) {
+        penalty += next - previous.penalty;
+        previous.penalty = next;
+        this.scoredObjects.set(object.id, previous);
+      }
+    }
+    return penalty;
+  }
+}
+
+function containmentRating(protectedPenalty: number, totalScore: number): string {
+  if (protectedPenalty >= 900) {
+    return "FAILED CONTAINMENT";
+  }
+  if (protectedPenalty >= 450) {
+    return "DIRTY WIN";
+  }
+  if (protectedPenalty >= 120) {
+    return "MESSY";
+  }
+  if (totalScore >= 2200) {
+    return "CLEAN BLAST";
+  }
+  return "CONTAINED";
 }

@@ -33,20 +33,21 @@ export class InputController {
   }
 
   private readonly onPointerMove = (event: PointerEvent): void => {
-    const rect = this.canvas.getBoundingClientRect();
-    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
-    this.callbacks.aim(this.pointer.clone());
+    this.callbacks.aim(this.pointerFromEvent(event));
   };
 
   private readonly onPointerDown = (event: PointerEvent): void => {
-    if (event.button === 0) {
+    this.callbacks.aim(this.pointerFromEvent(event));
+    if (event.button === 0 && event.pointerType === "mouse") {
       this.callbacks.fire();
     }
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.repeat) {
+      return;
+    }
+    if (event.target instanceof HTMLElement && ["BUTTON", "INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {
       return;
     }
     if (event.code === "Space") {
@@ -100,4 +101,11 @@ export class InputController {
   private readonly preventContextMenu = (event: MouseEvent): void => {
     event.preventDefault();
   };
+
+  private pointerFromEvent(event: PointerEvent): THREE.Vector2 {
+    const rect = this.canvas.getBoundingClientRect();
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    return this.pointer.clone();
+  }
 }

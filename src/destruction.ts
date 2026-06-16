@@ -1,15 +1,18 @@
 import * as THREE from "three";
 import { MaterialCatalog, type MaterialDefinition, type MaterialId } from "./materialCatalog";
-import { PhysicsWorld, type PhysicsCategory, type PhysicsObject, type TriggerType } from "./physics";
+import { PhysicsWorld, type PhysicsCategory, type PhysicsObject, type ScoreRole, type TriggerType } from "./physics";
 
 export interface ExplosionAffectedObject {
   id: number;
   label: string;
   materialId: MaterialId;
   category: PhysicsCategory;
+  scoreRole: ScoreRole;
   triggerType?: TriggerType;
+  zoneId?: string;
   position: THREE.Vector3;
   energy: number;
+  weightedDamage: number;
   scoreValue: number;
   fractured: boolean;
 }
@@ -23,6 +26,7 @@ export interface ExplosionResult {
   structureDamage: number;
   materialChaos: number;
   bioGelSplash: number;
+  protectedPenalty: number;
 }
 
 interface FragmentPlan {
@@ -54,6 +58,7 @@ export class DestructionSystem {
     let structureDamage = 0;
     let materialChaos = 0;
     let bioGelSplash = 0;
+    let protectedPenalty = 0;
 
     for (const object of snapshot) {
       if (object.category === "projectile") {
@@ -85,10 +90,17 @@ export class DestructionSystem {
         dustColors.push(material.dustColor);
       }
       const weightedDamage = Math.round(object.scoreValue * Math.min(1.8, energy / Math.max(1, material.fractureThreshold)));
-      if (object.category === "bio" || object.materialId === "bioGel") {
+      if (object.scoreRole === "protected") {
+        protectedPenalty += Math.round(weightedDamage * (fractured ? 1.65 : 0.9));
+      } else if (object.category === "bio" || object.materialId === "bioGel") {
         bioGelSplash += Math.round(weightedDamage * (fractured ? 1.25 : 0.55));
+      } else if (object.scoreRole === "target") {
+        structureDamage += Math.round(weightedDamage * 1.1);
+      } else if (object.scoreRole === "chain") {
+        structureDamage += Math.round(weightedDamage * 0.55);
+        materialChaos += Math.round(weightedDamage * 0.75);
       } else if (object.category === "structure" || object.category === "trigger") {
-        structureDamage += weightedDamage;
+        materialChaos += Math.round(weightedDamage * 0.4);
       }
       materialChaos += Math.round((impulseMagnitude + energy) * (object.isDebris ? 0.3 : 1));
       affectedObjects.push({
@@ -96,9 +108,12 @@ export class DestructionSystem {
         label: object.label,
         materialId: object.materialId,
         category: object.category,
+        scoreRole: object.scoreRole,
         triggerType: object.triggerType,
+        zoneId: object.zoneId,
         position: vectorFromRapier(object.body.translation()),
         energy,
+        weightedDamage,
         scoreValue: object.scoreValue,
         fractured
       });
@@ -116,7 +131,8 @@ export class DestructionSystem {
       affectedObjects,
       structureDamage,
       materialChaos,
-      bioGelSplash
+      bioGelSplash,
+      protectedPenalty
     };
   }
 
@@ -182,6 +198,8 @@ export class DestructionSystem {
         canFracture: false,
         isDebris: true,
         category: object.category === "bio" || object.materialId === "bioGel" ? "bio" : "debris",
+        scoreRole: object.scoreRole === "protected" ? "protected" : "neutral",
+        zoneId: object.zoneId,
         scoreValue: Math.max(1, Math.round(object.scoreValue / plans.length)),
         linearVelocity: inheritedVelocity.clone().multiplyScalar(0.45),
         angularVelocity: randomUnitVector().multiplyScalar(material.angularResponse * 2.5)

@@ -17,9 +17,18 @@ export class CameraRig {
   private shakeMagnitude = 0;
 
   constructor(private readonly renderer: THREE.WebGLRenderer) {
-    this.camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 180);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 180);
     this.camera.position.copy(this.desiredPosition);
     this.camera.lookAt(this.desiredTarget);
+  }
+
+  setCityAimView(cannonAnchor = new THREE.Vector3(0, 2.6, 10.35)): void {
+    this.mode = "cannon";
+    const portrait = window.innerHeight > window.innerWidth;
+    const backDistance = portrait ? 8.1 : 6.4;
+    const shoulderHeight = portrait ? 2.7 : 1.85;
+    this.desiredTarget.set(0, 1.05, -2.35);
+    this.desiredPosition.set(cannonAnchor.x, cannonAnchor.y + shoulderHeight, cannonAnchor.z + backDistance);
   }
 
   setCannonView(muzzle: THREE.Vector3, direction: THREE.Vector3): void {
@@ -91,8 +100,10 @@ export class CameraRig {
   }
 
   resize(width: number, height: number): void {
+    this.camera.fov = height > width ? 54 : 48;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(width, height);
   }
 }
