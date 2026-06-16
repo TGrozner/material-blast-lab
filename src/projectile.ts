@@ -43,12 +43,12 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     materialId: "metal",
     baseRadius: 0.22,
     density: 7.2,
-    speed: 28,
-    impulse: 34,
-    blastRadius: 1.8,
-    fractureBoost: 1.1,
+    speed: 45,
+    impulse: 50,
+    blastRadius: 2.5,
+    fractureBoost: 1.35,
     scoreModifier: 1.05,
-    description: "Fast heavy punch-through shot with tight impact damage."
+    description: "Long-range penetrator for punching through city structures."
   },
   scatter: {
     id: "scatter",
@@ -59,12 +59,12 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     materialId: "foam",
     baseRadius: 0.26,
     density: 1.1,
-    speed: 22,
-    impulse: 24,
-    blastRadius: 2.7,
-    fractureBoost: 0.9,
+    speed: 38,
+    impulse: 34,
+    blastRadius: 3.6,
+    fractureBoost: 1.05,
     scoreModifier: 1.2,
-    description: "Splits into hot toy fragments on impact."
+    description: "Air-burst pod that scatters hot fragments through a block."
   },
   pulse: {
     id: "pulse",
@@ -75,12 +75,12 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     materialId: "glass",
     baseRadius: 0.31,
     density: 0.9,
-    speed: 19,
-    impulse: 40,
-    blastRadius: 4.8,
-    fractureBoost: 1.0,
+    speed: 34,
+    impulse: 58,
+    blastRadius: 6.4,
+    fractureBoost: 1.12,
     scoreModifier: 1.12,
-    description: "Wide shockwave that pushes the whole chamber."
+    description: "Wide siege shockwave that shoves whole streets at once."
   },
   gel: {
     id: "gel",
@@ -91,12 +91,12 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     materialId: "bioGel",
     baseRadius: 0.3,
     density: 0.8,
-    speed: 20,
-    impulse: 28,
-    blastRadius: 3.4,
-    fractureBoost: 1.25,
+    speed: 35,
+    impulse: 42,
+    blastRadius: 4.8,
+    fractureBoost: 1.38,
     scoreModifier: 1.35,
-    description: "Great for splashing synthetic bio-gel specimens."
+    description: "Heavy splash shell for flooding a district with synthetic gel."
   },
   gravity: {
     id: "gravity",
@@ -107,12 +107,12 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     materialId: "metal",
     baseRadius: 0.42,
     density: 9.5,
-    speed: 15,
-    impulse: 58,
-    blastRadius: 3.0,
-    fractureBoost: 1.45,
+    speed: 29,
+    impulse: 82,
+    blastRadius: 4.5,
+    fractureBoost: 1.65,
     scoreModifier: 1.22,
-    description: "Slow heavy local smash with strong downward authority."
+    description: "Super-heavy siege hammer with brutal downward authority."
   }
 };
 

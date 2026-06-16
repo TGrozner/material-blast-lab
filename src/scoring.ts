@@ -1,6 +1,17 @@
-import type { ExplosionResult } from "./destruction";
+import * as THREE from "three";
+import type { ExplosionAffectedObject, ExplosionResult } from "./destruction";
 import { PhysicsWorld } from "./physics";
 import type { ProjectileDefinition } from "./projectile";
+
+export type ScoreEventKind = "target" | "protected" | "chain" | "purge" | "chaos";
+
+export interface ScoreEvent {
+  kind: ScoreEventKind;
+  label: string;
+  points: number;
+  position: THREE.Vector3;
+  combo?: number;
+}
 
 export interface ScoreBreakdown {
   targetDamage: number;
@@ -12,6 +23,8 @@ export interface ScoreBreakdown {
   containmentRating: string;
   totalScore: number;
   shotName: string;
+  chainReactionCount: number;
+  maxChainCombo: number;
 }
 
 export class ShotScoreTracker {
@@ -21,6 +34,8 @@ export class ShotScoreTracker {
   private chainReactionBonus = 0;
   private protectedPenalty = 0;
   private currentProjectile: ProjectileDefinition | null = null;
+  private chainReactionCount = 0;
+  private maxChainCombo = 0;
   private readonly scoredObjects = new Map<number, { positive: number; penalty: number }>();
 
   beginShot(projectile: ProjectileDefinition): void {
@@ -29,23 +44,76 @@ export class ShotScoreTracker {
     this.contaminationPurge = 0;
     this.chainReactionBonus = 0;
     this.protectedPenalty = 0;
+    this.chainReactionCount = 0;
+    this.maxChainCombo = 0;
     this.currentProjectile = projectile;
     this.scoredObjects.clear();
   }
 
-  addExplosion(result: ExplosionResult, extraBioSplash = 0): void {
-    this.targetDamage += this.dedupPositive(result);
+  addExplosion(result: ExplosionResult, extraBioSplash = 0): ScoreEvent[] {
+    const events: ScoreEvent[] = [];
+    const target = this.dedupPositive(result);
+    const protectedDamage = this.dedupPenalty(result);
+    this.targetDamage += target.points;
     this.cityChaos += result.materialChaos;
     this.contaminationPurge += result.bioGelSplash + extraBioSplash;
-    this.protectedPenalty += this.dedupPenalty(result);
+    this.protectedPenalty += protectedDamage.points;
+    events.push(...target.events, ...protectedDamage.events);
+
+    const purge = Math.round(result.bioGelSplash + extraBioSplash);
+    if (purge >= 45) {
+      events.push({
+        kind: "purge",
+        label: "PURGE",
+        points: purge,
+        position: result.origin.clone().add(new THREE.Vector3(0, 1.05, 0))
+      });
+    }
+    if (result.materialChaos >= 95) {
+      events.push({
+        kind: "chaos",
+        label: "CHAOS",
+        points: Math.round(result.materialChaos),
+        position: result.origin.clone().add(new THREE.Vector3(0, 0.72, 0))
+      });
+    }
+    return events;
   }
 
-  addChainReaction(points: number): void {
-    this.chainReactionBonus += points;
+  addChainReaction(points: number, position?: THREE.Vector3): ScoreEvent[] {
+    this.chainReactionCount += 1;
+    this.maxChainCombo = Math.max(this.maxChainCombo, this.chainReactionCount);
+    const combo = this.chainReactionCount;
+    const multiplier = 1 + Math.min(2.2, (combo - 1) * 0.42);
+    const awarded = Math.round(points * multiplier);
+    this.chainReactionBonus += awarded;
+    if (!position) {
+      return [];
+    }
+    return [
+      {
+        kind: "chain",
+        label: chainLabel(combo),
+        points: awarded,
+        combo,
+        position: position.clone().add(new THREE.Vector3(0, 1.1, 0))
+      }
+    ];
   }
 
-  addBioGelSplash(points: number): void {
+  addBioGelSplash(points: number, position?: THREE.Vector3): ScoreEvent[] {
     this.contaminationPurge += points;
+    if (!position || points < 1) {
+      return [];
+    }
+    return [
+      {
+        kind: "purge",
+        label: "PURGE",
+        points,
+        position: position.clone().add(new THREE.Vector3(0, 1.1, 0))
+      }
+    ];
   }
 
   finalize(physics: PhysicsWorld): ScoreBreakdown {
@@ -79,12 +147,15 @@ export class ShotScoreTracker {
       remainingDebrisMotion: Math.round(remainingDebrisMotion * modifier),
       containmentRating: containmentRating(protectedPenalty, totalScore),
       totalScore,
-      shotName: projectile?.name ?? "No Shot"
+      shotName: projectile?.name ?? "No Shot",
+      chainReactionCount: this.chainReactionCount,
+      maxChainCombo: this.maxChainCombo
     };
   }
 
-  private dedupPositive(result: ExplosionResult): number {
+  private dedupPositive(result: ExplosionResult): { points: number; events: ScoreEvent[] } {
     let points = 0;
+    const events: ScoreEvent[] = [];
     for (const object of result.affectedObjects) {
       if (object.scoreRole !== "target") {
         continue;
@@ -92,16 +163,19 @@ export class ShotScoreTracker {
       const next = Math.max(0, Math.round(object.weightedDamage * (object.fractured ? 1.1 : 0.55)));
       const previous = this.scoredObjects.get(object.id) ?? { positive: 0, penalty: 0 };
       if (next > previous.positive) {
-        points += next - previous.positive;
+        const delta = next - previous.positive;
+        points += delta;
+        events.push(scoreEventFromObject("target", "TARGET", delta, object));
         previous.positive = next;
         this.scoredObjects.set(object.id, previous);
       }
     }
-    return points;
+    return { points, events: events.sort(sortScoreEvents).slice(0, 7) };
   }
 
-  private dedupPenalty(result: ExplosionResult): number {
+  private dedupPenalty(result: ExplosionResult): { points: number; events: ScoreEvent[] } {
     let penalty = 0;
+    const events: ScoreEvent[] = [];
     for (const object of result.affectedObjects) {
       if (object.scoreRole !== "protected") {
         continue;
@@ -109,13 +183,41 @@ export class ShotScoreTracker {
       const next = Math.max(0, Math.round(object.weightedDamage * (object.fractured ? 1.8 : 1)));
       const previous = this.scoredObjects.get(object.id) ?? { positive: 0, penalty: 0 };
       if (next > previous.penalty) {
-        penalty += next - previous.penalty;
+        const delta = next - previous.penalty;
+        penalty += delta;
+        events.push(scoreEventFromObject("protected", "PROTECTED", -delta, object));
         previous.penalty = next;
         this.scoredObjects.set(object.id, previous);
       }
     }
-    return penalty;
+    return { points: penalty, events: events.sort(sortScoreEvents).slice(0, 5) };
   }
+}
+
+function scoreEventFromObject(kind: ScoreEventKind, label: string, points: number, object: ExplosionAffectedObject): ScoreEvent {
+  return {
+    kind,
+    label,
+    points,
+    position: object.position.clone().add(new THREE.Vector3(0, object.fractured ? 0.88 : 0.58, 0))
+  };
+}
+
+function sortScoreEvents(a: ScoreEvent, b: ScoreEvent): number {
+  return Math.abs(b.points) - Math.abs(a.points);
+}
+
+function chainLabel(combo: number): string {
+  if (combo >= 4) {
+    return `RUNAWAY x${combo}`;
+  }
+  if (combo >= 3) {
+    return `CASCADE x${combo}`;
+  }
+  if (combo >= 2) {
+    return `CHAIN x${combo}`;
+  }
+  return "CHAIN";
 }
 
 function containmentRating(protectedPenalty: number, totalScore: number): string {

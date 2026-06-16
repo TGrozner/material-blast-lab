@@ -22,13 +22,14 @@ export class CameraRig {
     this.camera.lookAt(this.desiredTarget);
   }
 
-  setCityAimView(cannonAnchor = new THREE.Vector3(0, 2.6, 10.35)): void {
+  setCityAimView(cannonAnchor = new THREE.Vector3(0, 6.9, 24.55)): void {
     this.mode = "cannon";
     const portrait = window.innerHeight > window.innerWidth;
-    const backDistance = portrait ? 8.1 : 6.4;
-    const shoulderHeight = portrait ? 2.7 : 1.85;
-    this.desiredTarget.set(0, 1.05, -2.35);
-    this.desiredPosition.set(cannonAnchor.x, cannonAnchor.y + shoulderHeight, cannonAnchor.z + backDistance);
+    const backDistance = portrait ? 16.8 : 15.2;
+    const shoulderHeight = portrait ? 8.9 : 8.2;
+    const sideOffset = portrait ? -1.6 : -3.6;
+    this.desiredTarget.set(0, -2.4, -5.4);
+    this.desiredPosition.set(cannonAnchor.x + sideOffset, cannonAnchor.y + shoulderHeight, cannonAnchor.z + backDistance);
   }
 
   setCannonView(muzzle: THREE.Vector3, direction: THREE.Vector3): void {
@@ -43,8 +44,8 @@ export class CameraRig {
   followProjectile(position: THREE.Vector3, velocity: THREE.Vector3): void {
     this.mode = "projectile";
     const speedDirection = velocity.lengthSq() > 0.01 ? velocity.clone().normalize() : new THREE.Vector3(0, 0, -1);
-    this.desiredTarget.copy(position).add(speedDirection.clone().multiplyScalar(1.2));
-    this.desiredPosition.copy(position).add(speedDirection.multiplyScalar(-4.1)).add(this.up.clone().multiplyScalar(1.75));
+    this.desiredTarget.copy(position).add(speedDirection.clone().multiplyScalar(2.1));
+    this.desiredPosition.copy(position).add(speedDirection.multiplyScalar(-5.6)).add(this.up.clone().multiplyScalar(2.35));
   }
 
   spectacle(point: THREE.Vector3): void {
@@ -69,10 +70,10 @@ export class CameraRig {
 
     if (this.mode === "spectacle") {
       this.spectacleYaw += deltaSeconds * 0.23;
-      const radius = 8.4;
+      const radius = 10.6;
       this.desiredPosition.set(
         this.desiredTarget.x + Math.sin(this.spectacleYaw) * radius,
-        this.desiredTarget.y + 4.9,
+        this.desiredTarget.y + 6.2,
         this.desiredTarget.z + Math.cos(this.spectacleYaw) * radius
       );
     }
@@ -100,7 +101,7 @@ export class CameraRig {
   }
 
   resize(width: number, height: number): void {
-    this.camera.fov = height > width ? 54 : 48;
+    this.camera.fov = height > width ? 62 : 60;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));

@@ -4,6 +4,9 @@ Material Blast Lab is a compact browser arcade physics toy built with Vite, Type
 
 This is not a realistic explosive simulator and does not model real devices, weapons tactics, humans, civilians, zombies, or elimination scoring. The gore is stylized arcade bio-gel from synthetic non-human lab specimens.
 
+For the current product direction and replayability goals, see
+[`docs/game-direction.md`](docs/game-direction.md).
+
 ## Install and Run
 
 ```sh

@@ -14,6 +14,7 @@ interface UIState {
   objective: string;
   protectedBrief: string;
   status: string;
+  fps: number;
   score: ScoreBreakdown | null;
 }
 
@@ -35,10 +36,12 @@ export class GameUI {
   private readonly sizeValue: HTMLSpanElement;
   private readonly shotsValue: HTMLSpanElement;
   private readonly bodyValue: HTMLSpanElement;
+  private readonly fpsValue: HTMLElement;
   private readonly statusValue: HTMLDivElement;
   private readonly fireButton: HTMLButtonElement;
   private readonly scorePanel: HTMLDivElement;
   private readonly projectileButtons = new Map<ProjectileId, HTMLButtonElement>();
+  private scoreWasVisible = false;
 
   constructor(private readonly callbacks: UICallbacks) {
     installStyles();
@@ -48,7 +51,7 @@ export class GameUI {
     this.root.innerHTML = `
       <div class="hud__title">
         <span>Material Blast Lab</span>
-        <small>City Trial</small>
+        <small><span>Siege Battery</span><strong data-role="fps"></strong></small>
       </div>
       <div class="hud__mission">
         <strong data-role="chamber"></strong>
@@ -59,6 +62,7 @@ export class GameUI {
       <div class="hud__row"><span>Shot</span><strong data-role="shots"></strong></div>
       <div class="hud__row"><span>Debris</span><strong data-role="bodies"></strong></div>
       <div class="hud__projectiles" data-role="projectiles"></div>
+      <button class="hud__fire" type="button">FIRE</button>
       <div class="hud__steppers">
         <div class="hud__stepper">
           <span>Power</span>
@@ -73,7 +77,6 @@ export class GameUI {
           <button type="button" data-action="size-up" aria-label="Raise projectile size">+</button>
         </div>
       </div>
-      <button class="hud__fire" type="button">FIRE</button>
       <div class="hud__buttons">
         <button type="button" data-action="level">Rebuild</button>
         <button type="button" data-action="clear">Clear Debris</button>
@@ -90,6 +93,7 @@ export class GameUI {
     this.sizeValue = this.requireElement("[data-role='size']");
     this.shotsValue = this.requireElement("[data-role='shots']");
     this.bodyValue = this.requireElement("[data-role='bodies']");
+    this.fpsValue = this.requireElement("[data-role='fps']");
     this.statusValue = this.requireElement("[data-role='status']");
     this.fireButton = this.requireElement(".hud__fire");
     this.scorePanel = this.requireElement("[data-role='score']");
@@ -119,7 +123,8 @@ export class GameUI {
   }
 
   update(state: UIState): void {
-    this.projectileValue.textContent = state.projectile.name;
+    this.projectileValue.textContent = state.projectile.shortName;
+    this.projectileValue.title = state.projectile.name;
     this.chamberValue.textContent = state.levelName;
     this.chamberValue.title = state.levelDescription;
     this.requireElement("[data-role='objective']").textContent = state.objective;
@@ -128,6 +133,7 @@ export class GameUI {
     this.sizeValue.textContent = `${Math.round(state.sizeScale * 100)}%`;
     this.shotsValue.textContent = state.shotAvailable ? "READY" : "SPENT";
     this.bodyValue.textContent = String(state.bodyCount);
+    this.fpsValue.textContent = `${state.fps} FPS`;
     this.statusValue.textContent = state.status;
     this.fireButton.disabled = !state.shotAvailable;
 
@@ -137,6 +143,7 @@ export class GameUI {
     }
 
     if (state.score) {
+      const shouldRevealScore = !this.scoreWasVisible;
       this.scorePanel.classList.add("is-visible");
       this.scorePanel.innerHTML = `
         <div class="hud__score-title">${state.score.shotName} - ${state.score.containmentRating}</div>
@@ -144,11 +151,19 @@ export class GameUI {
         <div><span>City Chaos</span><strong>${state.score.cityChaos}</strong></div>
         <div><span>Contamination Purge</span><strong>${state.score.contaminationPurge}</strong></div>
         <div><span>Chain Bonus</span><strong>${state.score.chainReactionBonus}</strong></div>
+        <div><span>Chain Hits</span><strong>${state.score.chainReactionCount}${state.score.maxChainCombo > 1 ? ` / x${state.score.maxChainCombo}` : ""}</strong></div>
         <div><span>Protected Penalty</span><strong class="is-penalty">-${state.score.protectedPenalty}</strong></div>
         <div><span>Motion Bonus</span><strong>${state.score.remainingDebrisMotion}</strong></div>
         <div class="hud__score-total"><span>Total</span><strong>${state.score.totalScore}</strong></div>
       `;
+      this.scoreWasVisible = true;
+      if (shouldRevealScore) {
+        window.requestAnimationFrame(() => {
+          this.root.scrollTo({ top: this.root.scrollHeight, behavior: "smooth" });
+        });
+      }
     } else {
+      this.scoreWasVisible = false;
       this.scorePanel.classList.remove("is-visible");
       this.scorePanel.innerHTML = "";
     }
@@ -215,6 +230,8 @@ function installStyles(): void {
       width: min(560px, calc(100vw - 20px));
       max-height: min(56vh, 520px);
       overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
       padding: 12px;
       border: 1px solid rgba(169, 225, 255, 0.18);
       border-radius: 8px;
@@ -262,15 +279,29 @@ function installStyles(): void {
       color: #83cfff;
     }
 
-    .hud__title span {
+    .hud__title > span {
       font-size: 15px;
       font-weight: 800;
     }
 
     .hud__title small {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
       color: #8eb0c2;
       font-size: 11px;
       white-space: nowrap;
+    }
+
+    .hud__title small strong {
+      padding: 2px 6px;
+      border: 1px solid rgba(157, 248, 255, 0.22);
+      border-radius: 999px;
+      color: #9df8ff;
+      background: rgba(157, 248, 255, 0.08);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0;
     }
 
     .hud__row,
@@ -286,20 +317,27 @@ function installStyles(): void {
 
     .hud__row strong,
     .hud__score strong {
+      min-width: 0;
+      max-width: 58%;
       color: #f4f8fb;
       font-size: 13px;
+      overflow: hidden;
       text-align: right;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .hud__projectiles {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 7px;
       margin: 9px 0;
+      min-width: 0;
     }
 
     .hud__projectile {
       min-width: 0;
+      width: 100%;
       min-height: 42px;
       border: 1px solid rgba(255, 255, 255, 0.18);
       border-radius: 6px;
@@ -309,7 +347,9 @@ function installStyles(): void {
       font-size: 11px;
       font-weight: 800;
       overflow: hidden;
+      padding: 0 5px;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .hud__projectile.is-active {
@@ -322,6 +362,7 @@ function installStyles(): void {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 7px;
       margin-bottom: 8px;
+      min-width: 0;
     }
 
     .hud__stepper {
@@ -336,6 +377,14 @@ function installStyles(): void {
       background: rgba(255, 255, 255, 0.05);
       color: #a9c4d1;
       font-size: 12px;
+    }
+
+    .hud__stepper span,
+    .hud__stepper strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .hud__stepper strong {
@@ -359,6 +408,7 @@ function installStyles(): void {
     .hud__fire {
       width: 100%;
       min-height: 48px;
+      margin-bottom: 8px;
       color: #071015;
       background: linear-gradient(180deg, #9df8ff, #57d7ff);
       box-shadow: 0 8px 22px rgba(63, 221, 255, 0.22);
@@ -373,9 +423,18 @@ function installStyles(): void {
 
     .hud__buttons {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 7px;
       margin-top: 8px;
+      min-width: 0;
+    }
+
+    .hud__buttons button {
+      min-width: 0;
+      overflow: hidden;
+      padding: 0 7px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .hud__status {
@@ -440,35 +499,153 @@ function installStyles(): void {
 
     @media (max-width: 520px) {
       .hud {
-        width: calc(100vw - 12px);
-        max-height: 50vh;
-        padding: 10px;
+        left: max(8px, env(safe-area-inset-left));
+        right: auto;
+        bottom: max(8px, env(safe-area-inset-bottom));
+        width: min(calc(100vw - 16px), 374px);
+        max-width: calc(100vw - 16px);
+        max-height: min(34svh, 280px);
+        padding: 8px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+          "title"
+          "mission"
+          "projectiles"
+          "fire"
+          "steppers"
+          "buttons"
+          "score";
+        gap: 5px;
+        align-items: stretch;
+        background: linear-gradient(180deg, rgba(8, 12, 18, 0.72), rgba(8, 12, 18, 0.92));
+        transform: none;
+        scrollbar-width: thin;
       }
 
       .hud__title {
-        margin-bottom: 8px;
+        grid-area: title;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 1px;
+        margin: 0;
+        min-width: 0;
       }
 
-      .hud__title span {
+      .hud__title > span {
         font-size: 14px;
+        line-height: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 100%;
+      }
+
+      .hud__title small {
+        display: inline-flex;
+        max-width: 100%;
+      }
+
+      .hud__title small span {
+        display: none;
       }
 
       .hud__mission {
-        padding: 8px;
+        grid-area: mission;
+        gap: 2px;
+        margin: 0;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+      }
+
+      .hud__mission strong {
+        overflow: hidden;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hud__mission span {
+        display: -webkit-box;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+
+      .hud__mission span,
+      .hud__status {
+        font-size: 10px;
+        line-height: 1.18;
+      }
+
+      .hud__mission em,
+      .hud__row {
+        display: none;
+      }
+
+      .hud__projectiles {
+        grid-area: projectiles;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+        margin: 0;
       }
 
       .hud__projectile {
-        min-height: 40px;
-        font-size: 10px;
+        min-height: 34px;
+        font-size: 9px;
+        padding: 0 3px;
+      }
+
+      .hud__fire {
+        grid-area: fire;
+        min-width: 0;
+        width: 100%;
+        min-height: 42px;
+        margin: 0;
+        font-size: 14px;
       }
 
       .hud__steppers {
-        grid-template-columns: 1fr;
+        grid-area: steppers;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px;
+        margin: 0;
+      }
+
+      .hud__stepper {
+        grid-template-columns: minmax(28px, 0.8fr) 28px minmax(36px, 1fr) 28px;
+        gap: 3px;
+        padding: 3px;
+        font-size: 10px;
+      }
+
+      .hud__buttons {
+        grid-area: buttons;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+        margin: 0;
       }
 
       .hud__buttons button,
       .hud__stepper button {
-        min-height: 44px;
+        min-height: 30px;
+      }
+
+      .hud__buttons button {
+        padding: 0 5px;
+        font-size: 10px;
+      }
+
+      .hud__status {
+        display: none;
+      }
+
+      .hud__score {
+        grid-area: score;
+        max-height: 110px;
+        overflow-y: auto;
       }
     }
   `;

@@ -1,19 +1,37 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
+import { DestructionAudio } from "./audio";
 import { BioGoreSystem } from "./bioGore";
 import { CameraRig } from "./cameraRig";
 import { Cannon } from "./cannon";
-import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
+import { DestructionSystem, type ExplosionResult } from "./destruction";
 import { InputController } from "./input";
 import { TEST_CHAMBERS } from "./levels";
 import { MaterialCatalog } from "./materialCatalog";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
 import { PROJECTILES, ProjectileSystem, type ActiveProjectile, type ProjectileId } from "./projectile";
-import { ShotScoreTracker, type ScoreBreakdown } from "./scoring";
+import { ScorePopupLayer } from "./scorePopups";
+import { ShotScoreTracker, type ScoreBreakdown, type ScoreEvent } from "./scoring";
 import { ExplosionSystem, ParticleSystem } from "./vfx";
 import { GameUI } from "./ui";
 
 type GamePhase = "aim" | "flight" | "spectacle" | "scored";
+
+const DEFAULT_AIM_POINT = new THREE.Vector3(0, 0.16, -3.4);
+const CHAIN_DEBRIS_MIN_SPEED = 4.4;
+const CHAIN_DEBRIS_MIN_SPEED_SQ = CHAIN_DEBRIS_MIN_SPEED * CHAIN_DEBRIS_MIN_SPEED;
+const CHAIN_IMPACT_COOLDOWN_MS = 520;
+const CHAIN_IMPACT_MAX_PER_FRAME = 5;
+const SCORE_REVEAL_MIN_DELAY_MS = 2600;
+const SCORE_REVEAL_TIMEOUT_MS = 7600;
+const SCORE_SETTLED_SPEED = 1.15;
+const SCORE_SETTLED_FRAMES = 18;
+const IMPACT_BOUNDS = {
+  minX: -18.8,
+  maxX: 18.8,
+  minZ: -21.8,
+  maxZ: 35.8
+};
 
 class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -21,6 +39,7 @@ class Game {
   private readonly materials = new MaterialCatalog();
   private readonly physics: PhysicsWorld;
   private readonly destruction: DestructionSystem;
+  private readonly audio = new DestructionAudio();
   private readonly particles: ParticleSystem;
   private readonly explosion: ExplosionSystem;
   private readonly cameraRig: CameraRig;
@@ -28,15 +47,23 @@ class Game {
   private readonly projectiles: ProjectileSystem;
   private readonly bioGore: BioGoreSystem;
   private readonly scoreTracker = new ShotScoreTracker();
+  private readonly scorePopups: ScorePopupLayer;
   private readonly ui: GameUI;
   private readonly input: InputController;
   private readonly timer = new THREE.Timer();
   private readonly aimRaycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private readonly aimPoint = new THREE.Vector3(0, 0, -2.6);
+  private readonly aimPoint = DEFAULT_AIM_POINT.clone();
+  private readonly aimMarkerMaterial = new THREE.MeshBasicMaterial({
+    color: 0x8ff7ff,
+    transparent: true,
+    opacity: 0.84,
+    depthWrite: false
+  });
+  private readonly aimMarker = createAimMarker(this.aimMarkerMaterial);
   private readonly arenaObjects: THREE.Object3D[] = [];
   private readonly levelDecorations: THREE.Object3D[] = [];
-  private readonly triggeredIds = new Set<number>();
+  private readonly chainImpactCooldowns = new Map<string, number>();
 
   private selectedProjectile: ProjectileId = "slug";
   private powerScale = 1;
@@ -44,10 +71,15 @@ class Game {
   private shotAvailable = true;
   private phase: GamePhase = "aim";
   private levelIndex = 0;
-  private status = "Aim the cannon. One shot, maximum damage.";
+  private status = "Aim the siege cannon from the high battery.";
   private score: ScoreBreakdown | null = null;
   private slowMotionTimer = 0;
   private scoreRevealAt: number | null = null;
+  private scoreRevealStartedAt: number | null = null;
+  private scoreSettleFrames = 0;
+  private fpsSampleElapsed = 0;
+  private fpsSampleFrames = 0;
+  private displayedFps = 0;
 
   constructor() {
     const app = document.querySelector<HTMLDivElement>("#app");
@@ -67,7 +99,7 @@ class Game {
     app.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(0x080b10);
-    this.scene.fog = new THREE.Fog(0x080b10, 18, 42);
+    this.scene.fog = new THREE.Fog(0x080b10, 28, 78);
     this.timer.connect(document);
 
     this.cameraRig = new CameraRig(this.renderer);
@@ -78,6 +110,8 @@ class Game {
     this.bioGore = new BioGoreSystem(this.physics, this.materials, this.particles);
     this.projectiles = new ProjectileSystem(this.physics, this.materials);
     this.cannon = new Cannon(this.scene);
+    this.scene.add(this.aimMarker);
+    this.scorePopups = new ScorePopupLayer();
 
     this.ui = new GameUI({
       fire: () => this.fire(),
@@ -103,6 +137,7 @@ class Game {
     this.configureLights();
     this.buildArena();
     this.loadLevel();
+    this.audio.preload();
     this.resize();
     window.addEventListener("resize", () => this.resize());
     window.visualViewport?.addEventListener("resize", () => this.resize());
@@ -115,18 +150,26 @@ class Game {
 
   private update(): void {
     this.timer.update();
-    const delta = Math.min(this.timer.getDelta(), 0.05);
+    const frameDelta = this.timer.getDelta();
+    const delta = Math.min(frameDelta, 0.05);
+    this.updateFps(frameDelta);
     const timeScale = this.slowMotionTimer > 0 ? 0.32 : 1;
     if (this.slowMotionTimer > 0) {
       this.slowMotionTimer = Math.max(0, this.slowMotionTimer - delta);
     }
 
-    this.cannon.update(delta, PROJECTILES[this.selectedProjectile], this.powerScale);
+    this.cannon.update(delta, PROJECTILES[this.selectedProjectile], this.powerScale, this.sizeScale);
     this.physics.step(delta * timeScale);
     this.projectiles.update(delta * timeScale);
+    const chainEvents = this.processDebrisImpacts();
+    if (chainEvents.length > 0) {
+      this.scorePopups.push(chainEvents);
+    }
     this.updatePhase();
     this.particles.update(delta);
     this.cameraRig.update(delta);
+    this.updateAimMarker();
+    this.scorePopups.update(delta, this.cameraRig.camera);
     this.ui.update({
       projectileId: this.selectedProjectile,
       projectile: PROJECTILES[this.selectedProjectile],
@@ -139,9 +182,20 @@ class Game {
       objective: this.currentLevel().objective,
       protectedBrief: this.currentLevel().protectedBrief,
       status: this.status,
+      fps: this.displayedFps,
       score: this.score
     });
     this.renderer.render(this.scene, this.cameraRig.camera);
+  }
+
+  private updateFps(delta: number): void {
+    this.fpsSampleElapsed += delta;
+    this.fpsSampleFrames += 1;
+    if (this.fpsSampleElapsed >= 0.35) {
+      this.displayedFps = Math.round(this.fpsSampleFrames / this.fpsSampleElapsed);
+      this.fpsSampleElapsed = 0;
+      this.fpsSampleFrames = 0;
+    }
   }
 
   private updatePhase(): void {
@@ -158,18 +212,27 @@ class Game {
       const velocity = vectorFromRapier(active.object.body.linvel());
       this.cameraRig.followProjectile(position, velocity);
       const impact = this.detectImpact(active);
-      if (impact || active.age > 5.2) {
+      if (impact || active.age > 7.5) {
         this.handleImpact(impact?.point ?? position, active, impact?.object ?? null);
       }
       return;
     }
 
     if ((this.phase === "spectacle" || this.phase === "scored") && this.scoreRevealAt !== null) {
-      if (performance.now() >= this.scoreRevealAt && !this.score) {
+      const now = performance.now();
+      if (!this.score && now >= this.scoreRevealAt) {
+        const timedOut = this.scoreRevealStartedAt !== null && now - this.scoreRevealStartedAt >= SCORE_REVEAL_TIMEOUT_MS;
+        this.scoreSettleFrames = this.isSceneSettled() ? this.scoreSettleFrames + 1 : 0;
+        if (!timedOut && this.scoreSettleFrames < SCORE_SETTLED_FRAMES) {
+          this.status = "Scoring active chain reactions...";
+          return;
+        }
         this.score = this.scoreTracker.finalize(this.physics);
         this.phase = "scored";
         this.scoreRevealAt = null;
-        this.status = `${this.score.containmentRating}: ${this.score.totalScore}. Retry to rebuild the city block.`;
+        this.scoreRevealStartedAt = null;
+        this.scoreSettleFrames = 0;
+        this.status = `${this.score.containmentRating}: ${this.score.totalScore}. Retry to rebuild the district.`;
       }
     }
   }
@@ -183,11 +246,11 @@ class Game {
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.near = 1;
-    key.shadow.camera.far = 30;
-    key.shadow.camera.left = -12;
-    key.shadow.camera.right = 12;
-    key.shadow.camera.top = 12;
-    key.shadow.camera.bottom = -12;
+    key.shadow.camera.far = 60;
+    key.shadow.camera.left = -22;
+    key.shadow.camera.right = 22;
+    key.shadow.camera.top = 22;
+    key.shadow.camera.bottom = -22;
     this.scene.add(key);
 
     const rim = new THREE.DirectionalLight(0x6aa7ff, 1.05);
@@ -213,18 +276,18 @@ class Game {
     });
 
     const floor = this.physics.addStaticBox({
-      label: "Lab floor",
-      position: new THREE.Vector3(0, -0.1, 0),
-      size: new THREE.Vector3(24, 0.2, 24),
+      label: "Siege range floor",
+      position: new THREE.Vector3(0, -0.1, 7),
+      size: new THREE.Vector3(38, 0.2, 58),
       material: floorMaterial
     });
     this.arenaObjects.push(floor);
 
     const wallSpecs = [
-      { position: new THREE.Vector3(0, 0.75, -12), size: new THREE.Vector3(24, 1.5, 0.35) },
-      { position: new THREE.Vector3(0, 0.75, 12), size: new THREE.Vector3(24, 1.5, 0.35) },
-      { position: new THREE.Vector3(-12, 0.75, 0), size: new THREE.Vector3(0.35, 1.5, 24) },
-      { position: new THREE.Vector3(12, 0.75, 0), size: new THREE.Vector3(0.35, 1.5, 24) }
+      { position: new THREE.Vector3(0, 0.55, -22), size: new THREE.Vector3(38, 1.1, 0.35) },
+      { position: new THREE.Vector3(0, 0.55, 36), size: new THREE.Vector3(38, 1.1, 0.35) },
+      { position: new THREE.Vector3(-19, 0.55, 7), size: new THREE.Vector3(0.35, 1.1, 58) },
+      { position: new THREE.Vector3(19, 0.55, 7), size: new THREE.Vector3(0.35, 1.1, 58) }
     ];
     for (const spec of wallSpecs) {
       const wall = this.physics.addStaticBox({ label: "Arena wall", material: wallMaterial, ...spec });
@@ -232,27 +295,28 @@ class Game {
       this.arenaObjects.push(wall);
     }
 
-    const cannonDeck = this.physics.addStaticBox({
-      label: "Cannon overlook deck",
-      position: new THREE.Vector3(0, 0.8, 10.0),
-      size: new THREE.Vector3(4.7, 1.6, 3.1),
-      material: cannonDeckMaterial
-    });
+    const cannonDeck = this.addArenaVisualBox(
+      "High siege battery",
+      new THREE.Vector3(0, 2.85, 26.45),
+      new THREE.Vector3(6.4, 5.7, 4.8),
+      cannonDeckMaterial
+    );
     cannonDeck.castShadow = true;
     this.arenaObjects.push(cannonDeck);
 
-    for (const x of [-2.42, 2.42]) {
-      const curb = this.physics.addStaticBox({
-        label: "Cannon deck curb",
-        position: new THREE.Vector3(x, 1.73, 10.0),
-        size: new THREE.Vector3(0.18, 0.26, 3.0),
-        material: cannonDeckMaterial
-      });
+    for (const x of [-3.3, 3.3]) {
+      const curb = this.addArenaVisualBox(
+        "Cannon deck curb",
+        new THREE.Vector3(x, 5.86, 26.45),
+        new THREE.Vector3(0.22, 0.32, 4.7),
+        cannonDeckMaterial
+      );
       curb.castShadow = true;
       this.arenaObjects.push(curb);
     }
 
-    const grid = new THREE.GridHelper(24, 48, 0x3f8da0, 0x26333a);
+    const grid = new THREE.GridHelper(38, 76, 0x3f8da0, 0x26333a);
+    grid.position.z = 7;
     grid.position.y = 0.012;
     grid.material.transparent = true;
     grid.material.opacity = 0.35;
@@ -260,23 +324,42 @@ class Game {
     this.arenaObjects.push(grid);
   }
 
+  private addArenaVisualBox(
+    label: string,
+    position: THREE.Vector3,
+    size: THREE.Vector3,
+    material: THREE.Material
+  ): THREE.Mesh {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), material);
+    mesh.name = label;
+    mesh.position.copy(position);
+    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    this.scene.add(mesh);
+    return mesh;
+  }
+
   private loadLevel(): void {
     this.physics.clearDynamic();
     this.clearLevelDecorations();
     this.projectiles.clearActive();
-    this.triggeredIds.clear();
+    this.chainImpactCooldowns.clear();
     this.score = null;
     this.scoreRevealAt = null;
+    this.scoreRevealStartedAt = null;
+    this.scoreSettleFrames = 0;
+    this.scorePopups.clear();
     this.phase = "aim";
     this.shotAvailable = true;
     this.slowMotionTimer = 0;
+    this.aimPoint.copy(DEFAULT_AIM_POINT);
     this.currentLevel().setup({
       physics: this.physics,
       materials: this.materials,
-      bioGore: this.bioGore,
       addDecoration: (object) => this.addDecoration(object)
     });
     this.status = `${this.currentLevel().name}: ${this.currentLevel().objective}`;
+    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
   }
 
   private aim(pointer: THREE.Vector2): void {
@@ -284,7 +367,7 @@ class Game {
       this.aimRaycaster.setFromCamera(pointer, this.cameraRig.camera);
       if (this.aimRaycaster.ray.intersectPlane(this.groundPlane, this.aimPoint)) {
         this.aimPoint.y = 0.16;
-        this.cannon.aimAtWorldPoint(this.aimPoint);
+        this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
       } else {
         this.cannon.aim(pointer);
       }
@@ -298,20 +381,29 @@ class Game {
     const projectile = PROJECTILES[this.selectedProjectile];
     const muzzle = this.cannon.getMuzzlePosition();
     const direction = this.cannon.getDirection();
-    this.projectiles.launch(this.selectedProjectile, muzzle, direction, this.sizeScale, this.powerScale);
+    const launchPosition = this.cannon.getLaunchPosition(projectile.baseRadius * this.sizeScale);
+    this.projectiles.launch(this.selectedProjectile, launchPosition, direction, this.sizeScale, this.powerScale);
     this.scoreTracker.beginShot(projectile);
     this.cannon.fireKick();
+    this.audio.playCannonFire(projectile.id, this.powerScale, this.sizeScale);
     this.particles.muzzleFlash(muzzle, projectile.color);
+    this.cameraRig.shake(0.18, 0.38);
     this.shotAvailable = false;
     this.phase = "flight";
-    this.status = `${projectile.name} away.`;
+    this.status = `${projectile.name} fired from the high battery.`;
   }
 
   private detectImpact(active: ActiveProjectile): { point: THREE.Vector3; object: PhysicsObject | null } | null {
     const current = vectorFromRapier(active.object.body.translation());
     const previous = active.previousPosition.clone();
 
-    if (current.y < 0.18 || Math.abs(current.x) > 11.6 || current.z < -11.6 || current.z > 11.9) {
+    if (
+      current.y < 0.18 ||
+      current.x < IMPACT_BOUNDS.minX ||
+      current.x > IMPACT_BOUNDS.maxX ||
+      current.z < IMPACT_BOUNDS.minZ ||
+      current.z > IMPACT_BOUNDS.maxZ
+    ) {
       active.previousPosition.copy(current);
       return { point: current, object: null };
     }
@@ -337,27 +429,40 @@ class Game {
     const projectile = active.definition;
     const direction = active.object.body.linvel();
     const directionVector = new THREE.Vector3(direction.x, direction.y, direction.z).normalize();
-    if (hitObject) {
+    if (hitObject && !hitObject.canFracture) {
       const directImpulse = directionVector
         .clone()
-        .multiplyScalar(projectile.impulse * active.powerScale * 0.65 / Math.max(0.6, this.materials.get(hitObject.materialId).massFactor));
+        .multiplyScalar(projectile.impulse * active.powerScale * 0.22 / Math.max(0.8, this.materials.get(hitObject.materialId).massFactor));
       hitObject.body.applyImpulse({ x: directImpulse.x, y: directImpulse.y, z: directImpulse.z }, true);
-      hitObject.body.applyTorqueImpulse({ x: directImpulse.z * 0.18, y: directImpulse.x * 0.18, z: directImpulse.y * 0.18 }, true);
+      hitObject.body.applyTorqueImpulse({ x: directImpulse.z * 0.06, y: directImpulse.x * 0.06, z: directImpulse.y * 0.06 }, true);
     }
 
     this.projectiles.removeActive();
     const strength = projectile.impulse * active.powerScale * projectile.fractureBoost;
     const radius = projectile.blastRadius * active.sizeScale;
     const result = this.destruction.explode(point, strength, radius);
-    this.applyExplosionResult(result, projectile.id === "gel" ? 1.2 : 0.85);
-    this.processTriggers(result.affectedObjects, 0);
-    this.playProjectileSpecial(projectile.id, point, directionVector, active);
+    this.audio.playProjectileImpact({
+      point,
+      projectileId: projectile.id,
+      result,
+      powerScale: active.powerScale,
+      sizeScale: active.sizeScale,
+      hitMaterialId: hitObject?.materialId
+    });
+    const scoreEvents = [
+      ...this.applyExplosionResult(result, projectile.id === "gel" ? 1.2 : 0.85),
+      ...this.playProjectileSpecial(projectile.id, point, directionVector, active)
+    ];
+    this.scorePopups.push(scoreEvents);
 
     this.explosion.play(point, radius, result.dustColors);
+    this.particles.cityDebrisSpray(point, result.dustColors, 0.8 + result.fracturedBodies * 0.07);
     this.cameraRig.spectacle(point);
     this.cameraRig.shake(projectile.id === "gravity" ? 0.58 : 0.38, 0.78);
     this.slowMotionTimer = 0.45;
-    this.scoreRevealAt = performance.now() + 3400;
+    this.scoreRevealStartedAt = performance.now();
+    this.scoreRevealAt = this.scoreRevealStartedAt + SCORE_REVEAL_MIN_DELAY_MS;
+    this.scoreSettleFrames = 0;
     this.phase = "spectacle";
     this.status = `${projectile.name} impact: ${result.fracturedBodies} fractures, ${result.affectedBodies} bodies hit.`;
   }
@@ -367,86 +472,133 @@ class Game {
     point: THREE.Vector3,
     direction: THREE.Vector3,
     active: ActiveProjectile
-  ): void {
+  ): ScoreEvent[] {
     if (projectileId === "scatter") {
       this.spawnScatterFragments(point, direction, active.sizeScale);
-      this.scoreTracker.addChainReaction(120);
-      return;
+      this.audio.playScatterBurst(point, active.sizeScale * active.powerScale);
+      return [];
     }
     if (projectileId === "gel") {
       this.bioGore.splashAt(point, 1.45);
-      this.scoreTracker.addBioGelSplash(Math.round(180 * active.sizeScale * active.powerScale));
-      this.scoreTracker.addChainReaction(90);
-      return;
+      this.audio.playBioSplash(point, 1.35 * active.sizeScale * active.powerScale);
+      return [];
     }
     if (projectileId === "gravity") {
       const crush = this.destruction.explode(point.clone().add(new THREE.Vector3(0, -0.25, 0)), 22 * active.powerScale, 1.8 * active.sizeScale);
-      this.applyExplosionResult(crush, 0.35);
-      this.scoreTracker.addChainReaction(150);
+      this.audio.playGravityCrush(point, active.sizeScale * active.powerScale);
+      this.audio.playProjectileImpact({
+        point,
+        projectileId,
+        result: crush,
+        powerScale: active.powerScale,
+        sizeScale: active.sizeScale,
+        hitMaterialId: "concrete"
+      });
+      return this.applyExplosionResult(crush, 0.35);
     }
+    return [];
   }
 
-  private applyExplosionResult(result: ExplosionResult, bioIntensity: number): void {
+  private applyExplosionResult(result: ExplosionResult, bioIntensity: number): ScoreEvent[] {
     const extraBio = this.bioGore.reactToExplosion(result.affectedObjects) * bioIntensity;
-    this.scoreTracker.addExplosion(result, extraBio);
+    return this.scoreTracker.addExplosion(result, extraBio);
   }
 
-  private processTriggers(affectedObjects: ExplosionAffectedObject[], depth: number): void {
-    if (depth > 2) {
-      return;
+  private processDebrisImpacts(): ScoreEvent[] {
+    const events: ScoreEvent[] = [];
+    if (this.phase === "aim" || this.score) {
+      this.physics.drainCollisionEvents();
+      return events;
     }
-    for (const affected of affectedObjects) {
-      if (affected.category !== "trigger" || !affected.triggerType || this.triggeredIds.has(affected.id)) {
-        continue;
-      }
-      if (affected.energy < 7 && !affected.fractured) {
-        continue;
-      }
-      this.triggeredIds.add(affected.id);
-      this.physics.markTriggered(affected.id);
-      const position = affected.position;
 
-      if (affected.triggerType === "shockCanister") {
-        this.particles.spark(position, 0x74f0ff, 1.35);
-        const chain = this.destruction.explode(position, 26, 2.65);
-        this.explosion.play(position, 2.65, chain.dustColors);
-        this.applyExplosionResult(chain, 0.75);
-        this.scoreTracker.addChainReaction(240);
-        this.processTriggers(chain.affectedObjects, depth + 1);
-      } else if (affected.triggerType === "gelTank") {
-        this.bioGore.splashAt(position, 1.6);
-        const chain = this.destruction.explode(position, 18, 2.25);
-        this.applyExplosionResult(chain, 1.35);
-        this.scoreTracker.addChainReaction(190);
-        this.processTriggers(chain.affectedObjects, depth + 1);
-      } else {
-        const boosted = this.springPulse(position);
-        this.particles.spark(position, 0x70ff7a, 1.1);
-        this.scoreTracker.addChainReaction(120 + boosted * 8);
+    const now = performance.now();
+    for (const [key, expiresAt] of this.chainImpactCooldowns) {
+      if (expiresAt <= now) {
+        this.chainImpactCooldowns.delete(key);
       }
     }
+
+    let impactsThisFrame = 0;
+    for (const collision of this.physics.drainCollisionEvents()) {
+      if (impactsThisFrame >= CHAIN_IMPACT_MAX_PER_FRAME) {
+        break;
+      }
+      if (!collision.started) {
+        continue;
+      }
+      const pair = chainCollisionPair(collision.first, collision.second);
+      if (!pair) {
+        continue;
+      }
+      const { source, target } = pair;
+      if (!this.physics.getObject(source.id) || !this.physics.getObject(target.id)) {
+        continue;
+      }
+      const sourcePosition = vectorFromRapier(source.body.translation());
+      const targetPosition = vectorFromRapier(target.body.translation());
+      const sourceVelocity = source.body.linvel();
+      const targetVelocity = target.body.linvel();
+      const relativeVelocity = {
+        x: sourceVelocity.x - targetVelocity.x,
+        y: sourceVelocity.y - targetVelocity.y,
+        z: sourceVelocity.z - targetVelocity.z
+      };
+      const relativeSpeedSq = velocityLengthSq(relativeVelocity);
+      if (relativeSpeedSq < CHAIN_DEBRIS_MIN_SPEED_SQ) {
+        continue;
+      }
+      const towardTarget = targetPosition.clone().sub(sourcePosition);
+      if (
+        towardTarget.lengthSq() > 0.0001 &&
+        relativeVelocity.x * towardTarget.x + relativeVelocity.y * towardTarget.y + relativeVelocity.z * towardTarget.z <= 0
+      ) {
+        continue;
+      }
+
+      const pairKey = `${source.id}:${target.id}`;
+      if ((this.chainImpactCooldowns.get(pairKey) ?? 0) > now) {
+        continue;
+      }
+      this.chainImpactCooldowns.set(pairKey, now + CHAIN_IMPACT_COOLDOWN_MS);
+
+      const origin = sourcePosition.clone().lerp(targetPosition, 0.5);
+      const relativeSpeed = Math.sqrt(relativeSpeedSq);
+      const result = this.destruction.impact(source, target, origin, relativeSpeed);
+      const damaged = result.affectedObjects[0];
+      if (!damaged?.fractured) {
+        continue;
+      }
+
+      this.audio.playChainImpact({
+        point: origin,
+        result,
+        relativeSpeed,
+        materialId: damaged.materialId
+      });
+      events.push(...this.applyExplosionResult(result, 0.45));
+      if (damaged.scoreRole !== "protected") {
+        const points = Math.max(45, Math.round(damaged.weightedDamage * 0.85 + relativeSpeed * 8));
+        events.push(...this.scoreTracker.addChainReaction(points, damaged.position));
+        this.particles.spark(origin, 0xffd25c, Math.min(1.4, 0.55 + relativeSpeed * 0.045));
+        if (result.dustColors.length > 0) {
+          this.particles.cityDebrisSpray(origin, result.dustColors, 0.35 + result.fracturedBodies * 0.04);
+        }
+      }
+      impactsThisFrame += 1;
+    }
+    return events;
   }
 
-  private springPulse(origin: THREE.Vector3): number {
-    let boosted = 0;
+  private isSceneSettled(): boolean {
     for (const object of this.physics.getDynamicObjects()) {
-      if (object.category === "projectile") {
+      if (object.category === "projectile" || object.bodyType === "fixed" || object.body.isSleeping()) {
         continue;
       }
-      const position = vectorFromRapier(object.body.translation());
-      const offset = position.sub(origin);
-      const distance = Math.max(0.001, offset.length());
-      if (distance > 2.8) {
-        continue;
+      if (speedOf(object) >= SCORE_SETTLED_SPEED) {
+        return false;
       }
-      boosted += 1;
-      const falloff = (1 - distance / 2.8) ** 2;
-      const direction = offset.normalize().add(new THREE.Vector3(0, 1.2, 0)).normalize();
-      const impulse = direction.multiplyScalar(16 * falloff);
-      object.body.applyImpulse({ x: impulse.x, y: impulse.y, z: impulse.z }, true);
-      object.body.applyTorqueImpulse({ x: impulse.z * 0.35, y: impulse.x * 0.35, z: impulse.y * 0.35 }, true);
     }
-    return boosted;
+    return true;
   }
 
   private spawnScatterFragments(origin: THREE.Vector3, direction: THREE.Vector3, sizeScale: number): void {
@@ -467,6 +619,7 @@ class Game {
         angularVelocity: new THREE.Vector3(Math.random() * 4, Math.random() * 4, Math.random() * 4),
         category: "debris",
         isDebris: true,
+        chainSource: false,
         destructible: false,
         canFracture: false,
         density: 1.2,
@@ -497,6 +650,7 @@ class Game {
       return;
     }
     this.selectedProjectile = id;
+    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
     this.status = `${PROJECTILES[id].name}: ${PROJECTILES[id].description}`;
   }
 
@@ -504,7 +658,8 @@ class Game {
     if (!this.shotAvailable || this.phase !== "aim") {
       return;
     }
-    this.powerScale = THREE.MathUtils.clamp(this.powerScale + delta, 0.65, 1.45);
+    this.powerScale = THREE.MathUtils.clamp(this.powerScale + delta, 0.65, 1.65);
+    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
     this.status = `Power set to ${Math.round(this.powerScale * 100)}%.`;
   }
 
@@ -525,6 +680,12 @@ class Game {
     this.cameraRig.resize(Math.round(viewport?.width ?? window.innerWidth), Math.round(viewport?.height ?? window.innerHeight));
   }
 
+  private updateAimMarker(): void {
+    this.aimMarker.visible = this.phase === "aim";
+    this.aimMarker.position.set(this.aimPoint.x, 0.055, this.aimPoint.z);
+    this.aimMarkerMaterial.color.copy(PROJECTILES[this.selectedProjectile].color);
+  }
+
   private addDecoration(object: THREE.Object3D): void {
     this.scene.add(object);
     this.levelDecorations.push(object);
@@ -539,6 +700,28 @@ class Game {
   }
 }
 
+function createAimMarker(material: THREE.MeshBasicMaterial): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "aim impact reticle";
+
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.38, 42), material);
+  ring.rotation.x = -Math.PI * 0.5;
+  ring.renderOrder = 5;
+
+  const barGeometry = new THREE.PlaneGeometry(0.92, 0.045);
+  const horizontal = new THREE.Mesh(barGeometry, material);
+  horizontal.rotation.x = -Math.PI * 0.5;
+  horizontal.renderOrder = 5;
+
+  const vertical = new THREE.Mesh(barGeometry.clone(), material);
+  vertical.rotation.x = -Math.PI * 0.5;
+  vertical.rotation.z = Math.PI * 0.5;
+  vertical.renderOrder = 5;
+
+  group.add(ring, horizontal, vertical);
+  return group;
+}
+
 async function boot(): Promise<void> {
   await RAPIER.init();
   const game = new Game();
@@ -547,6 +730,32 @@ async function boot(): Promise<void> {
 
 function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
   return new THREE.Vector3(v.x, v.y, v.z);
+}
+
+function speedOf(object: PhysicsObject): number {
+  return Math.sqrt(velocityLengthSq(object.body.linvel()));
+}
+
+function velocityLengthSq(velocity: { x: number; y: number; z: number }): number {
+  return velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z;
+}
+
+function chainCollisionPair(first: PhysicsObject, second: PhysicsObject): { source: PhysicsObject; target: PhysicsObject } | null {
+  if (isChainSource(first) && isChainTarget(second)) {
+    return { source: first, target: second };
+  }
+  if (isChainSource(second) && isChainTarget(first)) {
+    return { source: second, target: first };
+  }
+  return null;
+}
+
+function isChainSource(object: PhysicsObject): boolean {
+  return object.isDebris && object.chainSource && object.scoreRole !== "protected";
+}
+
+function isChainTarget(object: PhysicsObject): boolean {
+  return object.category !== "projectile" && !object.isDebris && object.destructible && object.canFracture;
 }
 
 function distancePointToSegment(point: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): number {
@@ -560,12 +769,17 @@ function distancePointToSegment(point: THREE.Vector3, a: THREE.Vector3, b: THREE
 }
 
 function disposeObject(object: THREE.Object3D): void {
+  const disposedMaterials = new Set<THREE.Material>();
   object.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry.dispose();
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       for (const material of materials) {
+        if (disposedMaterials.has(material)) {
+          continue;
+        }
         material.dispose();
+        disposedMaterials.add(material);
       }
     }
   });

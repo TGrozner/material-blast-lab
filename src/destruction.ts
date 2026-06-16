@@ -1,6 +1,7 @@
 import * as THREE from "three";
+import { decorateFragment } from "./cityVisuals";
 import { MaterialCatalog, type MaterialDefinition, type MaterialId } from "./materialCatalog";
-import { PhysicsWorld, type PhysicsCategory, type PhysicsObject, type ScoreRole, type TriggerType } from "./physics";
+import { PhysicsWorld, type PhysicsCategory, type PhysicsObject, type ScoreRole } from "./physics";
 
 export interface ExplosionAffectedObject {
   id: number;
@@ -8,7 +9,6 @@ export interface ExplosionAffectedObject {
   materialId: MaterialId;
   category: PhysicsCategory;
   scoreRole: ScoreRole;
-  triggerType?: TriggerType;
   zoneId?: string;
   position: THREE.Vector3;
   energy: number;
@@ -34,6 +34,12 @@ interface FragmentPlan {
   offset: THREE.Vector3;
   rotation: THREE.Quaternion;
   material: MaterialDefinition;
+}
+
+interface BlastSample {
+  position: THREE.Vector3;
+  directionOffset: THREE.Vector3;
+  distance: number;
 }
 
 export class DestructibleObject {
@@ -65,26 +71,29 @@ export class DestructionSystem {
         continue;
       }
       const material = this.materials.get(object.materialId);
-      const position = vectorFromRapier(object.body.translation());
-      const offset = position.sub(origin);
-      const distance = Math.max(offset.length(), 0.001);
-      if (distance >= blastRadius) {
+      const sample = this.sampleObjectForBlast(object, origin);
+      if (sample.distance >= blastRadius) {
         continue;
       }
 
       affectedBodies += 1;
-      const falloff = (1 - distance / blastRadius) ** 2;
-      const impulseMagnitude = (blastStrength * falloff) / Math.max(0.5, material.massFactor);
-      const direction = this.computeBlastDirection(offset);
-      const impulse = direction.multiplyScalar(impulseMagnitude);
-      object.body.applyImpulse({ x: impulse.x, y: impulse.y, z: impulse.z }, true);
-
-      const torque = randomUnitVector().multiplyScalar(blastStrength * falloff * 0.18 * material.angularResponse);
-      object.body.applyTorqueImpulse({ x: torque.x, y: torque.y, z: torque.z }, true);
-
+      const falloff = (1 - sample.distance / blastRadius) ** 2;
       const volume = Math.max(0.08, object.dimensions.x * object.dimensions.y * object.dimensions.z);
       const energy = (blastStrength * falloff * 1.7) / Math.max(0.5, material.massFactor) + volume * 0.35;
       const fractured = object.destructible && object.canFracture && energy > material.fractureThreshold;
+
+      const wholeBodyScale = this.wholeBodyImpulseScale(object, fractured);
+      const impulseMagnitude = ((blastStrength * falloff) / Math.max(0.5, material.massFactor)) * wholeBodyScale;
+      if (impulseMagnitude > 0.01 && object.bodyType === "dynamic") {
+        const upward = object.category === "structure" ? 0.16 : 0.42;
+        const direction = this.computeBlastDirection(sample.directionOffset, upward, 0.1);
+        const impulse = direction.multiplyScalar(impulseMagnitude);
+        object.body.applyImpulse({ x: impulse.x, y: impulse.y, z: impulse.z }, true);
+
+        const torque = randomUnitVector().multiplyScalar(blastStrength * falloff * 0.08 * material.angularResponse * wholeBodyScale);
+        object.body.applyTorqueImpulse({ x: torque.x, y: torque.y, z: torque.z }, true);
+      }
+
       if (fractured) {
         fractureQueue.push({ object, energy });
         dustColors.push(material.dustColor);
@@ -96,10 +105,7 @@ export class DestructionSystem {
         bioGelSplash += Math.round(weightedDamage * (fractured ? 1.25 : 0.55));
       } else if (object.scoreRole === "target") {
         structureDamage += Math.round(weightedDamage * 1.1);
-      } else if (object.scoreRole === "chain") {
-        structureDamage += Math.round(weightedDamage * 0.55);
-        materialChaos += Math.round(weightedDamage * 0.75);
-      } else if (object.category === "structure" || object.category === "trigger") {
+      } else if (object.category === "structure") {
         materialChaos += Math.round(weightedDamage * 0.4);
       }
       materialChaos += Math.round((impulseMagnitude + energy) * (object.isDebris ? 0.3 : 1));
@@ -109,9 +115,8 @@ export class DestructionSystem {
         materialId: object.materialId,
         category: object.category,
         scoreRole: object.scoreRole,
-        triggerType: object.triggerType,
         zoneId: object.zoneId,
-        position: vectorFromRapier(object.body.translation()),
+        position: sample.position.clone(),
         energy,
         weightedDamage,
         scoreValue: object.scoreValue,
@@ -129,6 +134,83 @@ export class DestructionSystem {
       fracturedBodies: fractureQueue.length,
       dustColors,
       affectedObjects,
+      structureDamage,
+      materialChaos,
+      bioGelSplash,
+      protectedPenalty
+    };
+  }
+
+  impact(source: PhysicsObject, target: PhysicsObject, origin: THREE.Vector3, relativeSpeed: number): ExplosionResult {
+    const sourceMaterial = this.materials.get(source.materialId);
+    const targetMaterial = this.materials.get(target.materialId);
+    const sourceVolume = Math.max(0.02, source.dimensions.x * source.dimensions.y * source.dimensions.z);
+    const impactMass = Math.max(0.35, sourceVolume * sourceMaterial.density * 7.5);
+    const energy = (relativeSpeed * impactMass * Math.max(0.65, sourceMaterial.massFactor)) / Math.max(0.55, targetMaterial.massFactor);
+    const fractured = target.destructible && target.canFracture && energy > targetMaterial.fractureThreshold;
+    const sourcePosition = vectorFromRapier(source.body.translation());
+    const targetPosition = vectorFromRapier(target.body.translation());
+    const direction = targetPosition.clone().sub(sourcePosition).normalize();
+    const impulseMagnitude = Math.min(34, energy * 0.44);
+    if (impulseMagnitude > 0.01 && target.bodyType === "dynamic" && this.physics.getObject(target.id)) {
+      target.body.applyImpulse(
+        {
+          x: direction.x * impulseMagnitude,
+          y: Math.max(0.12, direction.y + 0.22) * impulseMagnitude,
+          z: direction.z * impulseMagnitude
+        },
+        true
+      );
+      target.body.applyTorqueImpulse(
+        {
+          x: direction.z * impulseMagnitude * 0.18,
+          y: impulseMagnitude * 0.08,
+          z: -direction.x * impulseMagnitude * 0.18
+        },
+        true
+      );
+    }
+
+    const weightedDamage = Math.round(target.scoreValue * Math.min(1.6, energy / Math.max(1, targetMaterial.fractureThreshold)));
+    let structureDamage = 0;
+    let materialChaos = 0;
+    let bioGelSplash = 0;
+    let protectedPenalty = 0;
+    if (target.scoreRole === "protected") {
+      protectedPenalty = Math.round(weightedDamage * (fractured ? 1.65 : 0.9));
+    } else if (target.category === "bio" || target.materialId === "bioGel") {
+      bioGelSplash = Math.round(weightedDamage * (fractured ? 1.25 : 0.55));
+    } else if (target.scoreRole === "target") {
+      structureDamage = Math.round(weightedDamage * 1.1);
+    } else if (target.category === "structure") {
+      materialChaos = Math.round(weightedDamage * 0.45);
+    }
+    materialChaos += Math.round(energy * 0.65);
+
+    const affectedObject: ExplosionAffectedObject = {
+      id: target.id,
+      label: target.label,
+      materialId: target.materialId,
+      category: target.category,
+      scoreRole: target.scoreRole,
+      zoneId: target.zoneId,
+      position: targetPosition,
+      energy,
+      weightedDamage,
+      scoreValue: target.scoreValue,
+      fractured
+    };
+
+    if (fractured && this.physics.getObject(target.id)) {
+      this.fracture(target, origin, Math.max(8, energy * 0.55), 1.45, energy);
+    }
+
+    return {
+      origin: origin.clone(),
+      affectedBodies: 1,
+      fracturedBodies: fractured ? 1 : 0,
+      dustColors: fractured ? [targetMaterial.dustColor] : [],
+      affectedObjects: [affectedObject],
       structureDamage,
       materialChaos,
       bioGelSplash,
@@ -197,13 +279,15 @@ export class DestructionSystem {
         destructible: false,
         canFracture: false,
         isDebris: true,
+        chainSource: true,
         category: object.category === "bio" || object.materialId === "bioGel" ? "bio" : "debris",
         scoreRole: object.scoreRole === "protected" ? "protected" : "neutral",
         zoneId: object.zoneId,
         scoreValue: Math.max(1, Math.round(object.scoreValue / plans.length)),
-        linearVelocity: inheritedVelocity.clone().multiplyScalar(0.45),
+        linearVelocity: inheritedVelocity.clone().multiplyScalar(0.2),
         angularVelocity: randomUnitVector().multiplyScalar(material.angularResponse * 2.5)
       });
+      decorateFragment(fragment.mesh, { size: plan.size, materialId: material.id });
       this.kickFragment(fragment, origin, blastStrength, blastRadius);
     }
   }
@@ -272,7 +356,7 @@ export class DestructionSystem {
     const offset = position.sub(origin);
     const distance = Math.max(offset.length(), 0.001);
     const falloff = distance < blastRadius ? (1 - distance / blastRadius) ** 2 : 0.12;
-    const direction = this.computeBlastDirection(offset);
+    const direction = this.computeBlastDirection(offset, 0.68, 0.24);
     const impulseMagnitude = (blastStrength * (falloff + 0.18)) / Math.max(0.42, material.massFactor);
     const impulse = direction.multiplyScalar(impulseMagnitude);
     fragment.body.applyImpulse({ x: impulse.x, y: impulse.y, z: impulse.z }, true);
@@ -281,14 +365,61 @@ export class DestructionSystem {
     fragment.body.applyTorqueImpulse({ x: torque.x, y: torque.y, z: torque.z }, true);
   }
 
-  private computeBlastDirection(offset: THREE.Vector3): THREE.Vector3 {
+  private wholeBodyImpulseScale(object: PhysicsObject, fractured: boolean): number {
+    if (fractured) {
+      return 0;
+    }
+    if (object.isDebris) {
+      return 1;
+    }
+    if (object.category === "structure") {
+      return object.canFracture ? 0.18 : 0.34;
+    }
+    return 0.72;
+  }
+
+  private sampleObjectForBlast(object: PhysicsObject, origin: THREE.Vector3): BlastSample {
+    const center = vectorFromRapier(object.body.translation());
+    const centerOffset = center.clone().sub(origin);
+
+    if (object.shape === "sphere") {
+      const centerDistance = centerOffset.length();
+      const directionOffset = centerDistance > 0.0001 ? centerOffset.clone() : new THREE.Vector3(0, 1, 0);
+      const direction = directionOffset.clone().normalize();
+      return {
+        position: center.clone().sub(direction.multiplyScalar(object.radius)),
+        directionOffset,
+        distance: Math.max(0.001, centerDistance - object.radius)
+      };
+    }
+
+    const rotation = quaternionFromRapier(object.body.rotation());
+    const inverseRotation = rotation.clone().invert();
+    const localOrigin = origin.clone().sub(center).applyQuaternion(inverseRotation);
+    const halfSize = object.dimensions.clone().multiplyScalar(0.5);
+    const closestLocal = new THREE.Vector3(
+      clamp(localOrigin.x, -halfSize.x, halfSize.x),
+      clamp(localOrigin.y, -halfSize.y, halfSize.y),
+      clamp(localOrigin.z, -halfSize.z, halfSize.z)
+    );
+    const closestWorld = closestLocal.applyQuaternion(rotation).add(center);
+    const surfaceOffset = closestWorld.clone().sub(origin);
+
+    return {
+      position: closestWorld,
+      directionOffset: centerOffset.lengthSq() > 0.0001 ? centerOffset : surfaceOffset,
+      distance: Math.max(surfaceOffset.length(), 0.001)
+    };
+  }
+
+  private computeBlastDirection(offset: THREE.Vector3, upwardBias = this.upwardBias.y, randomBias = 0.2): THREE.Vector3 {
     this.scratchDirection.copy(offset);
     if (this.scratchDirection.lengthSq() < 0.0001) {
       this.scratchDirection.copy(randomUnitVector());
     }
     this.scratchDirection.normalize();
-    this.scratchDirection.add(this.upwardBias);
-    this.scratchDirection.add(randomUnitVector().multiplyScalar(0.2));
+    this.scratchDirection.add(new THREE.Vector3(0, upwardBias, 0));
+    this.scratchDirection.add(randomUnitVector().multiplyScalar(randomBias));
     return this.scratchDirection.normalize().clone();
   }
 }

@@ -1,12 +1,14 @@
 import * as THREE from "three";
 import type { ProjectileDefinition } from "./projectile";
 
+const LAUNCH_MUZZLE_CLEARANCE = 0.58;
+
 export class Cannon {
   readonly group = new THREE.Group();
 
   private readonly barrelPivot = new THREE.Group();
   private readonly barrel = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.18, 0.28, 2.1, 24),
+    new THREE.CylinderGeometry(0.24, 0.42, 3.5, 28),
     new THREE.MeshStandardMaterial({
       color: 0x27323d,
       metalness: 0.72,
@@ -14,15 +16,15 @@ export class Cannon {
     })
   );
   private readonly glowRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.34, 0.025, 8, 36),
+    new THREE.TorusGeometry(0.46, 0.035, 8, 36),
     new THREE.MeshBasicMaterial({ color: 0x8ff7ff })
   );
   private readonly trajectory: THREE.Line;
-  private readonly trajectoryPositions = new Float32Array(24 * 3);
-  private readonly basePosition = new THREE.Vector3(0, 1.98, 10.35);
+  private readonly trajectoryPositions = new Float32Array(48 * 3);
+  private readonly basePosition = new THREE.Vector3(0, 6.08, 24.55);
 
   private yaw = 0;
-  private pitch = -0.03;
+  private pitch = -0.18;
   private recoil = 0;
   private charge = 0;
 
@@ -30,7 +32,7 @@ export class Cannon {
     this.group.position.copy(this.basePosition);
 
     const base = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.78, 0.98, 0.38, 32),
+      new THREE.CylinderGeometry(1.04, 1.34, 0.42, 36),
       new THREE.MeshStandardMaterial({ color: 0x1c242d, metalness: 0.45, roughness: 0.52 })
     );
     base.castShadow = true;
@@ -38,28 +40,28 @@ export class Cannon {
     base.position.y = -0.19;
 
     const yoke = new THREE.Mesh(
-      new THREE.BoxGeometry(1.35, 0.46, 0.52),
+      new THREE.BoxGeometry(1.78, 0.62, 0.68),
       new THREE.MeshStandardMaterial({ color: 0x2a3440, metalness: 0.55, roughness: 0.44 })
     );
     yoke.castShadow = true;
-    yoke.position.y = 0.32;
+    yoke.position.y = 0.42;
 
     this.barrel.rotation.x = Math.PI * 0.5;
-    this.barrel.position.z = -0.76;
+    this.barrel.position.z = -1.18;
     this.barrel.castShadow = true;
     this.barrel.receiveShadow = true;
 
     const muzzle = new THREE.Mesh(
-      new THREE.TorusGeometry(0.27, 0.045, 8, 32),
+      new THREE.TorusGeometry(0.38, 0.06, 8, 32),
       new THREE.MeshBasicMaterial({ color: 0x72ecff })
     );
-    muzzle.position.z = -1.85;
+    muzzle.position.z = -3.08;
     muzzle.rotation.x = Math.PI * 0.5;
 
-    this.glowRing.position.z = -1.15;
+    this.glowRing.position.z = -2.0;
     this.glowRing.rotation.x = Math.PI * 0.5;
     this.barrelPivot.add(this.barrel, muzzle, this.glowRing);
-    this.barrelPivot.position.y = 0.42;
+    this.barrelPivot.position.y = 0.62;
     this.group.add(base, yoke, this.barrelPivot);
     this.scene.add(this.group);
 
@@ -77,36 +79,37 @@ export class Cannon {
   }
 
   aim(pointer: THREE.Vector2): void {
-    this.yaw = THREE.MathUtils.clamp(pointer.x * 0.42, -0.5, 0.5);
-    this.pitch = THREE.MathUtils.clamp(-0.03 + pointer.y * 0.22, -0.2, 0.28);
+    this.yaw = THREE.MathUtils.clamp(pointer.x * 0.52, -0.72, 0.72);
+    this.pitch = THREE.MathUtils.clamp(-0.18 + pointer.y * 0.24, -0.38, 0.42);
     this.updateTransforms();
   }
 
-  aimAtWorldPoint(point: THREE.Vector3): void {
-    const origin = this.group.position.clone().add(new THREE.Vector3(0, 0.42, 0));
+  aimAtWorldPoint(point: THREE.Vector3, muzzleSpeed?: number): void {
+    const origin = this.getPivotOrigin();
     const direction = point.clone().sub(origin);
-    direction.y = Math.max(-1.2, Math.min(2.4, direction.y));
     if (direction.lengthSq() < 0.001) {
       return;
     }
-    direction.normalize();
     this.yaw = THREE.MathUtils.clamp(Math.atan2(direction.x, -direction.z), -0.72, 0.72);
-    this.pitch = THREE.MathUtils.clamp(Math.asin(direction.y), -0.18, 0.34);
+    this.pitch = THREE.MathUtils.clamp(this.solveBallisticPitch(direction, muzzleSpeed), -0.38, 0.42);
     this.updateTransforms();
   }
 
-  update(deltaSeconds: number, projectile: ProjectileDefinition, powerScale: number): void {
+  update(deltaSeconds: number, projectile: ProjectileDefinition, powerScale: number, sizeScale: number): void {
     this.recoil = THREE.MathUtils.damp(this.recoil, 0, 9, deltaSeconds);
     this.charge = (this.charge + deltaSeconds * 2.2) % 1;
     const material = this.glowRing.material as THREE.MeshBasicMaterial;
     material.color.copy(projectile.color);
     material.opacity = 0.7 + Math.sin(this.charge * Math.PI * 2) * 0.18;
-    this.barrel.position.z = -0.76 + this.recoil;
-    this.updateTrajectory(projectile, powerScale);
+    const trajectoryMaterial = this.trajectory.material as THREE.LineBasicMaterial;
+    trajectoryMaterial.color.copy(projectile.color);
+    trajectoryMaterial.opacity = 0.78 + Math.sin(this.charge * Math.PI * 2) * 0.08;
+    this.barrel.position.z = -1.18 + this.recoil;
+    this.updateTrajectory(projectile, powerScale, sizeScale);
   }
 
   fireKick(): void {
-    this.recoil = 0.42;
+    this.recoil = 0.72;
   }
 
   getDirection(): THREE.Vector3 {
@@ -118,11 +121,15 @@ export class Cannon {
   }
 
   getMuzzlePosition(): THREE.Vector3 {
-    return this.group.position.clone().add(new THREE.Vector3(0, 0.42, 0)).add(this.getDirection().multiplyScalar(2.05));
+    return this.getPivotOrigin().add(this.getDirection().multiplyScalar(3.28));
+  }
+
+  getLaunchPosition(projectileRadius: number): THREE.Vector3 {
+    return this.getMuzzlePosition().add(this.getDirection().multiplyScalar(projectileRadius + LAUNCH_MUZZLE_CLEARANCE));
   }
 
   getCameraAnchor(): THREE.Vector3 {
-    return this.group.position.clone().add(new THREE.Vector3(0, 0.65, 0));
+    return this.group.position.clone().add(new THREE.Vector3(0, 0.85, 0));
   }
 
   setTrajectoryVisible(visible: boolean): void {
@@ -134,16 +141,46 @@ export class Cannon {
     this.barrelPivot.rotation.x = this.pitch;
   }
 
-  private updateTrajectory(projectile: ProjectileDefinition, powerScale: number): void {
-    const origin = this.getMuzzlePosition();
+  private getPivotOrigin(): THREE.Vector3 {
+    return this.group.position.clone().add(new THREE.Vector3(0, 0.62, 0));
+  }
+
+  private solveBallisticPitch(directionToTarget: THREE.Vector3, muzzleSpeed?: number): number {
+    const horizontalDistance = Math.hypot(directionToTarget.x, directionToTarget.z);
+    if (horizontalDistance < 0.001 || !muzzleSpeed || muzzleSpeed <= 0) {
+      return Math.atan2(directionToTarget.y, Math.max(0.001, horizontalDistance));
+    }
+
+    const gravity = 9.81;
+    const speedSq = muzzleSpeed * muzzleSpeed;
+    const discriminant = speedSq * speedSq - gravity * (gravity * horizontalDistance * horizontalDistance + 2 * directionToTarget.y * speedSq);
+    if (discriminant < 0) {
+      return Math.atan2(directionToTarget.y, horizontalDistance) + 0.12;
+    }
+    const lowArc = Math.atan((speedSq - Math.sqrt(discriminant)) / (gravity * horizontalDistance));
+    return lowArc;
+  }
+
+  private updateTrajectory(projectile: ProjectileDefinition, powerScale: number, sizeScale: number): void {
+    const origin = this.getLaunchPosition(projectile.baseRadius * sizeScale);
     const velocity = this.getDirection().multiplyScalar(projectile.speed * powerScale);
     const gravity = new THREE.Vector3(0, -9.81, 0);
-    for (let i = 0; i < 24; i += 1) {
-      const t = i * 0.085;
-      const point = origin
-        .clone()
-        .add(velocity.clone().multiplyScalar(t))
-        .add(gravity.clone().multiplyScalar(0.5 * t * t));
+    let impactPoint: THREE.Vector3 | null = null;
+    for (let i = 0; i < 48; i += 1) {
+      const t = i * 0.105;
+      let point: THREE.Vector3;
+      if (impactPoint) {
+        point = impactPoint;
+      } else {
+        point = origin
+          .clone()
+          .add(velocity.clone().multiplyScalar(t))
+          .add(gravity.clone().multiplyScalar(0.5 * t * t));
+      }
+      if (!impactPoint && point.y <= 0.035) {
+        point.y = 0.035;
+        impactPoint = point.clone();
+      }
       this.trajectoryPositions[i * 3] = point.x;
       this.trajectoryPositions[i * 3 + 1] = Math.max(0.035, point.y);
       this.trajectoryPositions[i * 3 + 2] = point.z;

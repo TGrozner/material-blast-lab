@@ -53,11 +53,22 @@ export class ParticleSystem {
     this.spawnBurst(origin.clone().add(new THREE.Vector3(0, 0.45, 0)), 48, 0x6b6f76, 1.8, 0.11, 2.4, 2.3, 0.5);
   }
 
+  cityDebrisSpray(origin: THREE.Vector3, dustColors: THREE.Color[], intensity = 1): void {
+    const amount = THREE.MathUtils.clamp(intensity, 0.35, 2.35);
+    const baseDust = averageColor(dustColors, new THREE.Color(0x8d8880));
+    const facadeColor = baseDust.clone().offsetHSL(0, -0.08, 0.08);
+    this.spawnBurst(origin.clone().add(new THREE.Vector3(0, 0.35, 0)), Math.round(54 * amount), facadeColor, 1.1, 0.052, 7.5, 1.25, 0.22);
+    this.spawnBurst(origin.clone().add(new THREE.Vector3(0, 0.55, 0)), Math.round(28 * amount), 0xd8fbff, 0.72, 0.03, 12, 0.72, 0.08, THREE.AdditiveBlending);
+    this.spawnBurst(origin.clone().add(new THREE.Vector3(0, 0.2, 0)), Math.round(42 * amount), 0x25282b, 1.35, 0.07, 4.6, 1.65, 0.28);
+  }
+
   muzzleFlash(origin: THREE.Vector3, color: THREE.ColorRepresentation): void {
     this.flashLight.position.copy(origin);
     this.flashLight.color.set(color);
-    this.flashLight.intensity = 18;
-    this.spawnBurst(origin, 36, color, 0.32, 0.05, 8, 0.4, 0.05, THREE.AdditiveBlending);
+    this.flashLight.intensity = 32;
+    this.flashOverlay.style.opacity = "0.16";
+    this.spawnBurst(origin, 68, color, 0.46, 0.065, 13, 0.45, 0.04, THREE.AdditiveBlending);
+    this.spawnBurst(origin, 42, 0x707780, 0.9, 0.09, 5.5, 0.7, 0.24);
   }
 
   bioSplash(origin: THREE.Vector3, intensity = 1, color: THREE.ColorRepresentation = 0xd61f68): void {
