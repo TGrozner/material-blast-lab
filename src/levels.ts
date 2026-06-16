@@ -4,6 +4,8 @@ import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { PhysicsWorld, type ScoreRole } from "./physics";
 
 type TriggerType = "gelTank" | "springPad" | "shockCanister";
+const PANEL_TILE_SIZE = 6.4;
+const panelRenderMaterials = new Map<string, THREE.Material>();
 
 export interface LevelContext {
   physics: PhysicsWorld;
@@ -589,18 +591,30 @@ function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
   const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, spec.rotationY ?? 0, 0));
   const floorStep = spec.size.y - 0.012;
   const columnCenter = (spec.columns - 1) * 0.5;
-  for (let floor = 0; floor < spec.floors; floor += 1) {
-    for (let column = 0; column < spec.columns; column += 1) {
-      const offsetX = (column - columnCenter) * (spec.size.x + 0.035);
-      const offsetZ = (spec.stagger ?? 0) * (column - columnCenter) * 0.28;
-      const local = new THREE.Vector3(offsetX, spec.size.y * 0.5 + floor * floorStep, offsetZ);
+  const neutralLod = spec.scoreRole === "neutral";
+  const floorGroupSize = neutralLod ? 2 : 1;
+  const columnGroupSize = neutralLod ? 2 : 1;
+  for (let floor = 0; floor < spec.floors; floor += floorGroupSize) {
+    for (let column = 0; column < spec.columns; column += columnGroupSize) {
+      const groupFloors = Math.min(floorGroupSize, spec.floors - floor);
+      const groupColumns = Math.min(columnGroupSize, spec.columns - column);
+      const groupColumnCenter = column + (groupColumns - 1) * 0.5;
+      const groupHeight = spec.size.y * groupFloors - 0.012 * Math.max(0, groupFloors - 1);
+      const groupSize = new THREE.Vector3(
+        spec.size.x * groupColumns + 0.035 * Math.max(0, groupColumns - 1),
+        groupHeight,
+        spec.size.z
+      );
+      const offsetX = (groupColumnCenter - columnCenter) * (spec.size.x + 0.035);
+      const offsetZ = (spec.stagger ?? 0) * (groupColumnCenter - columnCenter) * 0.28;
+      const local = new THREE.Vector3(offsetX, groupHeight * 0.5 + floor * floorStep, offsetZ);
       local.applyQuaternion(rotation);
       const object = context.physics.addDynamicBox({
         label: spec.label,
         material,
         renderMaterial: roleRenderMaterial(context.materials, spec.materialId, spec.scoreRole),
         position: spec.position.clone().add(local),
-        size: spec.size,
+        size: groupSize,
         rotation,
         category: "structure",
         scoreRole: spec.scoreRole,
@@ -608,25 +622,26 @@ function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
         canFracture: true,
         destructible: true,
         bodyType: "fixed",
-        scoreValue: spec.scoreValue,
+        scoreValue: spec.scoreValue * groupColumns * groupFloors,
         sleeping: true,
         friction: Math.max(0.86, material.friction),
         restitution: Math.min(0.08, material.restitution),
         linearDamping: 0.72,
         angularDamping: 1.35,
-        additionalMass: spec.size.x * spec.size.y * spec.size.z * 3.5
+        additionalMass: groupSize.x * groupSize.y * groupSize.z * 3.5
       });
       decorateBuildingCell(object.mesh, {
-        size: spec.size,
+        size: groupSize,
         materialId: spec.materialId,
         scoreRole: spec.scoreRole,
         style: spec.style,
-        floor,
+        floor: floor + groupFloors - 1,
         column,
         floors: spec.floors,
         columns: spec.columns
       });
       object.mesh.userData.disposeMaterial = true;
+      object.mesh.castShadow = spec.scoreRole !== "neutral";
     }
   }
 }
@@ -886,25 +901,15 @@ function addPanel(
   layer = 0
 ): void {
   const panelDepthOffset = Math.max(0, layer);
-  const tileSize = 2.15;
-  const columns = Math.max(1, Math.ceil(width / tileSize));
-  const rows = Math.max(1, Math.ceil(depth / tileSize));
+  const columns = Math.max(1, Math.ceil(width / PANEL_TILE_SIZE));
+  const rows = Math.max(1, Math.ceil(depth / PANEL_TILE_SIZE));
   const tileWidth = width / columns;
   const tileDepth = depth / rows;
   const physicsMaterial = context.materials.get(panelMaterialId(name));
+  const renderMaterial = panelRenderMaterial(color, opacity, panelDepthOffset);
 
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
-      const renderMaterial = new THREE.MeshBasicMaterial({
-        color,
-        transparent: opacity < 1,
-        opacity,
-        depthWrite: opacity >= 1,
-        side: THREE.DoubleSide,
-        polygonOffset: panelDepthOffset > 0,
-        polygonOffsetFactor: -panelDepthOffset,
-        polygonOffsetUnits: -panelDepthOffset
-      });
       const object = context.physics.addDynamicBox({
         label: name,
         material: physicsMaterial,
@@ -928,9 +933,29 @@ function addPanel(
       object.mesh.castShadow = false;
       object.mesh.receiveShadow = true;
       object.mesh.renderOrder = panelDepthOffset * 0.1;
-      object.mesh.userData.disposeMaterial = true;
+      object.mesh.userData.disposeMaterial = false;
     }
   }
+}
+
+function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, panelDepthOffset: number): THREE.Material {
+  const key = `${color}:${opacity}:${panelDepthOffset}`;
+  const existing = panelRenderMaterials.get(key);
+  if (existing) {
+    return existing;
+  }
+  const material = new THREE.MeshBasicMaterial({
+    color,
+    transparent: opacity < 1,
+    opacity,
+    depthWrite: opacity >= 1,
+    side: THREE.DoubleSide,
+    polygonOffset: panelDepthOffset > 0,
+    polygonOffsetFactor: -panelDepthOffset,
+    polygonOffsetUnits: -panelDepthOffset
+  });
+  panelRenderMaterials.set(key, material);
+  return material;
 }
 
 function panelMaterialId(name: string): MaterialId {
@@ -1008,9 +1033,6 @@ function addStreetLight(context: LevelContext, x: number, z: number): void {
     scoreValue: 6
   });
   lamp.mesh.userData.disposeMaterial = true;
-  const glow = new THREE.PointLight(0xffd48a, 0.32, 2.6, 2.2);
-  glow.position.set(0.02, -0.09, 0);
-  lamp.mesh.add(glow);
 }
 
 function addBillboard(context: LevelContext, x: number, z: number, color: THREE.ColorRepresentation): void {

@@ -26,9 +26,18 @@ interface VehicleVisualOptions {
 }
 
 const sharedMaterials = new Map<string, THREE.Material>();
+const childBoxGeometryCache = new Map<string, THREE.BoxGeometry>();
+const childCylinderGeometryCache = new Map<string, THREE.CylinderGeometry>();
+const childSphereGeometryCache = new Map<string, THREE.SphereGeometry>();
 
 export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisualOptions): void {
   const palette = paletteFor(options.style, options.scoreRole);
+  if (options.scoreRole === "neutral") {
+    if (options.floor === options.floors - 1) {
+      addChildBox(mesh, options.size.x * 1.04, 0.04, options.size.z * 1.04, palette.roof, { y: options.size.y * 0.5 + 0.03 });
+    }
+    return;
+  }
   addFacadeSkin(mesh, options.size, palette.facade, 0.016);
   addWindowRows(mesh, options);
   addVerticalTrim(mesh, options.size, palette.trim, options.column === 0, options.column === options.columns - 1);
@@ -196,11 +205,11 @@ function addChildBox(
     rotationZ?: number;
   } = {}
 ): void {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), typeof materialRef === "string" ? material(materialRef) : materialRef);
+  const mesh = new THREE.Mesh(sharedChildBoxGeometry(width, height, depth), typeof materialRef === "string" ? material(materialRef) : materialRef);
   mesh.position.set(transform.x ?? 0, transform.y ?? 0, transform.z ?? 0);
   mesh.rotation.set(transform.rotationX ?? 0, transform.rotationY ?? 0, transform.rotationZ ?? 0);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
   parent.add(mesh);
 }
 
@@ -220,13 +229,13 @@ function addChildCylinder(
   } = {}
 ): void {
   const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 24),
+    sharedChildCylinderGeometry(radiusTop, radiusBottom, height),
     typeof materialRef === "string" ? material(materialRef) : materialRef
   );
   mesh.position.set(transform.x ?? 0, transform.y ?? 0, transform.z ?? 0);
   mesh.rotation.set(transform.rotationX ?? 0, transform.rotationY ?? 0, transform.rotationZ ?? 0);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
   parent.add(mesh);
 }
 
@@ -240,10 +249,10 @@ function addChildSphere(
     z?: number;
   } = {}
 ): void {
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 24, 14), typeof materialRef === "string" ? material(materialRef) : materialRef);
+  const mesh = new THREE.Mesh(sharedChildSphereGeometry(radius), typeof materialRef === "string" ? material(materialRef) : materialRef);
   mesh.position.set(transform.x ?? 0, transform.y ?? 0, transform.z ?? 0);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
   parent.add(mesh);
 }
 
@@ -388,4 +397,40 @@ function createMaterial(key: string): THREE.Material {
     default:
       return new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0 });
   }
+}
+
+function sharedChildBoxGeometry(width: number, height: number, depth: number): THREE.BoxGeometry {
+  const key = `${width.toFixed(3)}:${height.toFixed(3)}:${depth.toFixed(3)}`;
+  const existing = childBoxGeometryCache.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.BoxGeometry(width, height, depth);
+  geometry.userData.sharedGeometry = true;
+  childBoxGeometryCache.set(key, geometry);
+  return geometry;
+}
+
+function sharedChildCylinderGeometry(radiusTop: number, radiusBottom: number, height: number): THREE.CylinderGeometry {
+  const key = `${radiusTop.toFixed(3)}:${radiusBottom.toFixed(3)}:${height.toFixed(3)}`;
+  const existing = childCylinderGeometryCache.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 24);
+  geometry.userData.sharedGeometry = true;
+  childCylinderGeometryCache.set(key, geometry);
+  return geometry;
+}
+
+function sharedChildSphereGeometry(radius: number): THREE.SphereGeometry {
+  const key = radius.toFixed(3);
+  const existing = childSphereGeometryCache.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.SphereGeometry(radius, 24, 14);
+  geometry.userData.sharedGeometry = true;
+  childSphereGeometryCache.set(key, geometry);
+  return geometry;
 }

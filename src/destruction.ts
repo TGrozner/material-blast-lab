@@ -42,6 +42,16 @@ interface BlastSample {
   distance: number;
 }
 
+interface BlastRecord {
+  object: PhysicsObject;
+  material: MaterialDefinition;
+  sample: BlastSample;
+  falloff: number;
+  energy: number;
+}
+
+const MAX_FRACTURES_PER_EXPLOSION = 34;
+
 export class DestructibleObject {
   constructor(readonly object: PhysicsObject) {}
 }
@@ -57,7 +67,8 @@ export class DestructionSystem {
 
   explode(origin: THREE.Vector3, blastStrength: number, blastRadius: number): ExplosionResult {
     const snapshot = this.physics.getDynamicObjects();
-    const fractureQueue: Array<{ object: PhysicsObject; energy: number }> = [];
+    const records: BlastRecord[] = [];
+    const fractureCandidates: Array<{ object: PhysicsObject; energy: number }> = [];
     const dustColors: THREE.Color[] = [];
     const affectedObjects: ExplosionAffectedObject[] = [];
     let affectedBodies = 0;
@@ -76,11 +87,24 @@ export class DestructionSystem {
         continue;
       }
 
-      affectedBodies += 1;
       const falloff = (1 - sample.distance / blastRadius) ** 2;
       const volume = Math.max(0.08, object.dimensions.x * object.dimensions.y * object.dimensions.z);
       const energy = (blastStrength * falloff * 1.7) / Math.max(0.5, material.massFactor) + volume * 0.35;
-      const fractured = object.destructible && object.canFracture && energy > material.fractureThreshold;
+      records.push({ object, material, sample, falloff, energy });
+      if (object.destructible && object.canFracture && energy > material.fractureThreshold) {
+        fractureCandidates.push({ object, energy });
+      }
+    }
+
+    const fractureQueue = fractureCandidates
+      .sort((a, b) => b.energy - a.energy)
+      .slice(0, MAX_FRACTURES_PER_EXPLOSION);
+    const fracturedIds = new Set(fractureQueue.map((entry) => entry.object.id));
+
+    for (const record of records) {
+      const { object, material, sample, falloff, energy } = record;
+      const fractured = fracturedIds.has(object.id);
+      affectedBodies += 1;
 
       const wholeBodyScale = this.wholeBodyImpulseScale(object, fractured);
       const impulseMagnitude = ((blastStrength * falloff) / Math.max(0.5, material.massFactor)) * wholeBodyScale;
@@ -95,7 +119,6 @@ export class DestructionSystem {
       }
 
       if (fractured) {
-        fractureQueue.push({ object, energy });
         dustColors.push(material.dustColor);
       }
       const weightedDamage = Math.round(object.scoreValue * Math.min(1.8, energy / Math.max(1, material.fractureThreshold)));
@@ -294,8 +317,11 @@ export class DestructionSystem {
 
   private createFragmentPlans(size: THREE.Vector3, material: MaterialDefinition, energy: number): FragmentPlan[] {
     const [minCount, maxCount] = material.fragmentCount;
-    const energyBonus = Math.min(8, Math.floor(Math.max(0, energy - material.fractureThreshold) / 8));
-    const count = clampInt(randInt(minCount, maxCount) + energyBonus, minCount, maxCount + 8);
+    const fragmentBudget = maxFragmentsFor(material.id);
+    const minBudget = Math.min(minCount, fragmentBudget);
+    const maxBudget = Math.max(minBudget, Math.min(maxCount + 4, fragmentBudget));
+    const energyBonus = Math.min(4, Math.floor(Math.max(0, energy - material.fractureThreshold) / 10));
+    const count = clampInt(randInt(minCount, maxCount) + energyBonus, minBudget, maxBudget);
     const plans: FragmentPlan[] = [];
 
     for (let i = 0; i < count; i += 1) {
@@ -450,4 +476,21 @@ function clamp(value: number, min: number, max: number): number {
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.floor(clamp(value, min, max));
+}
+
+function maxFragmentsFor(materialId: MaterialId): number {
+  switch (materialId) {
+    case "glass":
+      return 14;
+    case "bioGel":
+    case "foam":
+      return 12;
+    case "wood":
+    case "concrete":
+      return 11;
+    case "metal":
+      return 9;
+    default:
+      return 10;
+  }
 }

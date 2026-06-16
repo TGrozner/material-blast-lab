@@ -32,6 +32,8 @@ export class GameUI {
   private readonly root: HTMLDivElement;
   private readonly projectileValue: HTMLSpanElement;
   private readonly chamberValue: HTMLSpanElement;
+  private readonly objectiveValue: HTMLSpanElement;
+  private readonly protectedValue: HTMLElement;
   private readonly powerValue: HTMLSpanElement;
   private readonly sizeValue: HTMLSpanElement;
   private readonly shotsValue: HTMLSpanElement;
@@ -42,6 +44,8 @@ export class GameUI {
   private readonly scorePanel: HTMLDivElement;
   private readonly projectileButtons = new Map<ProjectileId, HTMLButtonElement>();
   private scoreWasVisible = false;
+  private renderedScore: ScoreBreakdown | null = null;
+  private activeProjectileId: ProjectileId | null = null;
 
   constructor(private readonly callbacks: UICallbacks) {
     installStyles();
@@ -89,6 +93,8 @@ export class GameUI {
 
     this.projectileValue = this.requireElement("[data-role='projectile']");
     this.chamberValue = this.requireElement("[data-role='chamber']");
+    this.objectiveValue = this.requireElement("[data-role='objective']");
+    this.protectedValue = this.requireElement("[data-role='protected']");
     this.powerValue = this.requireElement("[data-role='power']");
     this.sizeValue = this.requireElement("[data-role='size']");
     this.shotsValue = this.requireElement("[data-role='shots']");
@@ -123,39 +129,48 @@ export class GameUI {
   }
 
   update(state: UIState): void {
-    this.projectileValue.textContent = state.projectile.shortName;
-    this.projectileValue.title = state.projectile.name;
-    this.chamberValue.textContent = state.levelName;
-    this.chamberValue.title = state.levelDescription;
-    this.requireElement("[data-role='objective']").textContent = state.objective;
-    this.requireElement("[data-role='protected']").textContent = state.protectedBrief;
-    this.powerValue.textContent = `${Math.round(state.powerScale * 100)}%`;
-    this.sizeValue.textContent = `${Math.round(state.sizeScale * 100)}%`;
-    this.shotsValue.textContent = state.shotAvailable ? "READY" : "SPENT";
-    this.bodyValue.textContent = String(state.bodyCount);
-    this.fpsValue.textContent = `${state.fps} FPS`;
-    this.statusValue.textContent = state.status;
-    this.fireButton.disabled = !state.shotAvailable;
+    setText(this.projectileValue, state.projectile.shortName);
+    setTitle(this.projectileValue, state.projectile.name);
+    setText(this.chamberValue, state.levelName);
+    setTitle(this.chamberValue, state.levelDescription);
+    setText(this.objectiveValue, state.objective);
+    setText(this.protectedValue, state.protectedBrief);
+    setText(this.powerValue, `${Math.round(state.powerScale * 100)}%`);
+    setText(this.sizeValue, `${Math.round(state.sizeScale * 100)}%`);
+    setText(this.shotsValue, state.shotAvailable ? "READY" : "SPENT");
+    setText(this.bodyValue, String(state.bodyCount));
+    setText(this.fpsValue, `${state.fps} FPS`);
+    setText(this.statusValue, state.status);
+    if (this.fireButton.disabled === state.shotAvailable) {
+      this.fireButton.disabled = !state.shotAvailable;
+    }
 
-    for (const [id, button] of this.projectileButtons) {
-      button.classList.toggle("is-active", id === state.projectileId);
-      button.setAttribute("aria-pressed", String(id === state.projectileId));
+    if (this.activeProjectileId !== state.projectileId) {
+      for (const [id, button] of this.projectileButtons) {
+        const active = id === state.projectileId;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      }
+      this.activeProjectileId = state.projectileId;
     }
 
     if (state.score) {
       const shouldRevealScore = !this.scoreWasVisible;
       this.scorePanel.classList.add("is-visible");
-      this.scorePanel.innerHTML = `
-        <div class="hud__score-title">${state.score.shotName} - ${state.score.containmentRating}</div>
-        <div><span>Target Damage</span><strong>${state.score.targetDamage}</strong></div>
-        <div><span>City Chaos</span><strong>${state.score.cityChaos}</strong></div>
-        <div><span>Contamination Purge</span><strong>${state.score.contaminationPurge}</strong></div>
-        <div><span>Chain Bonus</span><strong>${state.score.chainReactionBonus}</strong></div>
-        <div><span>Chain Hits</span><strong>${state.score.chainReactionCount}${state.score.maxChainCombo > 1 ? ` / x${state.score.maxChainCombo}` : ""}</strong></div>
-        <div><span>Protected Penalty</span><strong class="is-penalty">-${state.score.protectedPenalty}</strong></div>
-        <div><span>Motion Bonus</span><strong>${state.score.remainingDebrisMotion}</strong></div>
-        <div class="hud__score-total"><span>Total</span><strong>${state.score.totalScore}</strong></div>
-      `;
+      if (this.renderedScore !== state.score) {
+        this.scorePanel.innerHTML = `
+          <div class="hud__score-title">${state.score.shotName} - ${state.score.containmentRating}</div>
+          <div><span>Target Damage</span><strong>${state.score.targetDamage}</strong></div>
+          <div><span>City Chaos</span><strong>${state.score.cityChaos}</strong></div>
+          <div><span>Contamination Purge</span><strong>${state.score.contaminationPurge}</strong></div>
+          <div><span>Chain Bonus</span><strong>${state.score.chainReactionBonus}</strong></div>
+          <div><span>Chain Hits</span><strong>${state.score.chainReactionCount}${state.score.maxChainCombo > 1 ? ` / x${state.score.maxChainCombo}` : ""}</strong></div>
+          <div><span>Protected Penalty</span><strong class="is-penalty">-${state.score.protectedPenalty}</strong></div>
+          <div><span>Motion Bonus</span><strong>${state.score.remainingDebrisMotion}</strong></div>
+          <div class="hud__score-total"><span>Total</span><strong>${state.score.totalScore}</strong></div>
+        `;
+        this.renderedScore = state.score;
+      }
       this.scoreWasVisible = true;
       if (shouldRevealScore) {
         window.requestAnimationFrame(() => {
@@ -163,9 +178,12 @@ export class GameUI {
         });
       }
     } else {
-      this.scoreWasVisible = false;
-      this.scorePanel.classList.remove("is-visible");
-      this.scorePanel.innerHTML = "";
+      if (this.scoreWasVisible || this.renderedScore) {
+        this.scoreWasVisible = false;
+        this.renderedScore = null;
+        this.scorePanel.classList.remove("is-visible");
+        this.scorePanel.innerHTML = "";
+      }
     }
   }
 
@@ -179,6 +197,18 @@ export class GameUI {
       throw new Error(`Missing UI element ${selector}`);
     }
     return element;
+  }
+}
+
+function setText(element: HTMLElement, value: string): void {
+  if (element.textContent !== value) {
+    element.textContent = value;
+  }
+}
+
+function setTitle(element: HTMLElement, value: string): void {
+  if (element.title !== value) {
+    element.title = value;
   }
 }
 

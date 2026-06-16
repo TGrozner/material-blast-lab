@@ -88,14 +88,14 @@ class Game {
     }
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      powerPreference: "high-performance",
-      preserveDrawingBuffer: true
+      antialias: false,
+      powerPreference: "high-performance"
     });
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = false;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     app.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(0x080b10);
@@ -159,8 +159,10 @@ class Game {
     }
 
     this.cannon.update(delta, PROJECTILES[this.selectedProjectile], this.powerScale, this.sizeScale);
-    this.physics.step(delta * timeScale);
-    this.projectiles.update(delta * timeScale);
+    if (this.phase !== "aim") {
+      this.physics.step(delta * timeScale);
+      this.projectiles.update(delta * timeScale);
+    }
     const chainEvents = this.processDebrisImpacts();
     if (chainEvents.length > 0) {
       this.scorePopups.push(chainEvents);
@@ -243,8 +245,8 @@ class Game {
 
     const key = new THREE.DirectionalLight(0xf7fbff, 3.4);
     key.position.set(7, 11, 6);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
+    key.castShadow = false;
+    key.shadow.mapSize.set(1024, 1024);
     key.shadow.camera.near = 1;
     key.shadow.camera.far = 60;
     key.shadow.camera.left = -22;
@@ -358,6 +360,7 @@ class Game {
       materials: this.materials,
       addDecoration: (object) => this.addDecoration(object)
     });
+    this.renderer.shadowMap.needsUpdate = true;
     this.status = `${this.currentLevel().name}: ${this.currentLevel().objective}`;
     this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
   }
@@ -409,15 +412,26 @@ class Game {
     }
 
     let best: { point: THREE.Vector3; object: PhysicsObject; distance: number } | null = null;
-    for (const object of this.physics.getDynamicObjects()) {
+    for (const object of this.physics.objects.values()) {
       if (object.id === active.object.id || object.category === "projectile" || object.isDebris) {
         continue;
       }
-      const objectPosition = vectorFromRapier(object.body.translation());
-      const distance = distancePointToSegment(objectPosition, previous, current);
+      const objectPosition = object.body.translation();
       const threshold = active.radius + Math.min(1.25, object.radius * 0.55);
-      if (distance < threshold && (!best || distance < best.distance)) {
-        best = { point: objectPosition.lerp(current, 0.35), object, distance };
+      if (
+        objectPosition.x < Math.min(previous.x, current.x) - threshold ||
+        objectPosition.x > Math.max(previous.x, current.x) + threshold ||
+        objectPosition.y < Math.min(previous.y, current.y) - threshold ||
+        objectPosition.y > Math.max(previous.y, current.y) + threshold ||
+        objectPosition.z < Math.min(previous.z, current.z) - threshold ||
+        objectPosition.z > Math.max(previous.z, current.z) + threshold
+      ) {
+        continue;
+      }
+      const distanceSq = distancePointToSegmentSq(objectPosition, previous, current);
+      const thresholdSq = threshold * threshold;
+      if (distanceSq < thresholdSq && (!best || distanceSq < best.distance)) {
+        best = { point: new THREE.Vector3(objectPosition.x, objectPosition.y, objectPosition.z).lerp(current, 0.35), object, distance: distanceSq };
       }
     }
 
@@ -590,7 +604,7 @@ class Game {
   }
 
   private isSceneSettled(): boolean {
-    for (const object of this.physics.getDynamicObjects()) {
+    for (const object of this.physics.objects.values()) {
       if (object.category === "projectile" || object.bodyType === "fixed" || object.body.isSleeping()) {
         continue;
       }
@@ -758,21 +772,37 @@ function isChainTarget(object: PhysicsObject): boolean {
   return object.category !== "projectile" && !object.isDebris && object.destructible && object.canFracture;
 }
 
-function distancePointToSegment(point: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): number {
-  const segment = b.clone().sub(a);
-  const lengthSq = segment.lengthSq();
+function distancePointToSegmentSq(point: { x: number; y: number; z: number }, a: THREE.Vector3, b: THREE.Vector3): number {
+  const segmentX = b.x - a.x;
+  const segmentY = b.y - a.y;
+  const segmentZ = b.z - a.z;
+  const lengthSq = segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
   if (lengthSq < 0.0001) {
-    return point.distanceTo(a);
+    const dx = point.x - a.x;
+    const dy = point.y - a.y;
+    const dz = point.z - a.z;
+    return dx * dx + dy * dy + dz * dz;
   }
-  const t = THREE.MathUtils.clamp(point.clone().sub(a).dot(segment) / lengthSq, 0, 1);
-  return point.distanceTo(a.add(segment.multiplyScalar(t)));
+  const pointX = point.x - a.x;
+  const pointY = point.y - a.y;
+  const pointZ = point.z - a.z;
+  const t = THREE.MathUtils.clamp((pointX * segmentX + pointY * segmentY + pointZ * segmentZ) / lengthSq, 0, 1);
+  const closestX = a.x + segmentX * t;
+  const closestY = a.y + segmentY * t;
+  const closestZ = a.z + segmentZ * t;
+  const dx = point.x - closestX;
+  const dy = point.y - closestY;
+  const dz = point.z - closestZ;
+  return dx * dx + dy * dy + dz * dz;
 }
 
 function disposeObject(object: THREE.Object3D): void {
   const disposedMaterials = new Set<THREE.Material>();
   object.traverse((child) => {
     if (child instanceof THREE.Mesh) {
-      child.geometry.dispose();
+      if (child.geometry.userData.sharedGeometry !== true) {
+        child.geometry.dispose();
+      }
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       for (const material of materials) {
         if (disposedMaterials.has(material)) {

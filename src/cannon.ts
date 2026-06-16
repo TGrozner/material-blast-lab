@@ -27,6 +27,8 @@ export class Cannon {
   private pitch = -0.18;
   private recoil = 0;
   private charge = 0;
+  private trajectoryDirty = true;
+  private trajectoryKey = "";
 
   constructor(private readonly scene: THREE.Scene) {
     this.group.position.copy(this.basePosition);
@@ -82,6 +84,7 @@ export class Cannon {
     this.yaw = THREE.MathUtils.clamp(pointer.x * 0.52, -0.72, 0.72);
     this.pitch = THREE.MathUtils.clamp(-0.18 + pointer.y * 0.24, -0.38, 0.42);
     this.updateTransforms();
+    this.trajectoryDirty = true;
   }
 
   aimAtWorldPoint(point: THREE.Vector3, muzzleSpeed?: number): void {
@@ -93,6 +96,7 @@ export class Cannon {
     this.yaw = THREE.MathUtils.clamp(Math.atan2(direction.x, -direction.z), -0.72, 0.72);
     this.pitch = THREE.MathUtils.clamp(this.solveBallisticPitch(direction, muzzleSpeed), -0.38, 0.42);
     this.updateTransforms();
+    this.trajectoryDirty = true;
   }
 
   update(deltaSeconds: number, projectile: ProjectileDefinition, powerScale: number, sizeScale: number): void {
@@ -105,7 +109,12 @@ export class Cannon {
     trajectoryMaterial.color.copy(projectile.color);
     trajectoryMaterial.opacity = 0.78 + Math.sin(this.charge * Math.PI * 2) * 0.08;
     this.barrel.position.z = -1.18 + this.recoil;
-    this.updateTrajectory(projectile, powerScale, sizeScale);
+    const nextTrajectoryKey = `${projectile.id}:${powerScale.toFixed(3)}:${sizeScale.toFixed(3)}`;
+    if (this.trajectory.visible && (this.trajectoryDirty || nextTrajectoryKey !== this.trajectoryKey)) {
+      this.updateTrajectory(projectile, powerScale, sizeScale);
+      this.trajectoryDirty = false;
+      this.trajectoryKey = nextTrajectoryKey;
+    }
   }
 
   fireKick(): void {
@@ -133,6 +142,9 @@ export class Cannon {
   }
 
   setTrajectoryVisible(visible: boolean): void {
+    if (visible && !this.trajectory.visible) {
+      this.trajectoryDirty = true;
+    }
     this.trajectory.visible = visible;
   }
 

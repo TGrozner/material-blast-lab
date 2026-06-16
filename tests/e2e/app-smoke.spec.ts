@@ -19,7 +19,8 @@ test("renders the city trial, keeps the mobile HUD contained, and fires one shot
   await expect(page.locator("canvas")).toBeVisible();
   await expect.poll(() => page.evaluate(hasRenderableCanvasSize)).toBe(true);
   await expect.poll(() => page.evaluate(hasWebglContext)).toBe(true);
-  await expect.poll(() => page.evaluate(currentBodyCount)).toBeGreaterThan(500);
+  await expect.poll(() => page.evaluate(currentBodyCount)).toBeGreaterThan(350);
+  await expect.poll(() => page.evaluate(currentBodyCount)).toBeLessThan(700);
   await expect(page.evaluate(isHudWithinViewport)).resolves.toBe(true);
 
   await page.keyboard.press("Space");

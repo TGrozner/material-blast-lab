@@ -4,7 +4,7 @@ interface ParticleBurst {
   points: THREE.Points;
   material: THREE.PointsMaterial;
   positions: Float32Array;
-  velocities: THREE.Vector3[];
+  velocities: Float32Array;
   life: number;
   maxLife: number;
   gravity: number;
@@ -25,6 +25,9 @@ interface Splatter {
 }
 
 export class ParticleSystem {
+  private static readonly maxBursts = 12;
+  private static readonly maxSplatters = 26;
+
   private readonly bursts: ParticleBurst[] = [];
   private readonly shockwaves: Shockwave[] = [];
   private readonly splatters: Splatter[] = [];
@@ -99,13 +102,15 @@ export class ParticleSystem {
         continue;
       }
 
-      for (let p = 0; p < burst.velocities.length; p += 1) {
-        const velocity = burst.velocities[p];
-        velocity.y -= burst.gravity * deltaSeconds;
-        velocity.multiplyScalar(Math.max(0, 1 - burst.drag * deltaSeconds));
-        burst.positions[p * 3] += velocity.x * deltaSeconds;
-        burst.positions[p * 3 + 1] += velocity.y * deltaSeconds;
-        burst.positions[p * 3 + 2] += velocity.z * deltaSeconds;
+      const damping = Math.max(0, 1 - burst.drag * deltaSeconds);
+      for (let p = 0; p < burst.velocities.length; p += 3) {
+        burst.velocities[p + 1] -= burst.gravity * deltaSeconds;
+        burst.velocities[p] *= damping;
+        burst.velocities[p + 1] *= damping;
+        burst.velocities[p + 2] *= damping;
+        burst.positions[p] += burst.velocities[p] * deltaSeconds;
+        burst.positions[p + 1] += burst.velocities[p + 1] * deltaSeconds;
+        burst.positions[p + 2] += burst.velocities[p + 2] * deltaSeconds;
       }
       burst.points.geometry.attributes.position.needsUpdate = true;
       burst.material.opacity = (1 - t) ** 1.25;
@@ -185,6 +190,7 @@ export class ParticleSystem {
     mesh.renderOrder = 2;
     this.scene.add(mesh);
     this.splatters.push({ mesh, life: 0, maxLife: 8 });
+    this.trimSplatters();
   }
 
   private spawnBurst(
@@ -200,14 +206,16 @@ export class ParticleSystem {
   ): void {
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
-    const velocities: THREE.Vector3[] = [];
+    const velocities = new Float32Array(count * 3);
     const baseColor = new THREE.Color(color);
 
     for (let i = 0; i < count; i += 1) {
       const direction = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.9 + 0.15, Math.random() - 0.5).normalize();
       const velocity = direction.multiplyScalar(speed * (0.3 + Math.random() * 0.85));
       velocity.add(new THREE.Vector3((Math.random() - 0.5) * speed * 0.18, Math.random() * speed * 0.15, (Math.random() - 0.5) * speed * 0.18));
-      velocities.push(velocity);
+      velocities[i * 3] = velocity.x;
+      velocities[i * 3 + 1] = velocity.y;
+      velocities[i * 3 + 2] = velocity.z;
 
       positions[i * 3] = origin.x + (Math.random() - 0.5) * 0.24;
       positions[i * 3 + 1] = origin.y + (Math.random() - 0.5) * 0.24;
@@ -236,6 +244,31 @@ export class ParticleSystem {
     points.frustumCulled = false;
     this.scene.add(points);
     this.bursts.push({ points, material, positions, velocities, life: 0, maxLife, gravity, drag });
+    this.trimBursts();
+  }
+
+  private trimBursts(): void {
+    while (this.bursts.length > ParticleSystem.maxBursts) {
+      const burst = this.bursts.shift();
+      if (!burst) {
+        return;
+      }
+      this.scene.remove(burst.points);
+      burst.points.geometry.dispose();
+      burst.material.dispose();
+    }
+  }
+
+  private trimSplatters(): void {
+    while (this.splatters.length > ParticleSystem.maxSplatters) {
+      const splatter = this.splatters.shift();
+      if (!splatter) {
+        return;
+      }
+      this.scene.remove(splatter.mesh);
+      splatter.mesh.geometry.dispose();
+      (splatter.mesh.material as THREE.Material).dispose();
+    }
   }
 }
 

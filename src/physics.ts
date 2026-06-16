@@ -150,7 +150,7 @@ export class PhysicsWorld {
     ).setFriction(0.95);
     this.world.createCollider(colliderDesc, body);
 
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(options.size.x, options.size.y, options.size.z), options.material);
+    const mesh = new THREE.Mesh(sharedBoxGeometry(options.size), options.material);
     mesh.name = options.label;
     mesh.position.copy(options.position);
     mesh.receiveShadow = true;
@@ -200,9 +200,12 @@ export class PhysicsWorld {
       .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
     const collider = this.world.createCollider(colliderDesc, body);
 
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(options.size.x, options.size.y, options.size.z), options.renderMaterial);
+    const mesh = new THREE.Mesh(
+      options.isDebris ? new THREE.BoxGeometry(options.size.x, options.size.y, options.size.z) : sharedBoxGeometry(options.size),
+      options.renderMaterial
+    );
     mesh.name = options.label ?? options.material.name;
-    mesh.castShadow = true;
+    mesh.castShadow = !options.isDebris;
     mesh.receiveShadow = true;
     mesh.position.copy(options.position);
     mesh.quaternion.copy(rotation);
@@ -274,7 +277,7 @@ export class PhysicsWorld {
       options.renderMaterial
     );
     mesh.name = options.label ?? options.material.name;
-    mesh.castShadow = true;
+    mesh.castShadow = !options.isDebris;
     mesh.receiveShadow = true;
     mesh.position.copy(options.position);
     mesh.userData.physicsId = this.nextId;
@@ -369,7 +372,9 @@ export class PhysicsWorld {
   clearStatics(): void {
     for (const mesh of this.staticMeshes) {
       this.scene.remove(mesh);
-      mesh.geometry.dispose();
+      if (mesh.geometry.userData.sharedGeometry !== true) {
+        mesh.geometry.dispose();
+      }
     }
     this.staticMeshes.length = 0;
   }
@@ -430,7 +435,9 @@ function disposeMeshTree(root: THREE.Mesh): void {
     if (!(child instanceof THREE.Mesh)) {
       return;
     }
-    child.geometry.dispose();
+    if (child.geometry.userData.sharedGeometry !== true) {
+      child.geometry.dispose();
+    }
     if (child.userData.disposeMaterial === true) {
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       for (const material of materials) {
@@ -438,4 +445,18 @@ function disposeMeshTree(root: THREE.Mesh): void {
       }
     }
   });
+}
+
+const boxGeometryCache = new Map<string, THREE.BoxGeometry>();
+
+function sharedBoxGeometry(size: THREE.Vector3): THREE.BoxGeometry {
+  const key = `${size.x.toFixed(3)}:${size.y.toFixed(3)}:${size.z.toFixed(3)}`;
+  const existing = boxGeometryCache.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+  geometry.userData.sharedGeometry = true;
+  boxGeometryCache.set(key, geometry);
+  return geometry;
 }

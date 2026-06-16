@@ -6,6 +6,7 @@ interface ScorePopup {
   position: THREE.Vector3;
   life: number;
   maxLife: number;
+  visible: boolean;
 }
 
 export class ScorePopupLayer {
@@ -13,16 +14,26 @@ export class ScorePopupLayer {
   private readonly chainMeter: HTMLDivElement;
   private readonly popups: ScorePopup[] = [];
   private readonly scratch = new THREE.Vector3();
+  private readonly updateViewport = () => this.refreshViewport();
   private chainMeterLife = 0;
+  private chainMeterVisible = false;
+  private viewportWidth = window.innerWidth;
+  private viewportHeight = window.innerHeight;
+  private viewportOffsetX = 0;
+  private viewportOffsetY = 0;
 
   constructor() {
     installScorePopupStyles();
+    this.refreshViewport();
     this.root = document.createElement("div");
     this.root.className = "score-popups";
     this.chainMeter = document.createElement("div");
     this.chainMeter.className = "chain-meter";
     this.root.appendChild(this.chainMeter);
     document.body.appendChild(this.root);
+    window.addEventListener("resize", this.updateViewport);
+    window.visualViewport?.addEventListener("resize", this.updateViewport);
+    window.visualViewport?.addEventListener("scroll", this.updateViewport);
   }
 
   push(events: ScoreEvent[]): void {
@@ -46,7 +57,8 @@ export class ScorePopupLayer {
         element,
         position: event.position.clone(),
         life: 0,
-        maxLife: event.kind === "chain" ? 1.85 + Math.min(0.75, ((event.combo ?? 1) - 1) * 0.18) : 1.35
+        maxLife: event.kind === "chain" ? 1.85 + Math.min(0.75, ((event.combo ?? 1) - 1) * 0.18) : 1.35,
+        visible: true
       });
     }
   }
@@ -54,14 +66,8 @@ export class ScorePopupLayer {
   update(deltaSeconds: number, camera: THREE.Camera): void {
     if (this.chainMeterLife > 0) {
       this.chainMeterLife = Math.max(0, this.chainMeterLife - deltaSeconds);
-      this.chainMeter.classList.toggle("is-visible", this.chainMeterLife > 0);
+      this.setChainMeterVisible(this.chainMeterLife > 0);
     }
-
-    const viewport = window.visualViewport;
-    const width = viewport?.width ?? window.innerWidth;
-    const height = viewport?.height ?? window.innerHeight;
-    const offsetX = viewport?.offsetLeft ?? 0;
-    const offsetY = viewport?.offsetTop ?? 0;
 
     for (let i = this.popups.length - 1; i >= 0; i -= 1) {
       const popup = this.popups[i];
@@ -75,12 +81,15 @@ export class ScorePopupLayer {
 
       this.scratch.copy(popup.position).project(camera);
       const onScreen = this.scratch.z > -1 && this.scratch.z < 1;
-      popup.element.style.display = onScreen ? "block" : "none";
+      if (popup.visible !== onScreen) {
+        popup.visible = onScreen;
+        popup.element.style.display = onScreen ? "block" : "none";
+      }
       if (!onScreen) {
         continue;
       }
-      const x = offsetX + (this.scratch.x * 0.5 + 0.5) * width;
-      const y = offsetY + (-this.scratch.y * 0.5 + 0.5) * height - easeOutCubic(t) * 34;
+      const x = this.viewportOffsetX + (this.scratch.x * 0.5 + 0.5) * this.viewportWidth;
+      const y = this.viewportOffsetY + (-this.scratch.y * 0.5 + 0.5) * this.viewportHeight - easeOutCubic(t) * 34;
       const scale = THREE.MathUtils.lerp(0.92, 1.08, Math.min(1, t * 3));
       popup.element.style.opacity = String(Math.max(0, 1 - Math.max(0, t - 0.62) / 0.38));
       popup.element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${scale})`;
@@ -93,12 +102,16 @@ export class ScorePopupLayer {
     }
     this.popups.length = 0;
     this.chainMeterLife = 0;
+    this.chainMeterVisible = false;
     this.chainMeter.className = "chain-meter";
     this.chainMeter.textContent = "";
   }
 
   dispose(): void {
     this.clear();
+    window.removeEventListener("resize", this.updateViewport);
+    window.visualViewport?.removeEventListener("resize", this.updateViewport);
+    window.visualViewport?.removeEventListener("scroll", this.updateViewport);
     this.root.remove();
   }
 
@@ -106,7 +119,23 @@ export class ScorePopupLayer {
     const combo = event.combo ?? 1;
     this.chainMeterLife = 2.75;
     this.chainMeter.className = `chain-meter is-visible ${chainPopupClass(combo)}`;
+    this.chainMeterVisible = true;
     this.chainMeter.textContent = `${event.label}  +${event.points}`;
+  }
+
+  private setChainMeterVisible(visible: boolean): void {
+    if (this.chainMeterVisible !== visible) {
+      this.chainMeterVisible = visible;
+      this.chainMeter.classList.toggle("is-visible", visible);
+    }
+  }
+
+  private refreshViewport(): void {
+    const viewport = window.visualViewport;
+    this.viewportWidth = viewport?.width ?? window.innerWidth;
+    this.viewportHeight = viewport?.height ?? window.innerHeight;
+    this.viewportOffsetX = viewport?.offsetLeft ?? 0;
+    this.viewportOffsetY = viewport?.offsetTop ?? 0;
   }
 }
 
