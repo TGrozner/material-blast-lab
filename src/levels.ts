@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { decorateBuildingCell, decorateCityVehicle, type BuildingVisualStyle } from "./cityVisuals";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { PhysicsWorld, type ScoreRole } from "./physics";
+import type { ArcadeBonusThreshold } from "./arcade";
 
 type TriggerType = "gelTank" | "springPad" | "shockCanister";
 const PANEL_TILE_SIZE = 6.4;
@@ -19,7 +20,26 @@ export interface TestChamber {
   description: string;
   objective: string;
   protectedBrief: string;
+  mission: ArcadeMissionFields;
   setup(context: LevelContext): void;
+}
+
+export interface ArcadeMissionFields {
+  arc: "city-containment";
+  order: number;
+  targetZone: string;
+  protectedZones: string[];
+  scoreThresholds: {
+    oneStar: number;
+    twoStar: number;
+    threeStar: number;
+  };
+  targetDamageThreshold: number;
+  protectedDamageLimit: number;
+  cleanBlastLimit: number;
+  bonusThreshold: ArcadeBonusThreshold;
+  bonusObjective: string;
+  briefingHint: string;
 }
 
 export const TEST_CHAMBERS: TestChamber[] = [
@@ -28,7 +48,24 @@ export const TEST_CHAMBERS: TestChamber[] = [
     name: "Quarantine Junction",
     description: "A dense evacuated city packed below the high siege battery.",
     objective: "Crush the orange hazard core and let real debris collisions cascade through the packed blocks.",
-    protectedBrief: "Avoid the blue clinic and evac shelter zones. Clean Blast needs 2200+ score, 900+ target damage, and protected damage under 120.",
+    protectedBrief: "Avoid the blue clinic and evac shelter zones. Cleaner routes protect them while still feeding the hazard core chain.",
+    mission: {
+      arc: "city-containment",
+      order: 1,
+      targetZone: "hazard-core",
+      protectedZones: ["clinic", "evac-shelter"],
+      scoreThresholds: {
+        oneStar: 1800,
+        twoStar: 2200,
+        threeStar: 2850
+      },
+      targetDamageThreshold: 900,
+      protectedDamageLimit: 260,
+      cleanBlastLimit: 120,
+      bonusThreshold: { metric: "chainReactionCount", minimum: 2 },
+      bonusObjective: "Start a debris chain through the inner foundry annex before the score reveal.",
+      briefingHint: "The central orange district is dense enough for chain debris, but the blue clinic and shelter punish splashy misses."
+    },
     setup: (context) => {
       addCityGround(context);
       spawnTargetDistrict(context);
@@ -36,8 +73,85 @@ export const TEST_CHAMBERS: TestChamber[] = [
       spawnNeutralCityBlocks(context);
       spawnInfillCityBlocks(context);
       spawnDenseUrbanGrid(context);
+      spawnCascadeHighRiseCorridors(context);
+      spawnVacantLotInfill(context);
       spawnStreetSetpieces(context);
     }
+  },
+  {
+    id: "breaker-yard",
+    name: "Breaker Yard",
+    description: "A short material yard built to teach direct target damage.",
+    objective: "Punch through the orange concrete breaker spine before the cargo skids absorb the shot.",
+    protectedBrief: "Keep the blue relay booth and coolant kiosk standing. Two stars need 900+ score, 420+ target damage, and protected damage under 90.",
+    mission: {
+      arc: "city-containment",
+      order: 2,
+      targetZone: "breaker-spine",
+      protectedZones: ["relay-booth", "coolant-kiosk"],
+      scoreThresholds: {
+        oneStar: 650,
+        twoStar: 900,
+        threeStar: 1200
+      },
+      targetDamageThreshold: 420,
+      protectedDamageLimit: 150,
+      cleanBlastLimit: 90,
+      bonusThreshold: { metric: "targetDamage", minimum: 420 },
+      bonusObjective: "Fracture the breaker spine without toppling either blue booth.",
+      briefingHint: "A straight slug or small hammer shot should clear the orange spine without needing city-scale chaos."
+    },
+    setup: (context) => setupCompactChamber(context, BREAKER_YARD_CHAMBER)
+  },
+  {
+    id: "gel-switchback",
+    name: "Gel Switchback",
+    description: "A compact lane where soft cargo can turn one hit into a chain.",
+    objective: "Use the orange glass column and foam skids to splash the gel depot from the side.",
+    protectedBrief: "The blue lab archive sits behind the switchback. Two stars need 1100+ score, 500+ target damage, and protected damage under 100.",
+    mission: {
+      arc: "city-containment",
+      order: 3,
+      targetZone: "gel-depot",
+      protectedZones: ["lab-archive"],
+      scoreThresholds: {
+        oneStar: 780,
+        twoStar: 1100,
+        threeStar: 1450
+      },
+      targetDamageThreshold: 500,
+      protectedDamageLimit: 170,
+      cleanBlastLimit: 100,
+      bonusThreshold: { metric: "chainReactionCount", minimum: 2 },
+      bonusObjective: "Bounce debris through both orange target stacks before scoring settles.",
+      briefingHint: "The foam lane is cheap score by itself; use it to steer debris into the glass gel column."
+    },
+    setup: (context) => setupCompactChamber(context, GEL_SWITCHBACK_CHAMBER)
+  },
+  {
+    id: "clinic-crosswind",
+    name: "Clinic Crosswind",
+    description: "A restraint drill with protected structures close to the target lane.",
+    objective: "Cut the orange depot pair apart while leaving the clinic crosswalk readable.",
+    protectedBrief: "Blue clinic and triage pods flank the line. Two stars need 1250+ score, 560+ target damage, and protected damage under 80.",
+    mission: {
+      arc: "city-containment",
+      order: 4,
+      targetZone: "depot-pair",
+      protectedZones: ["clinic-crosswalk", "triage-pod"],
+      scoreThresholds: {
+        oneStar: 860,
+        twoStar: 1250,
+        threeStar: 1680
+      },
+      targetDamageThreshold: 560,
+      protectedDamageLimit: 140,
+      cleanBlastLimit: 80,
+      bonusThreshold: { metric: "targetDamage", minimum: 560 },
+      bonusObjective: "Clear both orange depot stacks while keeping the blue crosswalk penalty low.",
+      briefingHint: "Aim for one target stack and let its debris do the second hit; broad splash is risky here."
+    },
+    setup: (context) => setupCompactChamber(context, CLINIC_CROSSWIND_CHAMBER)
   }
 ];
 
@@ -54,6 +168,221 @@ interface BuildingSpec {
   style: BuildingVisualStyle;
   stagger?: number;
   rotationY?: number;
+}
+
+interface CompactPanelSpec {
+  name: string;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  color: THREE.ColorRepresentation;
+  opacity: number;
+}
+
+interface CompactCargoSpec {
+  label: string;
+  materialId: MaterialId;
+  position: THREE.Vector3;
+  size: THREE.Vector3;
+  rotationY: number;
+}
+
+interface CompactVehicleSpec {
+  label: string;
+  position: THREE.Vector3;
+  size: THREE.Vector3;
+  accent: THREE.ColorRepresentation;
+  rotationY?: number;
+}
+
+interface CompactChamberSpec {
+  panels: CompactPanelSpec[];
+  stacks: BuildingSpec[];
+  cargo: CompactCargoSpec[];
+  vehicles: CompactVehicleSpec[];
+  lights: Array<[number, number]>;
+  billboards: Array<[number, number, THREE.ColorRepresentation]>;
+}
+
+const BREAKER_YARD_CHAMBER: CompactChamberSpec = {
+  panels: [
+    { name: "breaker yard floor", x: 0, z: -1.1, width: 12.6, depth: 10.2, color: 0x1d252b, opacity: 1 },
+    { name: "breaker target zone", x: 0, z: -3.15, width: 4.8, depth: 2.8, color: 0xff7138, opacity: 0.35 },
+    { name: "relay protected zone", x: -4.3, z: -0.5, width: 2.4, depth: 2.7, color: 0x64d9ff, opacity: 0.4 },
+    { name: "coolant protected zone", x: 4.2, z: 1.25, width: 2.5, depth: 2.3, color: 0x64d9ff, opacity: 0.4 },
+    { name: "breaker lane marking", x: 0, z: 2.35, width: 7.8, depth: 0.16, color: 0xf3c96d, opacity: 0.72 }
+  ],
+  stacks: [
+    compactStack("Breaker spine", "concrete", 0, -3.15, 0.58, 0.54, 0.62, 3, 4, "target", "breaker-spine", 78, "industrial"),
+    compactStack("Relay booth", "glass", -4.35, -0.5, 0.54, 0.58, 0.58, 2, 2, "protected", "relay-booth", 150, "civic"),
+    compactStack("Coolant kiosk", "wood", 4.2, 1.25, 0.6, 0.5, 0.62, 2, 2, "protected", "coolant-kiosk", 135, "shelter"),
+    compactStack("Scrap buffer", "metal", -2.15, 0.95, 0.56, 0.42, 0.56, 2, 3, "neutral", "scrap-buffer", 30, "warehouse", Math.PI * 0.08),
+    compactStack("Foam absorber row", "foam", 2.2, -0.2, 0.5, 0.36, 0.52, 2, 4, "neutral", "absorber-row", 22, "market", -Math.PI * 0.08)
+  ],
+  cargo: [
+    compactCargo("Metal brake drum", "metal", -1.6, 0.31, 1.1, 0.62, 0.48, 0.52, Math.PI * 0.12),
+    compactCargo("Foam safety crate", "foam", 1.65, 0.28, 0.8, 0.58, 0.38, 0.52, -Math.PI * 0.14),
+    compactCargo("Wood pallet stop", "wood", -0.45, 0.35, 1.75, 0.72, 0.42, 0.56, Math.PI * 0.5),
+    compactCargo("Glass meter case", "glass", 3.05, 0.3, -2.15, 0.48, 0.58, 0.48, -Math.PI * 0.08)
+  ],
+  vehicles: [
+    { label: "Breaker yard tug", position: new THREE.Vector3(-3.05, 0.31, 2.25), size: new THREE.Vector3(0.76, 0.38, 0.5), accent: 0xffb14f, rotationY: Math.PI * 0.5 }
+  ],
+  lights: [
+    [-5.3, -4.8],
+    [5.25, -4.8],
+    [-5.25, 3.25],
+    [5.25, 3.25]
+  ],
+  billboards: [[0, -5.55, 0xff8f38]]
+};
+
+const GEL_SWITCHBACK_CHAMBER: CompactChamberSpec = {
+  panels: [
+    { name: "gel switchback floor", x: 0.2, z: -0.55, width: 13.6, depth: 10.8, color: 0x1a2229, opacity: 1 },
+    { name: "gel target zone", x: 1.85, z: -3.25, width: 4.4, depth: 2.6, color: 0xff7138, opacity: 0.34 },
+    { name: "switchback target zone", x: -2.2, z: 0.8, width: 3.3, depth: 2.5, color: 0xff7138, opacity: 0.28 },
+    { name: "archive protected zone", x: 4.75, z: 1.55, width: 2.6, depth: 2.8, color: 0x64d9ff, opacity: 0.4 },
+    { name: "switchback road marking", x: -0.3, z: 2.95, width: 8.8, depth: 0.14, color: 0xf3c96d, opacity: 0.68 },
+    { name: "gel spill water channel", x: -5.1, z: -2.9, width: 0.9, depth: 4.6, color: 0x194c64, opacity: 0.85 }
+  ],
+  stacks: [
+    compactStack("Gel column", "glass", 1.85, -3.2, 0.5, 0.72, 0.5, 3, 3, "target", "gel-depot", 88, "glassTower", Math.PI * 0.06),
+    compactStack("Switchback mixer", "foam", -2.25, 0.75, 0.56, 0.42, 0.58, 2, 4, "target", "gel-depot", 62, "market", -Math.PI * 0.08),
+    compactStack("Lab archive", "glass", 4.75, 1.55, 0.52, 0.6, 0.54, 3, 2, "protected", "lab-archive", 160, "civic"),
+    compactStack("Canal screens", "metal", -5.0, -0.25, 0.44, 0.42, 0.64, 2, 4, "neutral", "canal-screens", 26, "warehouse", Math.PI * 0.5),
+    compactStack("Soft baffle row", "foam", -0.1, 2.85, 0.48, 0.34, 0.5, 2, 5, "neutral", "soft-baffle", 20, "market")
+  ],
+  cargo: [
+    compactCargo("Gel pump crate", "glass", 0.35, 0.28, -1.4, 0.46, 0.56, 0.46, Math.PI * 0.12),
+    compactCargo("Foam redirect skid", "foam", -1.15, 0.26, -0.75, 0.78, 0.36, 0.52, -Math.PI * 0.22),
+    compactCargo("Wood service pallet", "wood", 2.85, 0.31, -0.75, 0.7, 0.42, 0.56, Math.PI * 0.18),
+    compactCargo("Metal pump case", "metal", -3.55, 0.3, 2.15, 0.72, 0.44, 0.48, Math.PI * 0.5),
+    compactCargo("Foam corner skid", "foam", 1.15, 0.25, 2.65, 0.72, 0.34, 0.5, Math.PI * 0.04)
+  ],
+  vehicles: [
+    { label: "Gel yard scooter", position: new THREE.Vector3(-4.25, 0.27, 1.65), size: new THREE.Vector3(0.58, 0.32, 0.42), accent: 0xff70b0, rotationY: Math.PI * 0.5 }
+  ],
+  lights: [
+    [-5.75, -4.8],
+    [5.85, -4.8],
+    [-5.75, 4.05],
+    [5.85, 4.05]
+  ],
+  billboards: [[-3.15, -4.75, 0xff6b93]]
+};
+
+const CLINIC_CROSSWIND_CHAMBER: CompactChamberSpec = {
+  panels: [
+    { name: "clinic crosswind floor", x: 0, z: -0.35, width: 14.2, depth: 11.2, color: 0x1b2329, opacity: 1 },
+    { name: "depot target zone west", x: -2.25, z: -2.45, width: 3.2, depth: 2.8, color: 0xff7138, opacity: 0.34 },
+    { name: "depot target zone east", x: 2.45, z: -2.45, width: 3.2, depth: 2.8, color: 0xff7138, opacity: 0.34 },
+    { name: "clinic protected zone", x: -4.75, z: 1.35, width: 2.8, depth: 2.9, color: 0x64d9ff, opacity: 0.42 },
+    { name: "triage protected zone", x: 4.85, z: 1.55, width: 2.8, depth: 2.6, color: 0x64d9ff, opacity: 0.42 },
+    { name: "clinic crosswalk stripe", x: 0, z: 1.6, width: 8.5, depth: 0.16, color: 0xd7e2e8, opacity: 0.74 },
+    { name: "clinic lane marking", x: 0, z: -4.35, width: 9.3, depth: 0.14, color: 0xf3c96d, opacity: 0.68 }
+  ],
+  stacks: [
+    compactStack("West depot core", "concrete", -2.25, -2.45, 0.58, 0.52, 0.58, 3, 3, "target", "depot-pair", 82, "industrial", Math.PI * 0.04),
+    compactStack("East depot core", "metal", 2.45, -2.45, 0.52, 0.46, 0.64, 3, 3, "target", "depot-pair", 80, "warehouse", -Math.PI * 0.04),
+    compactStack("Clinic crosswalk pod", "glass", -4.75, 1.35, 0.52, 0.62, 0.54, 3, 2, "protected", "clinic-crosswalk", 170, "civic"),
+    compactStack("Triage pod", "wood", 4.85, 1.55, 0.58, 0.5, 0.62, 2, 3, "protected", "triage-pod", 150, "shelter"),
+    compactStack("Market windbreak", "foam", 0, 3.25, 0.5, 0.36, 0.5, 2, 5, "neutral", "market-windbreak", 22, "market"),
+    compactStack("North service rail", "metal", 0.1, -5.15, 0.5, 0.38, 0.52, 2, 5, "neutral", "service-rail", 24, "warehouse")
+  ],
+  cargo: [
+    compactCargo("Depot hinge crate", "metal", -0.2, 0.3, -1.25, 0.72, 0.44, 0.5, Math.PI * 0.5),
+    compactCargo("Foam clinic bumper", "foam", -3.15, 0.24, 0.05, 0.8, 0.34, 0.48, -Math.PI * 0.08),
+    compactCargo("Wood triage bumper", "wood", 3.3, 0.29, 0.1, 0.74, 0.4, 0.5, Math.PI * 0.08),
+    compactCargo("Glass meter cart", "glass", 0.85, 0.29, 2.15, 0.48, 0.56, 0.48, Math.PI * 0.18)
+  ],
+  vehicles: [
+    { label: "Clinic supply van", position: new THREE.Vector3(-0.65, 0.32, 3.75), size: new THREE.Vector3(0.86, 0.42, 0.54), accent: 0x93f6ff, rotationY: Math.PI * 0.5 },
+    { label: "Depot service cart", position: new THREE.Vector3(5.75, 0.28, -3.95), size: new THREE.Vector3(0.58, 0.32, 0.44), accent: 0xffb55f }
+  ],
+  lights: [
+    [-6.25, -5.0],
+    [6.25, -5.0],
+    [-6.25, 4.35],
+    [6.25, 4.35]
+  ],
+  billboards: [[-1.95, -5.25, 0x7ee8ff]]
+};
+
+function compactStack(
+  label: string,
+  materialId: MaterialId,
+  x: number,
+  z: number,
+  width: number,
+  height: number,
+  depth: number,
+  floors: number,
+  columns: number,
+  scoreRole: ScoreRole,
+  zoneId: string,
+  scoreValue: number,
+  style: BuildingVisualStyle,
+  rotationY = 0,
+  stagger = 0
+): BuildingSpec {
+  return {
+    label,
+    materialId,
+    position: new THREE.Vector3(x, 0, z),
+    size: new THREE.Vector3(width, height, depth),
+    floors,
+    columns,
+    scoreRole,
+    zoneId,
+    scoreValue,
+    style,
+    rotationY,
+    stagger
+  };
+}
+
+function compactCargo(
+  label: string,
+  materialId: MaterialId,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  depth: number,
+  rotationY: number
+): CompactCargoSpec {
+  return {
+    label,
+    materialId,
+    position: new THREE.Vector3(x, y, z),
+    size: new THREE.Vector3(width, height, depth),
+    rotationY
+  };
+}
+
+function setupCompactChamber(context: LevelContext, spec: CompactChamberSpec): void {
+  spec.panels.forEach((panel, layer) => {
+    addPanel(context, panel.name, panel.x, panel.z, panel.width, panel.depth, panel.color, panel.opacity, layer);
+  });
+
+  for (const stack of spec.stacks) {
+    spawnBuildingStack(context, stack);
+  }
+  for (const cargo of spec.cargo) {
+    addStreetCargo(context, cargo.label, cargo.materialId, cargo.position, cargo.size, cargo.rotationY);
+  }
+  for (const vehicle of spec.vehicles) {
+    addCityVehicle(context, vehicle.label, vehicle.position, vehicle.size, vehicle.accent, vehicle.rotationY);
+  }
+  for (const [x, z] of spec.lights) {
+    addStreetLight(context, x, z);
+  }
+  for (const [x, z, color] of spec.billboards) {
+    addBillboard(context, x, z, color);
+  }
 }
 
 function spawnTargetDistrict(context: LevelContext): void {
@@ -586,6 +915,240 @@ function spawnDenseUrbanGrid(context: LevelContext): void {
   }
 }
 
+function spawnCascadeHighRiseCorridors(context: LevelContext): void {
+  const highRiseBlocks: BuildingSpec[] = [
+    {
+      label: "Hazard high-rise spine",
+      materialId: "concrete",
+      position: new THREE.Vector3(0.18, 0, -4.85),
+      size: new THREE.Vector3(0.54, 0.58, 0.58),
+      floors: 7,
+      columns: 4,
+      scoreRole: "target",
+      zoneId: "hazard-core",
+      scoreValue: 92,
+      style: "industrial",
+      stagger: 0.06
+    },
+    {
+      label: "Orange reactor offices",
+      materialId: "glass",
+      position: new THREE.Vector3(2.55, 0, -1.15),
+      size: new THREE.Vector3(0.45, 0.72, 0.46),
+      floors: 6,
+      columns: 4,
+      scoreRole: "target",
+      zoneId: "hazard-core",
+      scoreValue: 86,
+      style: "glassTower",
+      stagger: -0.04,
+      rotationY: -Math.PI * 0.06
+    },
+    {
+      label: "Cascade flats west",
+      materialId: "concrete",
+      position: new THREE.Vector3(-4.4, 0, -2.3),
+      size: new THREE.Vector3(0.52, 0.56, 0.54),
+      floors: 6,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "cascade-west",
+      scoreValue: 38,
+      style: "apartment",
+      stagger: 0.08,
+      rotationY: Math.PI * 0.04
+    },
+    {
+      label: "Cascade flats east",
+      materialId: "concrete",
+      position: new THREE.Vector3(4.65, 0, 0.95),
+      size: new THREE.Vector3(0.52, 0.56, 0.54),
+      floors: 6,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "cascade-east",
+      scoreValue: 38,
+      style: "apartment",
+      stagger: -0.08,
+      rotationY: -Math.PI * 0.04
+    },
+    {
+      label: "Midtown glass needles",
+      materialId: "glass",
+      position: new THREE.Vector3(-0.65, 0, 2.25),
+      size: new THREE.Vector3(0.42, 0.74, 0.42),
+      floors: 6,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "midtown-needles",
+      scoreValue: 36,
+      style: "glassTower",
+      stagger: 0.04
+    },
+    {
+      label: "Battery canyon towers",
+      materialId: "metal",
+      position: new THREE.Vector3(2.35, 0, 5.2),
+      size: new THREE.Vector3(0.5, 0.52, 0.56),
+      floors: 5,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "battery-canyon",
+      scoreValue: 34,
+      style: "warehouse",
+      stagger: -0.05
+    },
+    {
+      label: "West impact tenements",
+      materialId: "wood",
+      position: new THREE.Vector3(-7.8, 0, -2.55),
+      size: new THREE.Vector3(0.52, 0.52, 0.56),
+      floors: 5,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "west-impact",
+      scoreValue: 32,
+      style: "shelter",
+      stagger: 0.07,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "East impact tenements",
+      materialId: "glass",
+      position: new THREE.Vector3(8.25, 0, 2.55),
+      size: new THREE.Vector3(0.44, 0.68, 0.46),
+      floors: 6,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "east-impact",
+      scoreValue: 36,
+      style: "glassTower",
+      stagger: -0.04,
+      rotationY: Math.PI * 0.5
+    }
+  ];
+
+  for (const block of highRiseBlocks) {
+    spawnBuildingStack(context, block);
+  }
+}
+
+function spawnVacantLotInfill(context: LevelContext): void {
+  const infillBlocks: BuildingSpec[] = [
+    {
+      label: "North blindside towers",
+      materialId: "glass",
+      position: new THREE.Vector3(0.9, 0, -10.45),
+      size: new THREE.Vector3(0.44, 0.68, 0.46),
+      floors: 5,
+      columns: 6,
+      scoreRole: "neutral",
+      zoneId: "north-blindside",
+      scoreValue: 35,
+      style: "glassTower",
+      stagger: 0.04
+    },
+    {
+      label: "Northwest slab blocks",
+      materialId: "concrete",
+      position: new THREE.Vector3(-6.9, 0, -10.65),
+      size: new THREE.Vector3(0.52, 0.54, 0.56),
+      floors: 5,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "northwest-slabs",
+      scoreValue: 34,
+      style: "apartment",
+      stagger: -0.06
+    },
+    {
+      label: "Northeast service towers",
+      materialId: "metal",
+      position: new THREE.Vector3(7.9, 0, -10.25),
+      size: new THREE.Vector3(0.5, 0.5, 0.58),
+      floors: 4,
+      columns: 6,
+      scoreRole: "neutral",
+      zoneId: "northeast-service",
+      scoreValue: 32,
+      style: "warehouse",
+      stagger: 0.05
+    },
+    {
+      label: "West dead-zone apartments",
+      materialId: "concrete",
+      position: new THREE.Vector3(-14.15, 0, -2.45),
+      size: new THREE.Vector3(0.52, 0.54, 0.56),
+      floors: 5,
+      columns: 6,
+      scoreRole: "neutral",
+      zoneId: "west-dead-zone",
+      scoreValue: 34,
+      style: "apartment",
+      stagger: 0.06,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "West empty-lot markets",
+      materialId: "foam",
+      position: new THREE.Vector3(-14.05, 0, 5.7),
+      size: new THREE.Vector3(0.48, 0.42, 0.5),
+      floors: 4,
+      columns: 6,
+      scoreRole: "neutral",
+      zoneId: "west-empty-lot",
+      scoreValue: 25,
+      style: "market",
+      stagger: -0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "East dead-zone offices",
+      materialId: "glass",
+      position: new THREE.Vector3(16.15, 0, -0.25),
+      size: new THREE.Vector3(0.44, 0.66, 0.46),
+      floors: 5,
+      columns: 6,
+      scoreRole: "neutral",
+      zoneId: "east-dead-zone",
+      scoreValue: 35,
+      style: "glassTower",
+      stagger: 0.04,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Southeast impact condos",
+      materialId: "wood",
+      position: new THREE.Vector3(11.1, 0, 17.2),
+      size: new THREE.Vector3(0.52, 0.5, 0.56),
+      floors: 5,
+      columns: 6,
+      scoreRole: "neutral",
+      zoneId: "southeast-condos",
+      scoreValue: 31,
+      style: "shelter",
+      stagger: 0.06
+    },
+    {
+      label: "Southwest impact condos",
+      materialId: "concrete",
+      position: new THREE.Vector3(-10.35, 0, 17.0),
+      size: new THREE.Vector3(0.52, 0.54, 0.56),
+      floors: 5,
+      columns: 6,
+      scoreRole: "neutral",
+      zoneId: "southwest-condos",
+      scoreValue: 34,
+      style: "apartment",
+      stagger: -0.06
+    }
+  ];
+
+  for (const block of infillBlocks) {
+    spawnBuildingStack(context, block);
+  }
+}
+
 function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
   const material = context.materials.get(spec.materialId);
   const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, spec.rotationY ?? 0, 0));
@@ -609,6 +1172,8 @@ function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
       const offsetZ = (spec.stagger ?? 0) * (groupColumnCenter - columnCenter) * 0.28;
       const local = new THREE.Vector3(offsetX, groupHeight * 0.5 + floor * floorStep, offsetZ);
       local.applyQuaternion(rotation);
+      const isProtected = spec.scoreRole === "protected";
+      const isRagdollStructure = shouldRagdollBuildingStack(spec);
       const object = context.physics.addDynamicBox({
         label: spec.label,
         material,
@@ -621,14 +1186,16 @@ function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
         zoneId: spec.zoneId,
         canFracture: true,
         destructible: true,
-        bodyType: "fixed",
+        bodyType: isRagdollStructure ? "dynamic" : "fixed",
+        chainSource: !isProtected,
         scoreValue: spec.scoreValue * groupColumns * groupFloors,
         sleeping: true,
         friction: Math.max(0.86, material.friction),
         restitution: Math.min(0.08, material.restitution),
-        linearDamping: 0.72,
-        angularDamping: 1.35,
-        additionalMass: groupSize.x * groupSize.y * groupSize.z * 3.5
+        linearDamping: isRagdollStructure ? 0.58 : 0.72,
+        angularDamping: isRagdollStructure ? 1.05 : 1.35,
+        additionalMass: groupSize.x * groupSize.y * groupSize.z * (isRagdollStructure ? 3.3 : 3.8),
+        ccd: isRagdollStructure
       });
       decorateBuildingCell(object.mesh, {
         size: groupSize,
@@ -644,6 +1211,21 @@ function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
       object.mesh.castShadow = spec.scoreRole !== "neutral";
     }
   }
+}
+
+function shouldRagdollBuildingStack(spec: BuildingSpec): boolean {
+  if (spec.scoreRole === "protected") {
+    return false;
+  }
+  if (spec.scoreRole === "target") {
+    return spec.materialId === "glass" || spec.materialId === "foam";
+  }
+  return (
+    spec.zoneId.includes("cascade") ||
+    spec.zoneId.includes("impact") ||
+    spec.zoneId.includes("dead-zone") ||
+    spec.zoneId.includes("empty-lot")
+  );
 }
 
 function roleRenderMaterial(materials: MaterialCatalog, materialId: MaterialId, role: ScoreRole): THREE.Material {
@@ -743,7 +1325,9 @@ function spawnStreetSetpieces(context: LevelContext): void {
       scoreRole: "neutral",
       zoneId: "street",
       scoreValue: 12,
-      restitution: 0.45
+      restitution: 0.45,
+      chainSource: true,
+      ccd: true
     });
     object.mesh.userData.disposeMaterial = false;
   }
@@ -851,10 +1435,12 @@ function addCityVehicle(
     canFracture: true,
     destructible: true,
     scoreValue: 46,
+    chainSource: true,
     density: 1.35,
     restitution: 0.18,
     linearDamping: 0.08,
-    angularDamping: 0.2
+    angularDamping: 0.2,
+    ccd: true
   });
   object.mesh.userData.disposeMaterial = true;
   decorateCityVehicle(object.mesh, { size, accent });
@@ -882,9 +1468,11 @@ function addStreetCargo(
     canFracture: true,
     destructible: true,
     scoreValue: 24,
+    chainSource: true,
     restitution: materialId === "foam" ? 0.36 : 0.18,
     linearDamping: 0.08,
-    angularDamping: 0.18
+    angularDamping: 0.18,
+    ccd: true
   });
   object.mesh.userData.disposeMaterial = false;
 }
@@ -923,10 +1511,10 @@ function addPanel(
         category: "structure",
         scoreRole: "neutral",
         zoneId: "surface",
-        canFracture: true,
-        destructible: true,
+        canFracture: false,
+        destructible: false,
         bodyType: "fixed",
-        scoreValue: Math.max(1, Math.round(tileWidth * tileDepth * 0.35)),
+        scoreValue: 0,
         friction: 0.96,
         restitution: 0.04
       });

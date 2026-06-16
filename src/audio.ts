@@ -55,6 +55,15 @@ interface ChainImpactOptions {
   materialId: MaterialId;
 }
 
+interface AudioMixSettings {
+  master: number;
+  sfx: number;
+  ui: number;
+  rumble: number;
+}
+
+type AudioBus = "sfx" | "ui" | "rumble";
+
 const SAMPLE_PATHS: Record<SampleId, string> = {
   blastCrunchA: "audio/kenney-scifi/explosionCrunch_001.ogg",
   blastCrunchB: "audio/kenney-scifi/explosionCrunch_003.ogg",
@@ -101,14 +110,24 @@ const PROJECTILE_BLASTS: Record<ProjectileId, SampleId[]> = {
 };
 
 const SAMPLE_IDS = Object.keys(SAMPLE_PATHS) as SampleId[];
+const DEFAULT_MIX: AudioMixSettings = {
+  master: 0.88,
+  sfx: 0.96,
+  ui: 0.8,
+  rumble: 0.86
+};
 
 export class DestructionAudio {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
+  private sfxBus: GainNode | null = null;
+  private uiBus: GainNode | null = null;
+  private rumbleBus: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private loading: Promise<void> | null = null;
   private readonly buffers = new Map<SampleId, AudioBuffer>();
   private readonly cooldowns = new Map<string, number>();
+  private mix: AudioMixSettings = { ...DEFAULT_MIX };
 
   preload(): void {
     this.ensureAudio();
@@ -121,6 +140,56 @@ export class DestructionAudio {
       void context.resume();
     }
     void this.loadSamples();
+  }
+
+  setMasterVolume(value: number): void {
+    this.mix.master = THREE.MathUtils.clamp(value, 0, 1);
+    this.applyMix();
+  }
+
+  playLoadoutPreview(projectileId: ProjectileId, powerScale: number, sizeScale: number): void {
+    this.resume();
+    const pan = 0;
+    const intensity = THREE.MathUtils.clamp(0.7 + powerScale * 0.18 + sizeScale * 0.12, 0.7, 1.25);
+    this.playBuffer(this.pick(PROJECTILE_BLASTS[projectileId]), {
+      gain: 0.09 * intensity,
+      rate: projectileId === "gravity" ? 0.55 : this.randomRange(0.92, 1.14),
+      pan,
+      highpass: 180,
+      lowpass: projectileId === "pulse" ? 5000 : 2800
+    });
+    this.playUiTick(projectileId === "gravity" ? -0.18 : 0.18);
+  }
+
+  playUiTick(pan = 0): void {
+    this.resume();
+    this.playTone({ frequency: 880, duration: 0.045, gain: 0.028, bus: "ui", pan, type: "triangle" });
+  }
+
+  playUiReject(): void {
+    this.resume();
+    this.playTone({ frequency: 190, duration: 0.08, gain: 0.05, bus: "ui", pan: 0, type: "sawtooth", lowpass: 900 });
+    this.playTone({ frequency: 132, duration: 0.1, gain: 0.035, delay: 0.055, bus: "ui", pan: 0, type: "sawtooth", lowpass: 700 });
+  }
+
+  playScoreCeremony(totalScore: number, stars: number, completed: boolean): void {
+    this.resume();
+    const base = completed ? 220 : 146;
+    const steps = Math.max(1, stars + 1);
+    for (let i = 0; i < steps; i += 1) {
+      this.playTone({
+        frequency: base * (1 + i * 0.25),
+        duration: 0.16,
+        delay: i * 0.13,
+        gain: 0.065 - i * 0.006,
+        bus: "ui",
+        pan: THREE.MathUtils.lerp(-0.32, 0.32, steps <= 1 ? 0.5 : i / (steps - 1)),
+        type: "triangle"
+      });
+    }
+    const scoreLift = THREE.MathUtils.clamp(totalScore / 3200, 0.25, 1.45);
+    this.playRumble(0.12 * scoreLift, 0.72, completed ? 72 : 44, completed ? 34 : 24, 0, 0.05);
+    this.playNoiseBurst(completed ? 0.035 : 0.02, completed ? 0.46 : 0.28, 0, 400, completed ? 3600 : 1500, 0.1, "ui");
   }
 
   playCannonFire(projectileId: ProjectileId, powerScale: number, sizeScale: number): void {
@@ -252,29 +321,38 @@ export class DestructionAudio {
     }
     const context = new AudioContextCtor();
     const master = context.createGain();
-    master.gain.value = 0.82;
+    const sfxBus = context.createGain();
+    const uiBus = context.createGain();
+    const rumbleBus = context.createGain();
 
     const compressor = context.createDynamicsCompressor();
-    compressor.threshold.value = -12;
-    compressor.knee.value = 18;
-    compressor.ratio.value = 8;
-    compressor.attack.value = 0.005;
-    compressor.release.value = 0.22;
+    compressor.threshold.value = -10;
+    compressor.knee.value = 16;
+    compressor.ratio.value = 7;
+    compressor.attack.value = 0.004;
+    compressor.release.value = 0.24;
 
+    sfxBus.connect(master);
+    uiBus.connect(master);
+    rumbleBus.connect(master);
     master.connect(compressor);
     compressor.connect(context.destination);
 
     this.context = context;
     this.master = master;
+    this.sfxBus = sfxBus;
+    this.uiBus = uiBus;
+    this.rumbleBus = rumbleBus;
     this.noiseBuffer = this.createNoiseBuffer(context);
+    this.applyMix();
     return context;
   }
 
   private playBuffer(id: SampleId, options: BufferPlayOptions): void {
     const context = this.ensureAudio();
-    const master = this.master;
+    const output = this.outputForBus("sfx");
     const buffer = this.buffers.get(id);
-    if (!context || !master || !buffer) {
+    if (!context || !output || !buffer) {
       return;
     }
     const time = context.currentTime + (options.delay ?? 0);
@@ -310,7 +388,7 @@ export class DestructionAudio {
 
     current.connect(gain);
     gain.connect(panner);
-    panner.connect(master);
+    panner.connect(output);
     source.start(time);
   }
 
@@ -344,8 +422,8 @@ export class DestructionAudio {
 
   private playRumble(gainValue: number, duration: number, startFrequency: number, endFrequency: number, pan: number, delay = 0): void {
     const context = this.ensureAudio();
-    const master = this.master;
-    if (!context || !master) {
+    const output = this.outputForBus("rumble");
+    if (!context || !output) {
       return;
     }
     const time = context.currentTime + delay;
@@ -364,7 +442,7 @@ export class DestructionAudio {
 
     oscillator.connect(gain);
     gain.connect(panner);
-    panner.connect(master);
+    panner.connect(output);
     oscillator.start(time);
     oscillator.stop(time + duration + 0.08);
   }
@@ -375,11 +453,12 @@ export class DestructionAudio {
     pan: number,
     lowFrequency: number,
     highFrequency: number,
-    delay = 0
+    delay = 0,
+    bus: AudioBus = "sfx"
   ): void {
     const context = this.ensureAudio();
-    const master = this.master;
-    if (!context || !master || !this.noiseBuffer) {
+    const output = this.outputForBus(bus);
+    if (!context || !output || !this.noiseBuffer) {
       return;
     }
     const time = context.currentTime + delay;
@@ -409,9 +488,80 @@ export class DestructionAudio {
     bandpass.connect(lowpass);
     lowpass.connect(gain);
     gain.connect(panner);
-    panner.connect(master);
+    panner.connect(output);
     source.start(time);
     source.stop(time + duration + 0.04);
+  }
+
+  private playTone(options: {
+    frequency: number;
+    duration: number;
+    gain: number;
+    bus: AudioBus;
+    delay?: number;
+    pan?: number;
+    type?: OscillatorType;
+    lowpass?: number;
+  }): void {
+    const context = this.ensureAudio();
+    const output = this.outputForBus(options.bus);
+    if (!context || !output) {
+      return;
+    }
+    const time = context.currentTime + (options.delay ?? 0);
+    const oscillator = context.createOscillator();
+    oscillator.type = options.type ?? "sine";
+    oscillator.frequency.setValueAtTime(Math.max(20, options.frequency), time);
+
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, options.gain), time + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + Math.max(0.035, options.duration));
+
+    const panner = context.createStereoPanner();
+    panner.pan.value = THREE.MathUtils.clamp(options.pan ?? 0, -0.85, 0.85);
+
+    let current: AudioNode = oscillator;
+    if (options.lowpass) {
+      const filter = context.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = options.lowpass;
+      filter.Q.value = 0.5;
+      current.connect(filter);
+      current = filter;
+    }
+
+    current.connect(gain);
+    gain.connect(panner);
+    panner.connect(output);
+    oscillator.start(time);
+    oscillator.stop(time + options.duration + 0.04);
+  }
+
+  private applyMix(): void {
+    if (this.master) {
+      this.master.gain.value = this.mix.master;
+    }
+    if (this.sfxBus) {
+      this.sfxBus.gain.value = this.mix.sfx;
+    }
+    if (this.uiBus) {
+      this.uiBus.gain.value = this.mix.ui;
+    }
+    if (this.rumbleBus) {
+      this.rumbleBus.gain.value = this.mix.rumble;
+    }
+  }
+
+  private outputForBus(bus: AudioBus): GainNode | null {
+    switch (bus) {
+      case "sfx":
+        return this.sfxBus ?? this.master;
+      case "ui":
+        return this.uiBus ?? this.master;
+      case "rumble":
+        return this.rumbleBus ?? this.master;
+    }
   }
 
   private createNoiseBuffer(context: AudioContext): AudioBuffer {

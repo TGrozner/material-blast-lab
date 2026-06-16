@@ -1,13 +1,15 @@
 import { readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const JavaScriptObfuscator = require("javascript-obfuscator");
 
-const distDir = new URL("../dist/", import.meta.url).pathname;
+const defaultDistDir = fileURLToPath(new URL("../dist/", import.meta.url));
+const distDir = resolve(process.env.DIST_DIR ?? defaultDistDir);
 const distAssetsDir = join(distDir, "assets");
 const includeVendor = process.env.OBFUSCATE_VENDOR === "true";
 

@@ -15,6 +15,8 @@ export class CameraRig {
   private shakeTime = 0;
   private shakeDuration = 0;
   private shakeMagnitude = 0;
+  private shakeScale = 1;
+  private pixelRatioCap = 1.5;
 
   constructor(private readonly renderer: THREE.WebGLRenderer) {
     this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 180);
@@ -58,8 +60,24 @@ export class CameraRig {
     this.spectacle(point);
   }
 
+  setShakeScale(scale: number): void {
+    this.shakeScale = THREE.MathUtils.clamp(scale, 0, 1);
+    if (this.shakeScale === 0) {
+      this.shakeTime = 0;
+      this.shakeDuration = 0;
+      this.shakeMagnitude = 0;
+    }
+  }
+
+  setPixelRatioCap(cap: number): void {
+    this.pixelRatioCap = Math.max(0.75, cap);
+  }
+
   shake(magnitude: number, duration = 0.7): void {
-    this.shakeMagnitude = Math.max(this.shakeMagnitude, magnitude);
+    if (this.shakeScale <= 0) {
+      return;
+    }
+    this.shakeMagnitude = Math.max(this.shakeMagnitude, magnitude * this.shakeScale);
     this.shakeDuration = Math.max(this.shakeDuration, duration);
     this.shakeTime = Math.max(this.shakeTime, duration);
   }
@@ -69,11 +87,11 @@ export class CameraRig {
     this.previousShake.set(0, 0, 0);
 
     if (this.mode === "spectacle") {
-      this.spectacleYaw += deltaSeconds * 0.23;
-      const radius = 10.6;
+      this.spectacleYaw += deltaSeconds * 0.34;
+      const radius = 9.2;
       this.desiredPosition.set(
         this.desiredTarget.x + Math.sin(this.spectacleYaw) * radius,
-        this.desiredTarget.y + 6.2,
+        this.desiredTarget.y + 5.5,
         this.desiredTarget.z + Math.cos(this.spectacleYaw) * radius
       );
     }
@@ -104,7 +122,7 @@ export class CameraRig {
     this.camera.fov = height > width ? 62 : 60;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.pixelRatioCap);
     this.renderer.setSize(width, height);
   }
 }

@@ -17,7 +17,7 @@ export class Cannon {
   );
   private readonly glowRing = new THREE.Mesh(
     new THREE.TorusGeometry(0.46, 0.035, 8, 36),
-    new THREE.MeshBasicMaterial({ color: 0x8ff7ff })
+    new THREE.MeshBasicMaterial({ color: 0x8ff7ff, transparent: true, opacity: 0.8 })
   );
   private readonly trajectory: THREE.Line;
   private readonly trajectoryPositions = new Float32Array(48 * 3);
@@ -103,12 +103,17 @@ export class Cannon {
     this.recoil = THREE.MathUtils.damp(this.recoil, 0, 9, deltaSeconds);
     this.charge = (this.charge + deltaSeconds * 2.2) % 1;
     const material = this.glowRing.material as THREE.MeshBasicMaterial;
+    const chargePulse = Math.sin(this.charge * Math.PI * 2);
+    const pressure = THREE.MathUtils.clamp(0.76 + powerScale * 0.2 + sizeScale * 0.12, 0.85, 1.35);
     material.color.copy(projectile.color);
-    material.opacity = 0.7 + Math.sin(this.charge * Math.PI * 2) * 0.18;
+    material.opacity = THREE.MathUtils.clamp(0.54 + pressure * 0.22 + chargePulse * 0.16, 0.42, 0.95);
+    this.glowRing.scale.setScalar(0.88 + pressure * 0.16 + chargePulse * 0.035);
     const trajectoryMaterial = this.trajectory.material as THREE.LineBasicMaterial;
     trajectoryMaterial.color.copy(projectile.color);
-    trajectoryMaterial.opacity = 0.78 + Math.sin(this.charge * Math.PI * 2) * 0.08;
+    trajectoryMaterial.opacity = THREE.MathUtils.clamp(0.64 + pressure * 0.1 + chargePulse * 0.08, 0.55, 0.9);
     this.barrel.position.z = -1.18 + this.recoil;
+    const barrelPressure = 1 + (powerScale - 1) * 0.045 + (sizeScale - 1) * 0.035;
+    this.barrel.scale.set(1 + (sizeScale - 1) * 0.045, barrelPressure, 1);
     const nextTrajectoryKey = `${projectile.id}:${powerScale.toFixed(3)}:${sizeScale.toFixed(3)}`;
     if (this.trajectory.visible && (this.trajectoryDirty || nextTrajectoryKey !== this.trajectoryKey)) {
       this.updateTrajectory(projectile, powerScale, sizeScale);
@@ -117,8 +122,9 @@ export class Cannon {
     }
   }
 
-  fireKick(): void {
-    this.recoil = 0.72;
+  fireKick(powerScale = 1, sizeScale = 1): void {
+    this.recoil = 0.58 + powerScale * 0.18 + sizeScale * 0.1;
+    this.charge = 0.72;
   }
 
   getDirection(): THREE.Vector3 {

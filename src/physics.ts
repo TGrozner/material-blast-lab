@@ -13,6 +13,13 @@ export interface PhysicsCollisionEvent {
   started: boolean;
 }
 
+export interface PhysicsSurfaceCollisionEvent {
+  object: PhysicsObject;
+  surfaceLabel: string;
+  started: boolean;
+  impactVelocity: THREE.Vector3;
+}
+
 export interface PhysicsObject {
   id: number;
   label: string;
@@ -111,7 +118,14 @@ export class PhysicsWorld {
   private readonly maxDebris = 500;
   private readonly eventQueue = new RAPIER.EventQueue(true);
   private readonly colliderOwners = new Map<number, number>();
+  private readonly surfaceColliderLabels = new Map<number, string>();
   private readonly pendingCollisionEvents: Array<{ firstId: number; secondId: number; started: boolean }> = [];
+  private readonly pendingSurfaceCollisionEvents: Array<{
+    objectId: number;
+    surfaceLabel: string;
+    started: boolean;
+    impactVelocity: THREE.Vector3;
+  }> = [];
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -121,14 +135,30 @@ export class PhysicsWorld {
 
   step(deltaSeconds: number): void {
     this.pendingCollisionEvents.length = 0;
+    this.pendingSurfaceCollisionEvents.length = 0;
     this.accumulator += Math.min(deltaSeconds, 0.12);
     while (this.accumulator >= this.fixedTimestep) {
+      const preStepVelocities = this.capturePreStepVelocities();
       this.world.step(this.eventQueue);
       this.eventQueue.drainCollisionEvents((handle1, handle2, started) => {
         const firstId = this.colliderOwners.get(handle1);
         const secondId = this.colliderOwners.get(handle2);
         if (firstId !== undefined && secondId !== undefined) {
           this.pendingCollisionEvents.push({ firstId, secondId, started });
+          return;
+        }
+        const objectId = firstId ?? secondId;
+        const surfaceHandle = firstId === undefined ? handle1 : handle2;
+        const surfaceLabel = this.surfaceColliderLabels.get(surfaceHandle);
+        if (objectId !== undefined && surfaceLabel) {
+          const object = this.objects.get(objectId);
+          const fallbackVelocity = object ? vectorFromRapier(object.body.linvel()) : new THREE.Vector3();
+          this.pendingSurfaceCollisionEvents.push({
+            objectId,
+            surfaceLabel,
+            started,
+            impactVelocity: preStepVelocities.get(objectId)?.clone() ?? fallbackVelocity
+          });
         }
       });
       this.accumulator -= this.fixedTimestep;
@@ -148,7 +178,8 @@ export class PhysicsWorld {
       options.size.y * 0.5,
       options.size.z * 0.5
     ).setFriction(0.95);
-    this.world.createCollider(colliderDesc, body);
+    const collider = this.world.createCollider(colliderDesc, body);
+    this.surfaceColliderLabels.set(collider.handle, options.label);
 
     const mesh = new THREE.Mesh(sharedBoxGeometry(options.size), options.material);
     mesh.name = options.label;
@@ -341,6 +372,23 @@ export class PhysicsWorld {
     return events;
   }
 
+  drainSurfaceCollisionEvents(): PhysicsSurfaceCollisionEvent[] {
+    const events: PhysicsSurfaceCollisionEvent[] = [];
+    for (const event of this.pendingSurfaceCollisionEvents) {
+      const object = this.objects.get(event.objectId);
+      if (object) {
+        events.push({
+          object,
+          surfaceLabel: event.surfaceLabel,
+          started: event.started,
+          impactVelocity: event.impactVelocity.clone()
+        });
+      }
+    }
+    this.pendingSurfaceCollisionEvents.length = 0;
+    return events;
+  }
+
   removeObject(id: number): void {
     const object = this.objects.get(id);
     if (!object) {
@@ -397,6 +445,56 @@ export class PhysicsWorld {
     }
   }
 
+  destabilizeUnsupportedStructures(source: PhysicsObject, origin: THREE.Vector3): number {
+    if (source.category !== "structure" || source.isDebris) {
+      return 0;
+    }
+
+    const horizontalRadius = Math.max(1.05, Math.min(2.35, Math.max(source.dimensions.x, source.dimensions.z) * 2.8));
+    const sameStackRadius = horizontalRadius * 1.2;
+    const neighborRadius = horizontalRadius * 0.72;
+    const minY = origin.y + Math.max(0.06, source.dimensions.y * 0.34);
+    const maxY = origin.y + Math.max(2.4, source.dimensions.y * 6.4);
+    let destabilized = 0;
+
+    for (const object of this.objects.values()) {
+      if (!canDestabilizeStructure(source, object)) {
+        continue;
+      }
+
+      const position = object.body.translation();
+      if (position.y < minY || position.y > maxY) {
+        continue;
+      }
+
+      const sameStack = object.label === source.label || (object.zoneId !== undefined && object.zoneId === source.zoneId);
+      const radius = sameStack ? sameStackRadius : neighborRadius;
+      const dx = position.x - origin.x;
+      const dz = position.z - origin.z;
+      if (dx * dx + dz * dz > radius * radius) {
+        continue;
+      }
+
+      if (object.bodyType === "fixed") {
+        object.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+        object.bodyType = "dynamic";
+        object.body.setLinearDamping(0.68);
+        object.body.setAngularDamping(1.24);
+        object.body.setAdditionalMass(object.dimensions.x * object.dimensions.y * object.dimensions.z * 3.4, true);
+        object.body.enableCcd(true);
+      } else {
+        object.body.wakeUp();
+      }
+
+      const lateralScale = sameStack ? 0.16 : 0.08;
+      object.body.applyImpulse({ x: dx * lateralScale, y: -1.15, z: dz * lateralScale }, true);
+      object.body.applyTorqueImpulse({ x: dz * 0.035, y: 0, z: -dx * 0.035 }, true);
+      destabilized += 1;
+    }
+
+    return destabilized;
+  }
+
   private enforceDebrisCap(): void {
     this.compactDebrisQueue();
     while (this.debrisQueue.length > this.maxDebris) {
@@ -414,6 +512,20 @@ export class PhysicsWorld {
       }
     }
   }
+
+  private capturePreStepVelocities(): Map<number, THREE.Vector3> {
+    const velocities = new Map<number, THREE.Vector3>();
+    for (const [id, object] of this.objects) {
+      if (object.bodyType === "dynamic" && !object.body.isSleeping()) {
+        velocities.set(id, vectorFromRapier(object.body.linvel()));
+      }
+    }
+    return velocities;
+  }
+}
+
+function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
+  return new THREE.Vector3(v.x, v.y, v.z);
 }
 
 function scoreValueForSize(size: THREE.Vector3): number {
@@ -428,6 +540,23 @@ function defaultScoreRole(category?: PhysicsCategory, isDebris?: boolean): Score
     return "neutral";
   }
   return "target";
+}
+
+function canDestabilizeStructure(source: PhysicsObject, candidate: PhysicsObject): boolean {
+  if (
+    candidate.id === source.id ||
+    candidate.category !== "structure" ||
+    candidate.isDebris ||
+    !candidate.destructible ||
+    !candidate.canFracture ||
+    candidate.zoneId === "surface"
+  ) {
+    return false;
+  }
+  if (candidate.scoreRole === "protected") {
+    return source.scoreRole === "protected" && candidate.zoneId === source.zoneId;
+  }
+  return true;
 }
 
 function disposeMeshTree(root: THREE.Mesh): void {

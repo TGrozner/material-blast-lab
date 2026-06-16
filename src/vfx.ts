@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { decalAtlasTile } from "./visualAssets";
 
 interface ParticleBurst {
   points: THREE.Points;
@@ -33,6 +34,7 @@ export class ParticleSystem {
   private readonly splatters: Splatter[] = [];
   private readonly flashLight: THREE.PointLight;
   private readonly flashOverlay: HTMLDivElement;
+  private flashScale = 1;
 
   constructor(private readonly scene: THREE.Scene) {
     this.flashLight = new THREE.PointLight(0xbdf7ff, 0, 12, 2.3);
@@ -44,10 +46,18 @@ export class ParticleSystem {
     document.body.appendChild(this.flashOverlay);
   }
 
+  setFlashScale(scale: number): void {
+    this.flashScale = THREE.MathUtils.clamp(scale, 0, 1);
+    if (this.flashScale === 0) {
+      this.flashLight.intensity = 0;
+      this.flashOverlay.style.opacity = "0";
+    }
+  }
+
   explode(origin: THREE.Vector3, radius: number, dustColors: THREE.Color[]): void {
     this.flashLight.position.copy(origin);
-    this.flashLight.intensity = 42;
-    this.flashOverlay.style.opacity = "0.42";
+    this.flashLight.intensity = 42 * this.flashScale;
+    this.flashOverlay.style.opacity = String(0.42 * this.flashScale);
 
     this.spawnShockwave(origin, radius);
     this.spawnBurst(origin, 95, 0xffc65a, 0.95, 0.045, 16, 0.9, 0.05, THREE.AdditiveBlending);
@@ -68,8 +78,8 @@ export class ParticleSystem {
   muzzleFlash(origin: THREE.Vector3, color: THREE.ColorRepresentation): void {
     this.flashLight.position.copy(origin);
     this.flashLight.color.set(color);
-    this.flashLight.intensity = 32;
-    this.flashOverlay.style.opacity = "0.16";
+    this.flashLight.intensity = 32 * this.flashScale;
+    this.flashOverlay.style.opacity = String(0.16 * this.flashScale);
     this.spawnBurst(origin, 68, color, 0.46, 0.065, 13, 0.45, 0.04, THREE.AdditiveBlending);
     this.spawnBurst(origin, 42, 0x707780, 0.9, 0.09, 5.5, 0.7, 0.24);
   }
@@ -178,9 +188,11 @@ export class ParticleSystem {
     const geometry = new THREE.CircleGeometry(1, 18);
     const material = new THREE.MeshBasicMaterial({
       color,
+      map: decalAtlasTile(11),
       transparent: true,
       opacity: 0.58,
-      depthWrite: false
+      depthWrite: false,
+      alphaTest: 0.03
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(origin);

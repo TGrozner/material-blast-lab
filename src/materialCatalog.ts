@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { materialAtlasTile } from "./visualAssets";
 
 export type MaterialId = "wood" | "glass" | "concrete" | "metal" | "rubber" | "foam" | "bioGel";
 
@@ -185,6 +186,7 @@ export class MaterialCatalog {
         opacity: 0.42,
         roughness: 0.22,
         metalness: 0,
+        map: materialAtlasTile(8),
         transmission: 0.15,
         thickness: 0.3,
         depthWrite: false,
@@ -196,7 +198,8 @@ export class MaterialCatalog {
       return new THREE.MeshStandardMaterial({
         color: def.color,
         roughness: 0.38,
-        metalness: 0.82
+        metalness: 0.82,
+        map: materialAtlasTile(0)
       });
     }
 
@@ -204,7 +207,8 @@ export class MaterialCatalog {
       return new THREE.MeshStandardMaterial({
         color: def.color,
         roughness: 0.84,
-        metalness: 0.02
+        metalness: 0.02,
+        map: materialAtlasTile(6)
       });
     }
 
@@ -213,7 +217,7 @@ export class MaterialCatalog {
         color: def.color,
         roughness: 0.78,
         metalness: 0.0,
-        map: makeSpeckleTexture("#f8df8b", "#fff3c4", 0.22)
+        map: materialAtlasTile(7)
       });
     }
 
@@ -224,7 +228,7 @@ export class MaterialCatalog {
         metalness: 0,
         emissive: new THREE.Color(0x3a0018),
         emissiveIntensity: 0.22,
-        map: makeSpeckleTexture("#9f1850", "#f26aa0", 0.4)
+        map: materialAtlasTile(9)
       });
     }
 
@@ -233,7 +237,7 @@ export class MaterialCatalog {
         color: def.color,
         roughness: 0.65,
         metalness: 0,
-        map: makeWoodTexture()
+        map: materialAtlasTile(14)
       });
     }
 
@@ -241,73 +245,7 @@ export class MaterialCatalog {
       color: def.color,
       roughness: 0.93,
       metalness: 0,
-      map: makeSpeckleTexture("#777b75", "#a5a49d", 0.48)
+      map: materialAtlasTile(3)
     });
   }
-}
-
-function makeWoodTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = 192;
-  canvas.height = 192;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("2D canvas unavailable");
-  }
-
-  const gradient = ctx.createLinearGradient(0, 0, 192, 0);
-  gradient.addColorStop(0, "#7f461f");
-  gradient.addColorStop(0.5, "#c17b38");
-  gradient.addColorStop(1, "#8c4c22");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 192, 192);
-  ctx.globalAlpha = 0.42;
-  for (let y = 0; y < 192; y += 7) {
-    const wobble = Math.sin(y * 0.11) * 7 + Math.sin(y * 0.03) * 11;
-    ctx.strokeStyle = y % 21 === 0 ? "#522b14" : "#e0a55a";
-    ctx.lineWidth = y % 21 === 0 ? 1.8 : 0.9;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.bezierCurveTo(60, y + wobble, 118, y - wobble, 192, y + wobble * 0.4);
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(1.5, 1.5);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function makeSpeckleTexture(base: string, speckle: string, density: number): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = 160;
-  canvas.height = 160;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("2D canvas unavailable");
-  }
-
-  ctx.fillStyle = base;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (let i = 0; i < canvas.width * canvas.height * density * 0.02; i += 1) {
-    const x = Math.random() * canvas.width;
-    const y = Math.random() * canvas.height;
-    const r = Math.random() * 2.2 + 0.5;
-    ctx.globalAlpha = Math.random() * 0.5 + 0.2;
-    ctx.fillStyle = speckle;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(1.2, 1.2);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
 }

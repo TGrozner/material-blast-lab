@@ -34,10 +34,27 @@ Fast validation:
 npm test
 ```
 
-`npm test` runs the Vitest unit suite first, then a single Playwright smoke test
-against a local Vite server. The smoke test is intentionally narrow: it checks
-boot, HUD layout in a mobile viewport, level population, and the first fire
-transition without waiting for final scoring.
+`npm test` runs the Vitest unit suite first, then Playwright smoke tests against
+a local Vite server. Browser smoke coverage checks boot, mobile HUD layout,
+level population/body-count budget, projectile selection, final score reveal,
+and retry reset.
+
+Focused browser/build validation:
+
+```sh
+npm run test:smoke
+npm run build
+```
+
+To audit Pages hardening without mutating the primary `dist` directory, build
+once, copy the artifact, then point the hardening script at the copy:
+
+```sh
+npm run build
+AUDIT_DIST=$(mktemp -d)
+cp -R dist/. "$AUDIT_DIST/"
+DIST_DIR="$AUDIT_DIST" npm run harden:dist
+```
 
 ## Controls
 
@@ -60,8 +77,10 @@ transition without waiting for final scoring.
 
 ## Chambers
 
-- Crate Spine: wooden crate ribs, glass shields, and bio-gel specimens behind panels
-- Beam Orchard: metal beams, concrete, rubber, foam, gel tanks, shock canisters, and spring pads
+- Quarantine Junction: dense city containment with a central hazard core and protected clinic/shelter zones
+- Breaker Yard: short direct-damage yard with two small protected booths
+- Gel Switchback: compact side-chain lane around a glass gel depot and protected archive
+- Clinic Crosswind: restraint drill with target depot stacks flanked by protected clinic pods
 
 ## Score
 

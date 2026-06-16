@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { MaterialId } from "./materialCatalog";
 import type { ScoreRole } from "./physics";
+import { materialAtlasTile } from "./visualAssets";
 
 export type BuildingVisualStyle = "industrial" | "glassTower" | "civic" | "shelter" | "apartment" | "warehouse" | "market";
 
@@ -327,55 +328,63 @@ function createMaterial(key: string): THREE.Material {
     case "shop_glass":
       return new THREE.MeshBasicMaterial({ color: 0xc6fcff, transparent: true, opacity: 0.55 });
     case "hazard_facade":
-      return new THREE.MeshStandardMaterial({ color: 0x7b3023, roughness: 0.72, metalness: 0.04 });
+      return new THREE.MeshStandardMaterial({ color: 0x7b3023, roughness: 0.72, metalness: 0.04, map: materialAtlasTile(4) });
     case "hazard_trim":
       return new THREE.MeshStandardMaterial({ color: 0xff7a35, roughness: 0.44, metalness: 0.08, emissive: 0x4a1508, emissiveIntensity: 0.45 });
     case "hazard_sign":
       return new THREE.MeshBasicMaterial({ color: 0xffa23f });
     case "protected_facade":
-      return new THREE.MeshStandardMaterial({ color: 0x2d6074, roughness: 0.66, metalness: 0.04 });
+      return new THREE.MeshStandardMaterial({ color: 0x2d6074, roughness: 0.66, metalness: 0.04, map: materialAtlasTile(5) });
     case "protected_trim":
       return new THREE.MeshStandardMaterial({ color: 0x9ae8ff, roughness: 0.38, metalness: 0.08, emissive: 0x104a5e, emissiveIntensity: 0.4 });
     case "protected_sign":
       return new THREE.MeshBasicMaterial({ color: 0xb8f4ff });
     case "clinic_roof":
-      return new THREE.MeshStandardMaterial({ color: 0x36515e, roughness: 0.76, metalness: 0.03 });
+      return new THREE.MeshStandardMaterial({ color: 0x36515e, roughness: 0.76, metalness: 0.03, map: materialAtlasTile(12) });
     case "market_facade":
-      return new THREE.MeshStandardMaterial({ color: 0x635246, roughness: 0.78, metalness: 0.02 });
+      return new THREE.MeshStandardMaterial({ color: 0x635246, roughness: 0.78, metalness: 0.02, map: materialAtlasTile(13) });
     case "market_trim":
       return new THREE.MeshStandardMaterial({ color: 0xf0c16a, roughness: 0.5, metalness: 0.06 });
     case "market_sign":
       return new THREE.MeshBasicMaterial({ color: 0xffe08c });
     case "glass_facade":
-      return new THREE.MeshPhysicalMaterial({ color: 0x4f8792, transparent: true, opacity: 0.42, roughness: 0.18, metalness: 0.02, depthWrite: false });
+      return new THREE.MeshPhysicalMaterial({
+        color: 0x4f8792,
+        transparent: true,
+        opacity: 0.42,
+        roughness: 0.18,
+        metalness: 0.02,
+        depthWrite: false,
+        map: materialAtlasTile(8)
+      });
     case "cool_trim":
       return new THREE.MeshStandardMaterial({ color: 0x7ec7d2, roughness: 0.46, metalness: 0.22 });
     case "cool_sign":
       return new THREE.MeshBasicMaterial({ color: 0x74dfff });
     case "neutral_facade":
-      return new THREE.MeshStandardMaterial({ color: 0x62686d, roughness: 0.82, metalness: 0.02 });
+      return new THREE.MeshStandardMaterial({ color: 0x62686d, roughness: 0.82, metalness: 0.02, map: materialAtlasTile(3) });
     case "dark_trim":
-      return new THREE.MeshStandardMaterial({ color: 0x262f36, roughness: 0.58, metalness: 0.16 });
+      return new THREE.MeshStandardMaterial({ color: 0x262f36, roughness: 0.58, metalness: 0.16, map: materialAtlasTile(1) });
     case "dark_roof":
-      return new THREE.MeshStandardMaterial({ color: 0x20272d, roughness: 0.84, metalness: 0.05 });
+      return new THREE.MeshStandardMaterial({ color: 0x20272d, roughness: 0.84, metalness: 0.05, map: materialAtlasTile(12) });
     case "warm_roof":
-      return new THREE.MeshStandardMaterial({ color: 0x7f5a3e, roughness: 0.8, metalness: 0.02 });
+      return new THREE.MeshStandardMaterial({ color: 0x7f5a3e, roughness: 0.8, metalness: 0.02, map: materialAtlasTile(13) });
     case "glass_shard":
       return new THREE.MeshPhysicalMaterial({ color: 0xc7fbff, transparent: true, opacity: 0.58, roughness: 0.12, metalness: 0, depthWrite: false });
     case "scraped_metal":
-      return new THREE.MeshStandardMaterial({ color: 0xb8c5ca, roughness: 0.42, metalness: 0.86 });
+      return new THREE.MeshStandardMaterial({ color: 0xb8c5ca, roughness: 0.42, metalness: 0.86, map: materialAtlasTile(1) });
     case "rubble_dark":
-      return new THREE.MeshStandardMaterial({ color: 0x555553, roughness: 0.96, metalness: 0 });
+      return new THREE.MeshStandardMaterial({ color: 0x555553, roughness: 0.96, metalness: 0, map: materialAtlasTile(2) });
     case "rubble_light":
-      return new THREE.MeshStandardMaterial({ color: 0xa6a59a, roughness: 0.92, metalness: 0 });
+      return new THREE.MeshStandardMaterial({ color: 0xa6a59a, roughness: 0.92, metalness: 0, map: materialAtlasTile(15) });
     case "wood_end":
-      return new THREE.MeshStandardMaterial({ color: 0x6e391b, roughness: 0.8, metalness: 0 });
+      return new THREE.MeshStandardMaterial({ color: 0x6e391b, roughness: 0.8, metalness: 0, map: materialAtlasTile(14) });
     case "painted_plastic":
-      return new THREE.MeshStandardMaterial({ color: 0xffe05f, roughness: 0.62, metalness: 0.02 });
+      return new THREE.MeshStandardMaterial({ color: 0xffe05f, roughness: 0.62, metalness: 0.02, map: materialAtlasTile(7) });
     case "vehicle_glass":
       return new THREE.MeshBasicMaterial({ color: 0xa7f0ff, transparent: true, opacity: 0.7 });
     case "tire":
-      return new THREE.MeshStandardMaterial({ color: 0x161719, roughness: 0.9, metalness: 0 });
+      return new THREE.MeshStandardMaterial({ color: 0x161719, roughness: 0.9, metalness: 0, map: materialAtlasTile(6) });
     case "relay_gel_core":
       return new THREE.MeshPhysicalMaterial({ color: 0xd92b72, transparent: true, opacity: 0.58, roughness: 0.28, metalness: 0.02, depthWrite: false });
     case "relay_gel_glow":
@@ -383,7 +392,7 @@ function createMaterial(key: string): THREE.Material {
     case "relay_hazard_band":
       return new THREE.MeshBasicMaterial({ color: 0xffd66b });
     case "relay_pad_plate":
-      return new THREE.MeshStandardMaterial({ color: 0x20272c, roughness: 0.52, metalness: 0.38 });
+      return new THREE.MeshStandardMaterial({ color: 0x20272c, roughness: 0.52, metalness: 0.38, map: materialAtlasTile(10) });
     case "relay_pad_coil":
       return new THREE.MeshStandardMaterial({ color: 0x93f6ff, roughness: 0.3, metalness: 0.7, emissive: 0x0d5e78, emissiveIntensity: 0.5 });
     case "relay_pad_glow":
@@ -391,7 +400,7 @@ function createMaterial(key: string): THREE.Material {
     case "relay_shock_glass":
       return new THREE.MeshPhysicalMaterial({ color: 0x8ff7ff, transparent: true, opacity: 0.5, roughness: 0.16, metalness: 0, depthWrite: false });
     case "relay_shock_cap":
-      return new THREE.MeshStandardMaterial({ color: 0x33404c, roughness: 0.42, metalness: 0.62 });
+      return new THREE.MeshStandardMaterial({ color: 0x33404c, roughness: 0.42, metalness: 0.62, map: materialAtlasTile(0) });
     case "relay_shock_core":
       return new THREE.MeshBasicMaterial({ color: 0xc7fbff, transparent: true, opacity: 0.9 });
     default:
