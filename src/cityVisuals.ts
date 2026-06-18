@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MaterialId } from "./materialCatalog";
 import type { ScoreRole } from "./physics";
 import { decalAtlasTile, materialAtlasTile } from "./visualAssets";
@@ -25,6 +26,7 @@ interface VehicleVisualOptions {
   size: THREE.Vector3;
   accent: THREE.ColorRepresentation;
   detail?: "full" | "lean";
+  kind?: "car" | "van" | "bus" | "tanker" | "taxi" | "flatbed";
 }
 
 interface StreetCargoVisualOptions {
@@ -43,6 +45,12 @@ interface HazardIndicatorOptions {
   kind: "explosive" | "electric" | "combustible";
 }
 
+interface StrategicHazardVisualOptions {
+  label: string;
+  size: THREE.Vector3;
+  kind: HazardIndicatorOptions["kind"];
+}
+
 const sharedMaterials = new Map<string, THREE.Material>();
 const childBoxGeometryCache = new Map<string, THREE.BoxGeometry>();
 const childCylinderGeometryCache = new Map<string, THREE.CylinderGeometry>();
@@ -52,6 +60,7 @@ export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisu
   const palette = paletteFor(options.style, options.scoreRole);
   if (options.scoreRole === "neutral") {
     decorateNeutralBuildingCell(mesh, options, palette);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
     return;
   }
   addFacadeSkin(mesh, options.size, palette.facade, 0.016);
@@ -65,6 +74,7 @@ export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisu
   if (options.floor === options.floors - 1) {
     addRoofDetail(mesh, options, palette.roof);
   }
+  mergeOpaqueDecorativeChildrenByMaterial(mesh);
 }
 
 function decorateNeutralBuildingCell(
@@ -140,17 +150,39 @@ export function decorateCityVehicle(mesh: THREE.Mesh, options: VehicleVisualOpti
   const glass = material("vehicle_glass");
   const tire = material("tire");
   const accent = colorMaterial(`vehicle_accent_${String(options.accent)}`, options.accent, 0.35, 0.12);
+  const kind = options.kind ?? "car";
 
-  addChildBox(mesh, options.size.x * 0.56, options.size.y * 0.32, options.size.z * 1.02, glass, {
-    y: options.size.y * 0.2,
-    z: options.size.z * 0.02
+  addChildBox(mesh, options.size.x * 0.92, options.size.y * 0.16, options.size.z * 0.72, material("vehicle_lower_shadow"), {
+    y: -options.size.y * 0.34
+  });
+  addChildBox(mesh, options.size.x * 0.64, options.size.y * 0.3, options.size.z * 0.52, glass, {
+    y: options.size.y * 0.22,
+    z: -options.size.z * 0.02
+  });
+  addChildBox(mesh, options.size.x * 0.54, 0.028, options.size.z * 0.62, material("vehicle_roof_panel"), {
+    y: options.size.y * 0.43,
+    z: -options.size.z * 0.03
   });
   addChildBox(mesh, options.size.x * 1.04, options.size.y * 0.16, 0.035, accent, {
     y: -options.size.y * 0.12,
     z: options.size.z * 0.53
   });
+  addChildBox(mesh, options.size.x * 1.06, 0.035, options.size.z * 0.08, accent, {
+    y: options.size.y * 0.04,
+    z: -options.size.z * 0.5
+  });
+  addVehicleKindDetails(mesh, options.size, kind, accent, glass);
+  addChildBox(mesh, 0.024, options.size.y * 0.38, options.size.z * 0.82, material("vehicle_door_cut"), {
+    x: -options.size.x * 0.36,
+    y: -options.size.y * 0.03
+  });
+  addChildBox(mesh, 0.024, options.size.y * 0.38, options.size.z * 0.82, material("vehicle_door_cut"), {
+    x: options.size.x * 0.36,
+    y: -options.size.y * 0.03
+  });
   if (options.detail === "lean") {
     addVehicleTires(mesh, options.size, tire);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
     return;
   }
   addChildBox(mesh, options.size.x * 0.78, 0.035, 0.026, material("vehicle_lightbar"), {
@@ -181,8 +213,16 @@ export function decorateCityVehicle(mesh: THREE.Mesh, options: VehicleVisualOpti
     y: -options.size.y * 0.18,
     z: options.size.z * 0.56
   });
+  addChildBox(mesh, options.size.x * 0.28, 0.026, 0.028, material("license_plate"), {
+    y: -options.size.y * 0.16,
+    z: -options.size.z * 0.56
+  });
   addChildBox(mesh, 0.022, options.size.y * 0.46, options.size.z * 0.72, material("vehicle_seam"), {
     x: -options.size.x * 0.08,
+    y: -options.size.y * 0.02
+  });
+  addChildBox(mesh, 0.022, options.size.y * 0.46, options.size.z * 0.72, material("vehicle_seam"), {
+    x: options.size.x * 0.08,
     y: -options.size.y * 0.02
   });
   if (options.size.x > 0.7) {
@@ -190,23 +230,99 @@ export function decorateCityVehicle(mesh: THREE.Mesh, options: VehicleVisualOpti
       y: options.size.y * 0.54,
       z: -options.size.z * 0.2
     });
+  } else if (options.size.z > 1.05) {
+    addChildBox(mesh, options.size.x * 0.78, 0.038, options.size.z * 0.62, material("roof_rail"), {
+      y: options.size.y * 0.52
+    });
   }
-  addHazardBadge(mesh, options.size, "explosive", options.size.z * 0.5 + 0.03);
   addVehicleTires(mesh, options.size, tire);
+  mergeOpaqueDecorativeChildrenByMaterial(mesh);
+}
+
+function addVehicleKindDetails(
+  mesh: THREE.Mesh,
+  size: THREE.Vector3,
+  kind: NonNullable<VehicleVisualOptions["kind"]>,
+  accent: THREE.Material,
+  glass: THREE.Material
+): void {
+  if (kind === "taxi") {
+    addChildBox(mesh, size.x * 0.38, 0.055, size.z * 0.18, material("taxi_roof_sign"), {
+      y: size.y * 0.55,
+      z: -size.z * 0.04
+    });
+    return;
+  }
+  if (kind === "bus") {
+    for (const z of [-0.28, 0, 0.28]) {
+      addChildBox(mesh, size.x * 0.82, size.y * 0.18, 0.02, glass, {
+        y: size.y * 0.18,
+        z: z * size.z
+      });
+    }
+    addChildBox(mesh, size.x * 0.84, 0.05, size.z * 0.84, material("bus_roof_vent"), {
+      y: size.y * 0.56
+    });
+    return;
+  }
+  if (kind === "tanker") {
+    addChildCylinder(mesh, size.x * 0.36, size.x * 0.36, size.z * 0.82, material("tanker_shell"), {
+      y: size.y * 0.14,
+      rotationX: Math.PI * 0.5
+    });
+    addChildBox(mesh, size.x * 0.78, 0.04, size.z * 0.82, accent, {
+      y: size.y * 0.14
+    });
+    return;
+  }
+  if (kind === "flatbed") {
+    addChildBox(mesh, size.x * 0.96, 0.055, size.z * 0.74, material("flatbed_deck"), {
+      y: size.y * 0.04,
+      z: -size.z * 0.08
+    });
+    addChildBox(mesh, size.x * 0.56, size.y * 0.28, size.z * 0.26, accent, {
+      y: size.y * 0.2,
+      z: size.z * 0.22
+    });
+    return;
+  }
+  if (kind === "van") {
+    addChildBox(mesh, size.x * 0.82, size.y * 0.22, size.z * 0.16, glass, {
+      y: size.y * 0.16,
+      z: -size.z * 0.34
+    });
+    addChildBox(mesh, size.x * 0.72, 0.035, size.z * 0.86, material("roof_rail"), {
+      y: size.y * 0.54
+    });
+  }
 }
 
 export function decorateStreetCargo(mesh: THREE.Mesh, options: StreetCargoVisualOptions): void {
   const strapMaterial = material("cargo_strap");
   const labelMaterial = options.materialId === "glass" ? material("cool_sign") : options.materialId === "wood" ? material("market_sign") : material("hazard_chevron");
+  addChildBox(mesh, options.size.x * 1.02, 0.035, options.size.z * 1.02, material("cargo_top_wear"), {
+    y: options.size.y * 0.5 + 0.02
+  });
   addChildBox(mesh, options.size.x * 1.04, 0.026, 0.035, strapMaterial, {
     y: options.size.y * 0.18,
     z: options.size.z * 0.34
+  });
+  addChildBox(mesh, 0.035, options.size.y * 0.88, 0.035, strapMaterial, {
+    x: -options.size.x * 0.48,
+    y: 0.01,
+    z: options.size.z * 0.42
+  });
+  addChildBox(mesh, 0.035, options.size.y * 0.88, 0.035, strapMaterial, {
+    x: options.size.x * 0.48,
+    y: 0.01,
+    z: -options.size.z * 0.42
   });
   addChildBox(mesh, options.size.x * 0.42, options.size.y * 0.24, 0.024, labelMaterial, {
     y: options.size.y * 0.04,
     z: options.size.z * 0.51
   });
   if (options.detail === "lean") {
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
     return;
   }
   addChildBox(mesh, options.size.x * 1.04, 0.026, 0.035, strapMaterial, {
@@ -218,6 +334,7 @@ export function decorateStreetCargo(mesh: THREE.Mesh, options: StreetCargoVisual
       y: options.size.y * 0.42
     });
   }
+  mergeOpaqueDecorativeChildrenByMaterial(mesh);
 }
 
 export function decorateTrafficBarricade(mesh: THREE.Mesh, options: TrafficBarricadeVisualOptions): void {
@@ -238,13 +355,28 @@ export function decorateTrafficBarricade(mesh: THREE.Mesh, options: TrafficBarri
   addChildBox(mesh, options.size.x * 1.08, 0.045, options.size.z * 0.32, material("rubber_foot"), {
     y: -options.size.y * 0.48
   });
+  mergeOpaqueDecorativeChildrenByMaterial(mesh);
 }
 
 function addVehicleTires(mesh: THREE.Mesh, size: THREE.Vector3, tire: THREE.Material): void {
-  addChildBox(mesh, 0.09, 0.18, 0.18, tire, { x: -size.x * 0.42, y: -size.y * 0.42, z: size.z * 0.43 });
-  addChildBox(mesh, 0.09, 0.18, 0.18, tire, { x: size.x * 0.42, y: -size.y * 0.42, z: size.z * 0.43 });
-  addChildBox(mesh, 0.09, 0.18, 0.18, tire, { x: -size.x * 0.42, y: -size.y * 0.42, z: -size.z * 0.43 });
-  addChildBox(mesh, 0.09, 0.18, 0.18, tire, { x: size.x * 0.42, y: -size.y * 0.42, z: -size.z * 0.43 });
+  const radius = THREE.MathUtils.clamp(Math.min(size.y * 0.28, size.z * 0.13), 0.075, 0.14);
+  const width = Math.max(0.055, size.x * 0.12);
+  for (const x of [-size.x * 0.48, size.x * 0.48]) {
+    for (const z of [-size.z * 0.42, size.z * 0.42]) {
+      addChildCylinder(mesh, radius, radius, width, tire, {
+        x,
+        y: -size.y * 0.42,
+        z,
+        rotationZ: Math.PI * 0.5
+      });
+      addChildCylinder(mesh, radius * 0.42, radius * 0.42, width + 0.006, material("wheel_hub"), {
+        x,
+        y: -size.y * 0.42,
+        z,
+        rotationZ: Math.PI * 0.5
+      });
+    }
+  }
 }
 
 export function decorateHazardIndicator(mesh: THREE.Mesh, options: HazardIndicatorOptions): void {
@@ -260,6 +392,252 @@ export function decorateHazardIndicator(mesh: THREE.Mesh, options: HazardIndicat
       rotationZ: Math.PI * 0.08
     });
   }
+  mergeOpaqueDecorativeChildrenByMaterial(mesh);
+}
+
+export function decorateStrategicHazard(mesh: THREE.Mesh, options: StrategicHazardVisualOptions): void {
+  const label = options.label.toLowerCase();
+  if (label.includes("gas station canopy")) {
+    decorateGasCanopy(mesh, options.size);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
+    return;
+  }
+  if (label.includes("gas pump")) {
+    decorateGasPump(mesh, options.size);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
+    return;
+  }
+  if (label.includes("substation")) {
+    decorateElectricSubstation(mesh, options.size, label);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
+    return;
+  }
+  if (label.includes("propane")) {
+    decoratePropaneDepot(mesh, options.size, label);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
+    return;
+  }
+  if (label.includes("parking silo")) {
+    decorateParkingSilo(mesh, options.size, label);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
+    return;
+  }
+  if (label.includes("core")) {
+    decorateEnergyCore(mesh, options.size);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
+    return;
+  }
+  if (label.includes("capacitor")) {
+    decorateCapacitorBank(mesh, options.size);
+    mergeOpaqueDecorativeChildrenByMaterial(mesh);
+    return;
+  }
+  if (options.kind === "combustible") {
+    addChildBox(mesh, options.size.x * 0.82, 0.04, options.size.z * 0.82, "gas_canopy_red", {
+      y: options.size.y * 0.46
+    });
+  }
+  mergeOpaqueDecorativeChildrenByMaterial(mesh);
+}
+
+function decorateGasCanopy(mesh: THREE.Mesh, size: THREE.Vector3): void {
+  addChildBox(mesh, size.x * 1.06, 0.075, 0.055, "gas_canopy_red", {
+    y: size.y * 0.3,
+    z: size.z * 0.55
+  });
+  addChildBox(mesh, size.x * 0.72, 0.052, 0.06, "gas_canopy_white", {
+    y: size.y * 0.18,
+    z: size.z * 0.56
+  });
+  addChildBox(mesh, size.x * 0.92, 0.048, 0.052, "gas_canopy_red", {
+    y: size.y * 0.31,
+    z: -size.z * 0.55
+  });
+  for (const x of [-0.42, 0.42]) {
+    addChildCylinder(mesh, 0.035, 0.04, size.y * 1.75, "service_pipe", {
+      x: size.x * x,
+      y: -size.y * 0.74,
+      z: size.z * 0.32
+    });
+  }
+  for (const z of [-0.22, 0.22]) {
+    addChildBox(mesh, size.x * 0.34, 0.022, 0.035, "warm_window", {
+      y: -size.y * 0.44,
+      z: size.z * z
+    });
+  }
+}
+
+function decorateGasPump(mesh: THREE.Mesh, size: THREE.Vector3): void {
+  addChildBox(mesh, size.x * 1.18, 0.052, size.z * 0.9, "gas_canopy_red", {
+    y: size.y * 0.43
+  });
+  addChildBox(mesh, size.x * 0.82, size.y * 0.16, 0.018, "gas_pump_screen", {
+    y: size.y * 0.17,
+    z: size.z * 0.55
+  });
+  addChildBox(mesh, size.x * 0.62, size.y * 0.08, 0.02, "gas_canopy_white", {
+    y: -size.y * 0.06,
+    z: size.z * 0.56
+  });
+  addChildBox(mesh, 0.018, size.y * 0.54, 0.026, "gas_hose", {
+    x: size.x * 0.58,
+    y: -size.y * 0.03,
+    z: size.z * 0.32
+  });
+  addChildBox(mesh, 0.05, 0.022, size.z * 0.32, "gas_nozzle", {
+    x: size.x * 0.66,
+    y: size.y * 0.08,
+    z: size.z * 0.4
+  });
+  addChildBox(mesh, size.x * 1.18, 0.04, size.z * 1.08, "rubber_foot", {
+    y: -size.y * 0.48
+  });
+}
+
+function decorateElectricSubstation(mesh: THREE.Mesh, size: THREE.Vector3, label: string): void {
+  addChildBox(mesh, size.x * 1.06, 0.04, size.z * 1.04, "relay_pad_plate", {
+    y: -size.y * 0.48
+  });
+  addChildBox(mesh, size.x * 0.88, 0.035, 0.026, "electric_marker", {
+    y: size.y * 0.36,
+    z: size.z * 0.56
+  });
+
+  if (label.includes("transformer")) {
+    for (const x of [-0.22, 0.22]) {
+      addChildCylinder(mesh, size.x * 0.13, size.x * 0.13, size.y * 0.72, "capacitor_copper", {
+        x: size.x * x,
+        y: size.y * 0.02
+      });
+      addChildBox(mesh, size.x * 0.12, 0.028, size.z * 0.88, "relay_pad_coil", {
+        x: size.x * x,
+        y: size.y * 0.27
+      });
+    }
+    addChildBox(mesh, size.x * 0.7, 0.035, 0.028, "relay_shock_core", {
+      y: -size.y * 0.22,
+      z: size.z * 0.58
+    });
+    return;
+  }
+
+  if (label.includes("breaker")) {
+    addChildBox(mesh, size.x * 0.62, size.y * 0.78, 0.024, "relay_shock_glass", {
+      z: size.z * 0.56
+    });
+    addChildBox(mesh, 0.028, size.y * 0.86, 0.03, "relay_pad_coil", {
+      x: -size.x * 0.26,
+      z: size.z * 0.58
+    });
+    addChildBox(mesh, 0.028, size.y * 0.86, 0.03, "relay_pad_coil", {
+      x: size.x * 0.26,
+      z: size.z * 0.58
+    });
+    return;
+  }
+
+  addChildBox(mesh, size.x * 0.62, size.y * 0.28, 0.024, "dark_window", {
+    y: size.y * 0.08,
+    z: size.z * 0.56
+  });
+  addChildBox(mesh, size.x * 0.72, 0.04, size.z * 0.82, "scraped_metal", {
+    y: size.y * 0.48
+  });
+}
+
+function decoratePropaneDepot(mesh: THREE.Mesh, size: THREE.Vector3, label: string): void {
+  if (label.includes("tank")) {
+    addChildCylinder(mesh, size.x * 0.34, size.x * 0.34, size.y * 0.9, "gas_canopy_white", {
+      y: 0
+    });
+    addChildBox(mesh, size.x * 0.88, 0.035, size.z * 0.82, "hazard_red_marker", {
+      y: size.y * 0.18
+    });
+    addChildBox(mesh, size.x * 0.92, 0.032, size.z * 0.86, "combustible_marker", {
+      y: -size.y * 0.16
+    });
+    addChildBox(mesh, size.x * 0.5, 0.04, size.z * 0.5, "gas_nozzle", {
+      y: size.y * 0.48
+    });
+    return;
+  }
+
+  addChildBox(mesh, size.x * 1.04, 0.035, size.z * 1.02, "relay_pad_plate", {
+    y: -size.y * 0.44
+  });
+  for (const x of [-0.32, 0, 0.32]) {
+    addChildCylinder(mesh, size.z * 0.16, size.z * 0.16, size.y * 0.72, "gas_canopy_white", {
+      x: size.x * x,
+      y: size.y * 0.04
+    });
+  }
+  addChildBox(mesh, size.x * 0.96, 0.035, 0.028, "hazard_red_marker", {
+    y: size.y * 0.34,
+    z: size.z * 0.56
+  });
+}
+
+function decorateParkingSilo(mesh: THREE.Mesh, size: THREE.Vector3, label: string): void {
+  addChildBox(mesh, size.x * 1.02, 0.04, size.z * 1.04, "scraped_metal", {
+    y: size.y * 0.08
+  });
+  for (const x of [-0.32, 0, 0.32]) {
+    addChildBox(mesh, size.x * 0.18, size.y * 0.62, 0.026, "dark_window", {
+      x: size.x * x,
+      y: -size.y * 0.05,
+      z: size.z * 0.54
+    });
+  }
+  addChildBox(mesh, size.x * 0.92, 0.028, 0.024, "hazard_chevron", {
+    y: size.y * 0.32,
+    z: size.z * 0.56
+  });
+  if (label.includes("roof")) {
+    addChildBox(mesh, size.x * 0.5, 0.028, size.z * 0.62, "parking_stripe", {
+      x: -size.x * 0.18,
+      y: size.y * 0.16,
+      rotationY: Math.PI * 0.08
+    });
+    addChildBox(mesh, size.x * 0.5, 0.028, size.z * 0.62, "parking_stripe", {
+      x: size.x * 0.18,
+      y: size.y * 0.16,
+      rotationY: Math.PI * 0.08
+    });
+  }
+}
+
+function decorateEnergyCore(mesh: THREE.Mesh, size: THREE.Vector3): void {
+  addChildBox(mesh, size.x * 0.62, size.y * 0.76, 0.024, "relay_shock_glass", {
+    z: size.z * 0.55
+  });
+  addChildCylinder(mesh, Math.min(size.x, size.z) * 0.18, Math.min(size.x, size.z) * 0.18, size.y * 0.82, "relay_shock_core", {
+    rotationX: Math.PI * 0.5
+  });
+  addChildBox(mesh, size.x * 0.92, 0.035, 0.03, "electric_marker", {
+    y: size.y * 0.34,
+    z: size.z * 0.58
+  });
+  addChildBox(mesh, size.x * 0.74, 0.035, 0.03, "electric_marker", {
+    y: -size.y * 0.3,
+    z: size.z * 0.58
+  });
+}
+
+function decorateCapacitorBank(mesh: THREE.Mesh, size: THREE.Vector3): void {
+  for (const x of [-0.24, 0, 0.24]) {
+    addChildCylinder(mesh, size.x * 0.11, size.x * 0.11, size.y * 0.78, "capacitor_copper", {
+      x: size.x * x,
+      y: size.y * 0.04
+    });
+  }
+  addChildBox(mesh, size.x * 0.92, 0.035, size.z * 0.9, "relay_pad_plate", {
+    y: -size.y * 0.42
+  });
+  addChildBox(mesh, size.x * 0.82, 0.035, 0.026, "electric_marker", {
+    y: size.y * 0.34,
+    z: size.z * 0.56
+  });
 }
 
 function addFacadeSkin(mesh: THREE.Mesh, size: THREE.Vector3, materialRef: THREE.Material, depth: number): void {
@@ -556,6 +934,53 @@ function addChildSphere(
   parent.add(mesh);
 }
 
+function mergeOpaqueDecorativeChildrenByMaterial(parent: THREE.Mesh): void {
+  const groups = new Map<THREE.Material, THREE.Mesh[]>();
+  for (const child of parent.children) {
+    if (
+      !(child instanceof THREE.Mesh) ||
+      Array.isArray(child.material) ||
+      child.children.length > 0 ||
+      (child.material.transparent && child.material.depthWrite === false)
+    ) {
+      continue;
+    }
+    const group = groups.get(child.material);
+    if (group) {
+      group.push(child);
+    } else {
+      groups.set(child.material, [child]);
+    }
+  }
+
+  for (const [materialRef, meshes] of groups) {
+    if (meshes.length < 2) {
+      continue;
+    }
+    const geometries = meshes.map((mesh) => {
+      mesh.updateMatrix();
+      return mesh.geometry.clone().applyMatrix4(mesh.matrix);
+    });
+    const mergedGeometry = mergeGeometries(geometries, false);
+    for (const geometry of geometries) {
+      geometry.dispose();
+    }
+    if (!mergedGeometry) {
+      continue;
+    }
+
+    for (const mesh of meshes) {
+      parent.remove(mesh);
+    }
+
+    const mergedMesh = new THREE.Mesh(mergedGeometry, materialRef);
+    mergedMesh.name = `${parent.name} batched detail`;
+    mergedMesh.castShadow = false;
+    mergedMesh.receiveShadow = false;
+    parent.add(mergedMesh);
+  }
+}
+
 function paletteFor(style: BuildingVisualStyle, scoreRole: ScoreRole): { facade: THREE.Material; trim: THREE.Material; roof: THREE.Material; sign: THREE.Material } {
   if (scoreRole === "target") {
     return {
@@ -638,6 +1063,16 @@ function createMaterial(key: string): THREE.Material {
       return new THREE.MeshBasicMaterial({ color: 0x93f6ff, transparent: true, opacity: 0.96 });
     case "combustible_marker":
       return new THREE.MeshBasicMaterial({ color: 0xff7a35, transparent: true, opacity: 0.92 });
+    case "gas_canopy_red":
+      return new THREE.MeshBasicMaterial({ color: 0xff344f, transparent: true, opacity: 0.96 });
+    case "gas_canopy_white":
+      return new THREE.MeshBasicMaterial({ color: 0xfff3c1, transparent: true, opacity: 0.94 });
+    case "gas_pump_screen":
+      return new THREE.MeshBasicMaterial({ color: 0xa7f0ff, transparent: true, opacity: 0.86 });
+    case "gas_hose":
+      return new THREE.MeshStandardMaterial({ color: 0x080a0c, roughness: 0.82, metalness: 0.08, map: materialAtlasTile(6) });
+    case "gas_nozzle":
+      return new THREE.MeshStandardMaterial({ color: 0xd5c16a, roughness: 0.38, metalness: 0.62, map: materialAtlasTile(10) });
     case "neon_cyan":
       return new THREE.MeshBasicMaterial({ color: 0x7ee8ff, transparent: true, opacity: 0.92 });
     case "roof_unit":
@@ -684,6 +1119,20 @@ function createMaterial(key: string): THREE.Material {
       return new THREE.MeshStandardMaterial({ color: 0xffe05f, roughness: 0.62, metalness: 0.02, map: materialAtlasTile(7) });
     case "vehicle_glass":
       return new THREE.MeshBasicMaterial({ color: 0xa7f0ff, transparent: true, opacity: 0.7 });
+    case "vehicle_roof_panel":
+      return new THREE.MeshStandardMaterial({ color: 0x1a2228, roughness: 0.48, metalness: 0.28, map: materialAtlasTile(10) });
+    case "vehicle_lower_shadow":
+      return new THREE.MeshStandardMaterial({ color: 0x101419, roughness: 0.74, metalness: 0.18, map: materialAtlasTile(6) });
+    case "vehicle_door_cut":
+      return new THREE.MeshBasicMaterial({ color: 0x070a0d, transparent: true, opacity: 0.58 });
+    case "taxi_roof_sign":
+      return new THREE.MeshBasicMaterial({ color: 0xfff1a6, transparent: true, opacity: 0.95 });
+    case "bus_roof_vent":
+      return new THREE.MeshStandardMaterial({ color: 0x26323a, roughness: 0.56, metalness: 0.42, map: materialAtlasTile(10) });
+    case "tanker_shell":
+      return new THREE.MeshStandardMaterial({ color: 0xd7c06f, roughness: 0.38, metalness: 0.54, map: materialAtlasTile(10) });
+    case "flatbed_deck":
+      return new THREE.MeshStandardMaterial({ color: 0x262016, roughness: 0.74, metalness: 0.16, map: materialAtlasTile(14) });
     case "vehicle_lightbar":
       return new THREE.MeshBasicMaterial({ color: 0xff5f8f, transparent: true, opacity: 0.9 });
     case "headlight":
@@ -692,14 +1141,20 @@ function createMaterial(key: string): THREE.Material {
       return new THREE.MeshBasicMaterial({ color: 0xff334f, transparent: true, opacity: 0.92 });
     case "license_plate":
       return new THREE.MeshBasicMaterial({ color: 0xe8edf2, transparent: true, opacity: 0.88 });
+    case "parking_stripe":
+      return new THREE.MeshBasicMaterial({ color: 0xf5e7a3, transparent: true, opacity: 0.78 });
     case "vehicle_seam":
       return new THREE.MeshBasicMaterial({ color: 0x101419, transparent: true, opacity: 0.66 });
     case "roof_rail":
       return new THREE.MeshStandardMaterial({ color: 0x2a3138, roughness: 0.46, metalness: 0.72, map: materialAtlasTile(10) });
     case "tire":
       return new THREE.MeshStandardMaterial({ color: 0x161719, roughness: 0.9, metalness: 0, map: materialAtlasTile(6) });
+    case "wheel_hub":
+      return new THREE.MeshStandardMaterial({ color: 0xa8b6bd, roughness: 0.34, metalness: 0.72, map: materialAtlasTile(10) });
     case "cargo_strap":
       return new THREE.MeshStandardMaterial({ color: 0x22282e, roughness: 0.76, metalness: 0.18, map: materialAtlasTile(6) });
+    case "cargo_top_wear":
+      return new THREE.MeshStandardMaterial({ color: 0xd0b76a, roughness: 0.82, metalness: 0.04, map: materialAtlasTile(7) });
     case "rubber_foot":
       return new THREE.MeshStandardMaterial({ color: 0x111418, roughness: 0.92, metalness: 0, map: materialAtlasTile(6) });
     case "dark_window":
@@ -732,6 +1187,8 @@ function createMaterial(key: string): THREE.Material {
       return new THREE.MeshStandardMaterial({ color: 0x33404c, roughness: 0.42, metalness: 0.62, map: materialAtlasTile(0) });
     case "relay_shock_core":
       return new THREE.MeshBasicMaterial({ color: 0xc7fbff, transparent: true, opacity: 0.9 });
+    case "capacitor_copper":
+      return new THREE.MeshStandardMaterial({ color: 0xbd7841, roughness: 0.36, metalness: 0.78, map: materialAtlasTile(10) });
     default:
       return new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0 });
   }
@@ -759,7 +1216,7 @@ function sharedChildCylinderGeometry(radiusTop: number, radiusBottom: number, he
   if (existing) {
     return existing;
   }
-  const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 24);
+  const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 12);
   geometry.userData.sharedGeometry = true;
   childCylinderGeometryCache.set(key, geometry);
   return geometry;

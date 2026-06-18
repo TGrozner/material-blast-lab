@@ -1,8 +1,10 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   decorateBuildingCell,
   decorateCityVehicle,
   decorateHazardIndicator,
+  decorateStrategicHazard,
   decorateStreetCargo,
   decorateTrafficBarricade,
   type BuildingVisualStyle
@@ -14,6 +16,10 @@ import { decalAtlasTile, materialAtlasTile } from "./visualAssets";
 
 type TriggerType = "transformer" | "springPad" | "shockCanister";
 const panelRenderMaterials = new Map<string, THREE.Material>();
+const vehicleRenderMaterials = new Map<string, THREE.Material>();
+const sharedLevelMaterials = new Map<string, THREE.Material>();
+const sharedLevelBoxGeometries = new Map<string, THREE.BoxGeometry>();
+const sharedLevelPlaneGeometries = new Map<string, THREE.PlaneGeometry>();
 
 export interface LevelContext {
   physics: PhysicsWorld;
@@ -54,7 +60,7 @@ export const TEST_CHAMBERS: TestChamber[] = [
     id: "hazard-junction",
     name: "Hazard Junction",
     description: "A dense hazard city packed below the high siege battery.",
-    objective: "Pick a chain starter: energy plant, gas station, transformer relays, or a tower collapse route.",
+    objective: "Pick a chain starter: energy plant, gas station, substation, propane depot, parking silo, or tower collapse route.",
     chaosBrief: "Recognizable hazard buildings hit harder, but only a few can cascade per wave.",
     cannonPosition: new THREE.Vector3(0, 6.08, 24.55),
     defaultAimPoint: new THREE.Vector3(-1.72, 0.16, -3.35),
@@ -64,14 +70,14 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 1,
       targetZone: "hazard-core",
       scoreThresholds: {
-        oneStar: 12_000,
-        twoStar: 55_000,
-        threeStar: 125_000
+        oneStar: 120_000,
+        twoStar: 425_000,
+        threeStar: 900_000
       },
-      targetDamageThreshold: 75,
-      bonusThreshold: { metric: "chainReactionCount", minimum: 2 },
-      bonusObjective: "Start at least two secondary hits from the energy plant, gas line, transformer relays, or vehicle grid.",
-      briefingHint: "Aim choice matters: gas is wide and low, the energy plant is compact and hot, towers create debris routes."
+      targetDamageThreshold: 18_000,
+      bonusThreshold: { metric: "chainReactionCount", minimum: 320 },
+      bonusObjective: "Sustain 320+ secondary hits from the energy plant, gas line, substation, propane depot, parking silo, vehicle grid, or tower debris.",
+      briefingHint: "Aim choice matters: gas is wide and low, the substation arcs outward, propane pops in clusters, and the parking silo feeds vehicle chaos."
     },
     setup: (context) => {
       addCityGround(context);
@@ -85,84 +91,61 @@ export const TEST_CHAMBERS: TestChamber[] = [
       spawnHazardRelays(context);
       spawnPowerGrid(context);
       spawnStrategicHazards(context);
+      spawnMayhemSpecialSetpieces(context);
       spawnRadioTower(context);
+      spawnCentralConstructionCrane(context);
       spawnStreetSetpieces(context);
     }
   },
   {
     id: "breaker-yard",
     name: "Breaker Yard",
-    description: "A short material yard packed with fragile relays.",
-    objective: "Punch through the breaker spine and turn every booth, kiosk, and skid into extra wreckage.",
-    chaosBrief: "Relay booths are now hazards, not things to spare. Use them to multiply the blast.",
-    cannonPosition: new THREE.Vector3(-5.2, 5.92, 15.3),
-    defaultAimPoint: new THREE.Vector3(0.1, 0.16, -2.7),
-    cameraTarget: new THREE.Vector3(-0.8, 0.75, -1.5),
+    description: "A full breaker district with a concrete spine, transformer yards, relay towers, and traffic weaving through the blast lanes.",
+    objective: "Choose between the breaker spine, substation banks, relay towers, fuel trucks, or street traffic to open the chain.",
+    chaosBrief: "This is a real city sector now: power arcs, cranes of debris, traffic, and dense blocks can all feed the same route.",
+    cannonPosition: new THREE.Vector3(-6.45, 6.15, 24.85),
+    defaultAimPoint: new THREE.Vector3(-0.65, 0.18, -4.15),
+    cameraTarget: new THREE.Vector3(-0.4, 0.95, -2.3),
     mission: {
       arc: "object-destruction",
       order: 2,
       targetZone: "breaker-spine",
       scoreThresholds: {
-        oneStar: 900_000,
-        twoStar: 1_250_000,
-        threeStar: 1_650_000
+        oneStar: 160_000,
+        twoStar: 520_000,
+        threeStar: 1_050_000
       },
-      targetDamageThreshold: 6_500,
-      bonusThreshold: { metric: "collateralChaos", minimum: 3_800 },
-      bonusObjective: "Rack up 3,800+ collateral chaos from relay booths, cargo, and vehicle debris.",
-      briefingHint: "A straight hit starts Object Damage; angled debris through the relays is where Collateral Chaos climbs."
+      targetDamageThreshold: 22_000,
+      bonusThreshold: { metric: "chainReactionCount", minimum: 340 },
+      bonusObjective: "Sustain 340+ secondary hits from breaker towers, substations, tankers, and vehicle debris.",
+      briefingHint: "The spine is tough but reliable; the substation yards are wider, flashier starters if you can catch the relay rows."
     },
-    setup: (context) => setupCompactChamber(context, BREAKER_YARD_CHAMBER)
+    setup: (context) => setupBreakerYardCity(context)
   },
   {
     id: "switchback-crush",
     name: "Switchback Crush",
-    description: "A compact lane where soft cargo can turn one hit into a dense object chain.",
-    objective: "Break the glass depot, archive pods, foam skids, service crates, and switchback relays in one messy route.",
-    chaosBrief: "Every archive, bumper, and service crate is fair game. Flood the lane with debris and chain reactions.",
-    cannonPosition: new THREE.Vector3(5.55, 5.95, 14.8),
-    defaultAimPoint: new THREE.Vector3(0.4, 0.16, -1.8),
-    cameraTarget: new THREE.Vector3(0.7, 0.85, -1.15),
+    description: "A full glass-and-foam switchback district where fragile archive towers, soft baffles, and service traffic steer the collapse.",
+    objective: "Break the archive spine, then use foam baffles and street traffic to redirect wreckage through both switchback blocks.",
+    chaosBrief: "The route is no longer a corridor: it is a brittle city bowl with multiple angles, redirects, and crush paths.",
+    cannonPosition: new THREE.Vector3(6.25, 6.08, 24.55),
+    defaultAimPoint: new THREE.Vector3(0.85, 0.18, -3.65),
+    cameraTarget: new THREE.Vector3(0.55, 0.95, -2.1),
     mission: {
       arc: "object-destruction",
       order: 3,
       targetZone: "glass-depot",
       scoreThresholds: {
-        oneStar: 1_050_000,
-        twoStar: 1_500_000,
-        threeStar: 2_050_000
+        oneStar: 175_000,
+        twoStar: 560_000,
+        threeStar: 1_120_000
       },
-      targetDamageThreshold: 7_200,
-      bonusThreshold: { metric: "collateralChaos", minimum: 5_200 },
-      bonusObjective: "Push 5,200+ collateral chaos from crates, archive glass, and relay chains before scoring settles.",
-      briefingHint: "Foam is the steering wheel; archive glass and service crates are the multiplier."
+      targetDamageThreshold: 24_000,
+      bonusThreshold: { metric: "collateralChaos", minimum: 70_000 },
+      bonusObjective: "Push 70,000+ collateral chaos from archive glass, foam redirects, vehicles, and service crates.",
+      briefingHint: "Foam is still the steering wheel, but now the city gives you multiple redirect lines instead of one obvious lane."
     },
-    setup: (context) => setupCompactChamber(context, SWITCHBACK_CRUSH_CHAMBER)
-  },
-  {
-    id: "crosswind-depot",
-    name: "Crosswind Depot",
-    description: "A crosswind depot route with volatile side pods flanking the lane.",
-    objective: "Rip the depot pair apart, then drive debris through both side pods and the windbreak.",
-    chaosBrief: "There is no restraint drill anymore. Broad splash is a valid route if it keeps the chain alive.",
-    cannonPosition: new THREE.Vector3(-4.3, 5.95, 14.4),
-    defaultAimPoint: new THREE.Vector3(0.3, 0.16, -1.9),
-    cameraTarget: new THREE.Vector3(0.2, 0.85, -0.8),
-    mission: {
-      arc: "object-destruction",
-      order: 4,
-      targetZone: "depot-pair",
-      scoreThresholds: {
-        oneStar: 1_150_000,
-        twoStar: 1_650_000,
-        threeStar: 2_250_000
-      },
-      targetDamageThreshold: 7_800,
-      bonusThreshold: { metric: "maxChainCombo", minimum: 3 },
-      bonusObjective: "Reach a x3 chain combo through depot, side pods, and market windbreak.",
-      briefingHint: "Aim for one core and let the crosswind lane throw wreckage into everything around it."
-    },
-    setup: (context) => setupCompactChamber(context, CROSSWIND_DEPOT_CHAMBER)
+    setup: (context) => setupSwitchbackCrushCity(context)
   }
 ];
 
@@ -181,43 +164,6 @@ interface BuildingSpec {
   rotationY?: number;
 }
 
-interface CompactPanelSpec {
-  name: string;
-  x: number;
-  z: number;
-  width: number;
-  depth: number;
-  color: THREE.ColorRepresentation;
-  opacity: number;
-}
-
-interface CompactCargoSpec {
-  label: string;
-  materialId: MaterialId;
-  position: THREE.Vector3;
-  size: THREE.Vector3;
-  rotationY: number;
-}
-
-interface CompactVehicleSpec {
-  label: string;
-  position: THREE.Vector3;
-  size: THREE.Vector3;
-  accent: THREE.ColorRepresentation;
-  rotationY?: number;
-  linearVelocity?: THREE.Vector3;
-  trafficRoute?: TrafficRoute;
-}
-
-interface CompactChamberSpec {
-  panels: CompactPanelSpec[];
-  stacks: BuildingSpec[];
-  cargo: CompactCargoSpec[];
-  vehicles: CompactVehicleSpec[];
-  lights: Array<[number, number]>;
-  billboards: Array<[number, number, THREE.ColorRepresentation]>;
-}
-
 interface CityRoadCorridor {
   axis: "x" | "z";
   minX: number;
@@ -226,244 +172,120 @@ interface CityRoadCorridor {
   maxZ: number;
 }
 
+interface CityVehicleOptions {
+  zoneId?: string;
+  scoreValue?: number;
+  hazardKind?: "electric" | "combustible" | "explosive";
+}
+
+interface GroundPanelSpec {
+  name: string;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  color: THREE.ColorRepresentation;
+  opacity: number;
+  layer: number;
+}
+
+type CityVehicleVisualKind = "car" | "van" | "bus" | "tanker" | "taxi" | "flatbed";
+
 const CITY_ROAD_CLEARANCE = 0.18;
+const CITY_GROUND_COLOR = 0x192126;
+const CITY_BLOCK_APRON_COLOR = 0x151c22;
+const CITY_ROAD_SURFACE_COLOR = 0x43515d;
+const CITY_ROAD_EDGE_COLOR = 0x697781;
+const CITY_LANE_MARKER_COLOR = 0xffd873;
+const CITY_CROSSWALK_COLOR = 0xd7e2e8;
+const CITY_GROUND_LAYER_BASE = 0;
+const CITY_GROUND_LAYER_APRON = 1;
+const CITY_GROUND_LAYER_ROAD = 2;
+const CITY_GROUND_LAYER_MARKINGS = 3;
+const CITY_GROUND_DECAL_Y = 0.074;
+const HAZARD_CITY_BUILDING_HEIGHT_SCALE = 1.61;
+const CENTRAL_NORTHBOUND_LANE_X = 0.52;
+const CENTRAL_SOUTHBOUND_LANE_X = -0.52;
+const EAST_SOUTHBOUND_LANE_X = 9.68;
+const WEST_NORTHBOUND_LANE_X = -10.32;
+const NORTH_EASTBOUND_LANE_Z = -6.78;
+const CROSS_EASTBOUND_LANE_Z = -0.78;
+const CROSS_WESTBOUND_LANE_Z = -1.92;
+const SERVICE_EASTBOUND_LANE_Z = 5.42;
+const SERVICE_WESTBOUND_LANE_Z = 4.62;
+const BATTERY_WESTBOUND_LANE_Z = 8.02;
+const NORTH_SERVICE_ROAD: CityRoadCorridor = { axis: "z", minX: -11.6, maxX: 10.8, minZ: -7.96, maxZ: -6.54 };
+const CENTRAL_AVENUE: CityRoadCorridor = { axis: "x", minX: -1.18, maxX: 1.18, minZ: -11.78, maxZ: 10.58 };
+const WEST_SERVICE_ROAD: CityRoadCorridor = { axis: "x", minX: -11.34, maxX: -9.96, minZ: -8.38, maxZ: 8.88 };
+const CROSS_BOULEVARD: CityRoadCorridor = { axis: "z", minX: -13.1, maxX: 13.1, minZ: -2.39, maxZ: -0.31 };
+const SOUTH_SERVICE_ROAD: CityRoadCorridor = { axis: "z", minX: -11.5, maxX: 11.5, minZ: 4.22, maxZ: 5.78 };
+const EAST_SERVICE_ROAD: CityRoadCorridor = { axis: "x", minX: 9.42, maxX: 10.78, minZ: -10.1, maxZ: 8.7 };
+const BATTERY_ACCESS_ROAD: CityRoadCorridor = { axis: "z", minX: -11.45, maxX: 11.15, minZ: 7.76, maxZ: 8.94 };
+const CITY_VERTICAL_ROADS = [WEST_SERVICE_ROAD, CENTRAL_AVENUE, EAST_SERVICE_ROAD] as const;
+const CITY_HORIZONTAL_ROADS = [NORTH_SERVICE_ROAD, CROSS_BOULEVARD, SOUTH_SERVICE_ROAD, BATTERY_ACCESS_ROAD] as const;
 const CITY_ROAD_CORRIDORS: CityRoadCorridor[] = [
-  { axis: "x", minX: -1.08, maxX: 1.08, minZ: -11.7, maxZ: 10.5 },
-  { axis: "z", minX: -12.9, maxX: 12.9, minZ: -2.28, maxZ: -0.42 },
-  { axis: "z", minX: -11.4, maxX: 11.4, minZ: 4.48, maxZ: 5.53 },
-  { axis: "x", minX: 9.66, maxX: 10.54, minZ: -10, maxZ: 8.6 },
-  { axis: "z", minX: -2.7, maxX: 11.1, minZ: 7.92, maxZ: 8.78 }
+  NORTH_SERVICE_ROAD,
+  CENTRAL_AVENUE,
+  WEST_SERVICE_ROAD,
+  CROSS_BOULEVARD,
+  SOUTH_SERVICE_ROAD,
+  EAST_SERVICE_ROAD,
+  BATTERY_ACCESS_ROAD
 ];
 const NORTH_TRAFFIC_LOOP: Array<[number, number]> = [
-  [0.42, -7.4],
-  [10.34, -7.4],
-  [10.34, -1.62],
-  [0.42, -1.62]
+  [CENTRAL_NORTHBOUND_LANE_X, NORTH_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, NORTH_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, CROSS_WESTBOUND_LANE_Z],
+  [CENTRAL_NORTHBOUND_LANE_X, CROSS_WESTBOUND_LANE_Z]
 ];
 const CENTRAL_TRAFFIC_LOOP: Array<[number, number]> = [
-  [0.42, -1.62],
-  [10.34, -1.62],
-  [10.34, 4.78],
-  [0.42, 4.78]
+  [CENTRAL_NORTHBOUND_LANE_X, CROSS_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, CROSS_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z],
+  [CENTRAL_NORTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z]
 ];
 const CENTRAL_TRAFFIC_LOOP_OPPOSITE: Array<[number, number]> = [
-  [-0.42, -0.96],
-  [-0.42, 5.22],
-  [9.86, 5.22],
-  [9.86, -0.96]
+  [WEST_NORTHBOUND_LANE_X, CROSS_EASTBOUND_LANE_Z],
+  [CENTRAL_SOUTHBOUND_LANE_X, CROSS_EASTBOUND_LANE_Z],
+  [CENTRAL_SOUTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z],
+  [WEST_NORTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z]
 ];
 const BATTERY_TRAFFIC_LOOP: Array<[number, number]> = [
-  [0.42, 4.78],
-  [10.34, 4.78],
-  [10.34, 8.12],
-  [0.42, 8.12]
+  [CENTRAL_NORTHBOUND_LANE_X, SERVICE_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, SERVICE_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, BATTERY_WESTBOUND_LANE_Z],
+  [CENTRAL_NORTHBOUND_LANE_X, BATTERY_WESTBOUND_LANE_Z]
 ];
 const BATTERY_TRAFFIC_LOOP_OPPOSITE: Array<[number, number]> = [
-  [-0.42, 8.58],
-  [-0.42, 5.22],
-  [9.86, 5.22],
-  [9.86, 8.58]
+  [WEST_NORTHBOUND_LANE_X, SERVICE_EASTBOUND_LANE_Z],
+  [CENTRAL_SOUTHBOUND_LANE_X, SERVICE_EASTBOUND_LANE_Z],
+  [CENTRAL_SOUTHBOUND_LANE_X, BATTERY_WESTBOUND_LANE_Z],
+  [WEST_NORTHBOUND_LANE_X, BATTERY_WESTBOUND_LANE_Z]
+];
+const roleRenderMaterialCache = new Map<string, THREE.Material>();
+const WEST_NORTH_TRAFFIC_LOOP: Array<[number, number]> = [
+  [WEST_NORTHBOUND_LANE_X, NORTH_EASTBOUND_LANE_Z],
+  [CENTRAL_SOUTHBOUND_LANE_X, NORTH_EASTBOUND_LANE_Z],
+  [CENTRAL_SOUTHBOUND_LANE_X, CROSS_WESTBOUND_LANE_Z],
+  [WEST_NORTHBOUND_LANE_X, CROSS_WESTBOUND_LANE_Z]
+];
+const CITY_BELT_TRAFFIC_LOOP: Array<[number, number]> = [
+  [WEST_NORTHBOUND_LANE_X, NORTH_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, NORTH_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, BATTERY_WESTBOUND_LANE_Z],
+  [WEST_NORTHBOUND_LANE_X, BATTERY_WESTBOUND_LANE_Z]
+];
+const INNER_BELT_TRAFFIC_LOOP: Array<[number, number]> = [
+  [WEST_NORTHBOUND_LANE_X, CROSS_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, CROSS_EASTBOUND_LANE_Z],
+  [EAST_SOUTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z],
+  [WEST_NORTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z]
 ];
 
-const BREAKER_YARD_CHAMBER: CompactChamberSpec = {
-  panels: [
-    { name: "breaker yard floor", x: 0, z: -1.1, width: 12.6, depth: 10.2, color: 0x1d252b, opacity: 1 },
-    { name: "breaker target zone", x: 0, z: -3.15, width: 4.8, depth: 2.8, color: 0xff7138, opacity: 0.35 },
-    { name: "relay hazard zone", x: -4.3, z: -0.5, width: 2.4, depth: 2.7, color: 0xff8f38, opacity: 0.3 },
-    { name: "coolant hazard zone", x: 4.2, z: 1.25, width: 2.5, depth: 2.3, color: 0xff8f38, opacity: 0.3 },
-    { name: "breaker lane marking", x: 0, z: 2.35, width: 7.8, depth: 0.16, color: 0xf3c96d, opacity: 0.72 }
-  ],
-  stacks: [
-    compactStack("Breaker spine", "concrete", 0, -3.15, 0.58, 0.54, 0.62, 3, 4, "target", "breaker-spine", 78, "industrial"),
-    compactStack("Relay booth", "glass", -4.35, -0.5, 0.54, 0.58, 0.58, 2, 2, "target", "relay-booth", 150, "civic"),
-    compactStack("Coolant kiosk", "wood", 4.2, 1.25, 0.6, 0.5, 0.62, 2, 2, "target", "coolant-kiosk", 135, "warehouse"),
-    compactStack("Scrap buffer", "metal", -2.15, 0.95, 0.56, 0.42, 0.56, 2, 3, "neutral", "scrap-buffer", 30, "warehouse", Math.PI * 0.08),
-    compactStack("Foam absorber row", "foam", 2.2, -0.2, 0.5, 0.36, 0.52, 2, 4, "neutral", "absorber-row", 22, "market", -Math.PI * 0.08)
-  ],
-  cargo: [
-    compactCargo("Metal brake drum", "metal", -1.6, 0.31, 1.1, 0.62, 0.48, 0.52, Math.PI * 0.12),
-    compactCargo("Foam safety crate", "foam", 1.65, 0.28, 0.8, 0.58, 0.38, 0.52, -Math.PI * 0.14),
-    compactCargo("Wood pallet stop", "wood", -0.45, 0.35, 1.75, 0.72, 0.42, 0.56, Math.PI * 0.5),
-    compactCargo("Glass meter case", "glass", 3.05, 0.3, -2.15, 0.48, 0.58, 0.48, -Math.PI * 0.08)
-  ],
-  vehicles: [
-    {
-      label: "Breaker yard tug",
-      position: new THREE.Vector3(-3.05, 0.31, 2.25),
-      size: new THREE.Vector3(0.46, 0.38, 0.82),
-      accent: 0xffb14f,
-      rotationY: Math.PI * 0.5,
-      trafficRoute: trafficRoute("x", -4.2, 3.8, 0.8, 1)
-    }
-  ],
-  lights: [
-    [-5.3, -4.8],
-    [5.25, -4.8],
-    [-5.25, 3.25],
-    [5.25, 3.25]
-  ],
-  billboards: [[0, -5.55, 0xff8f38]]
-};
-
-const SWITCHBACK_CRUSH_CHAMBER: CompactChamberSpec = {
-  panels: [
-    { name: "switchback crush floor", x: 0.2, z: -0.55, width: 13.6, depth: 10.8, color: 0x1a2229, opacity: 1 },
-    { name: "glass depot target zone", x: 1.85, z: -3.25, width: 4.4, depth: 2.6, color: 0xff7138, opacity: 0.34 },
-    { name: "switchback target zone", x: -2.2, z: 0.8, width: 3.3, depth: 2.5, color: 0xff7138, opacity: 0.28 },
-    { name: "archive hazard zone", x: 4.75, z: 1.55, width: 2.6, depth: 2.8, color: 0xff8f38, opacity: 0.3 },
-    { name: "switchback road marking", x: -0.3, z: 2.95, width: 8.8, depth: 0.14, color: 0xf3c96d, opacity: 0.68 },
-    { name: "debris runoff channel", x: -5.1, z: -2.9, width: 0.9, depth: 4.6, color: 0x303943, opacity: 0.85 }
-  ],
-  stacks: [
-    compactStack("Glass depot column", "glass", 1.85, -3.2, 0.5, 0.72, 0.5, 3, 3, "target", "glass-depot", 88, "glassTower", Math.PI * 0.06),
-    compactStack("Switchback mixer", "foam", -2.25, 0.75, 0.56, 0.42, 0.58, 2, 4, "target", "glass-depot", 62, "market", -Math.PI * 0.08),
-    compactStack("Glass archive", "glass", 4.75, 1.55, 0.52, 0.6, 0.54, 3, 2, "target", "glass-archive", 160, "glassTower"),
-    compactStack("Canal screens", "metal", -5.0, -0.25, 0.44, 0.42, 0.64, 2, 4, "neutral", "canal-screens", 26, "warehouse", Math.PI * 0.5),
-    compactStack("Soft baffle row", "foam", -0.1, 2.85, 0.48, 0.34, 0.5, 2, 5, "neutral", "soft-baffle", 20, "market")
-  ],
-  cargo: [
-    compactCargo("Archive pump crate", "glass", 0.35, 0.28, -1.4, 0.46, 0.56, 0.46, Math.PI * 0.12),
-    compactCargo("Foam redirect skid", "foam", -1.15, 0.26, -0.75, 0.78, 0.36, 0.52, -Math.PI * 0.22),
-    compactCargo("Wood service pallet", "wood", 2.85, 0.31, -0.75, 0.7, 0.42, 0.56, Math.PI * 0.18),
-    compactCargo("Metal pump case", "metal", -3.55, 0.3, 2.15, 0.72, 0.44, 0.48, Math.PI * 0.5),
-    compactCargo("Foam corner skid", "foam", 1.15, 0.25, 2.65, 0.72, 0.34, 0.5, Math.PI * 0.04)
-  ],
-  vehicles: [
-    {
-      label: "Switchback yard scooter",
-      position: new THREE.Vector3(-4.25, 0.27, 1.65),
-      size: new THREE.Vector3(0.34, 0.32, 0.62),
-      accent: 0xff70b0,
-      rotationY: Math.PI * 0.5,
-      trafficRoute: trafficRoute("x", -4.8, 0.8, 1, 1)
-    }
-  ],
-  lights: [
-    [-5.75, -4.8],
-    [5.85, -4.8],
-    [-5.75, 4.05],
-    [5.85, 4.05]
-  ],
-  billboards: [[-3.15, -4.75, 0xff6b93]]
-};
-
-const CROSSWIND_DEPOT_CHAMBER: CompactChamberSpec = {
-  panels: [
-    { name: "crosswind depot floor", x: 0, z: -0.35, width: 14.2, depth: 11.2, color: 0x1b2329, opacity: 1 },
-    { name: "depot target zone west", x: -2.25, z: -2.45, width: 3.2, depth: 2.8, color: 0xff7138, opacity: 0.34 },
-    { name: "depot target zone east", x: 2.45, z: -2.45, width: 3.2, depth: 2.8, color: 0xff7138, opacity: 0.34 },
-    { name: "west pod hazard zone", x: -4.75, z: 1.35, width: 2.8, depth: 2.9, color: 0xff4f66, opacity: 0.34 },
-    { name: "east pod hazard zone", x: 4.85, z: 1.55, width: 2.8, depth: 2.6, color: 0xff8f38, opacity: 0.3 },
-    { name: "depot crosswalk stripe", x: 0, z: 1.6, width: 8.5, depth: 0.16, color: 0xd7e2e8, opacity: 0.74 },
-    { name: "depot lane marking", x: 0, z: -4.35, width: 9.3, depth: 0.14, color: 0xf3c96d, opacity: 0.68 }
-  ],
-  stacks: [
-    compactStack("West depot core", "concrete", -2.25, -2.45, 0.58, 0.52, 0.58, 3, 3, "target", "depot-pair", 82, "industrial", Math.PI * 0.04),
-    compactStack("East depot core", "metal", 2.45, -2.45, 0.52, 0.46, 0.64, 3, 3, "target", "depot-pair", 80, "warehouse", -Math.PI * 0.04),
-    compactStack("West glass pod", "glass", -4.75, 1.35, 0.52, 0.62, 0.54, 3, 2, "target", "west-crosswind", 170, "glassTower"),
-    compactStack("East wood pod", "wood", 4.85, 1.55, 0.58, 0.5, 0.62, 2, 3, "target", "east-crosswind", 150, "warehouse"),
-    compactStack("Market windbreak", "foam", 0, 3.25, 0.5, 0.36, 0.5, 2, 5, "neutral", "market-windbreak", 22, "market"),
-    compactStack("North service rail", "metal", 0.1, -5.15, 0.5, 0.38, 0.52, 2, 5, "neutral", "service-rail", 24, "warehouse")
-  ],
-  cargo: [
-    compactCargo("Depot hinge crate", "metal", -0.2, 0.3, -1.25, 0.72, 0.44, 0.5, Math.PI * 0.5),
-    compactCargo("Foam west bumper", "foam", -3.15, 0.24, 0.05, 0.8, 0.34, 0.48, -Math.PI * 0.08),
-    compactCargo("Wood east bumper", "wood", 3.3, 0.29, 0.1, 0.74, 0.4, 0.5, Math.PI * 0.08),
-    compactCargo("Glass meter cart", "glass", 0.85, 0.29, 2.15, 0.48, 0.56, 0.48, Math.PI * 0.18)
-  ],
-  vehicles: [
-    {
-      label: "Depot supply van",
-      position: new THREE.Vector3(-0.65, 0.32, 3.75),
-      size: new THREE.Vector3(0.54, 0.42, 0.92),
-      accent: 0xff5f8f,
-      rotationY: Math.PI * 0.5,
-      trafficRoute: trafficRoute("x", -2.5, 2.2, 0.85, 1)
-    },
-    {
-      label: "Depot service cart",
-      position: new THREE.Vector3(5.75, 0.28, -3.95),
-      size: new THREE.Vector3(0.36, 0.32, 0.62),
-      accent: 0xffb55f,
-      trafficRoute: trafficRoute("z", -5.1, -1.8, 0.85, 1)
-    }
-  ],
-  lights: [
-    [-6.25, -5.0],
-    [6.25, -5.0],
-    [-6.25, 4.35],
-    [6.25, 4.35]
-  ],
-  billboards: [[-1.95, -5.25, 0x7ee8ff]]
-};
-
-function compactStack(
-  label: string,
-  materialId: MaterialId,
-  x: number,
-  z: number,
-  width: number,
-  height: number,
-  depth: number,
-  floors: number,
-  columns: number,
-  scoreRole: ScoreRole,
-  zoneId: string,
-  scoreValue: number,
-  style: BuildingVisualStyle,
-  rotationY = 0,
-  stagger = 0
-): BuildingSpec {
-  return {
-    label,
-    materialId,
-    position: new THREE.Vector3(x, 0, z),
-    size: new THREE.Vector3(width, height, depth),
-    floors,
-    columns,
-    scoreRole,
-    zoneId,
-    scoreValue,
-    style,
-    rotationY,
-    stagger
-  };
-}
-
-function compactCargo(
-  label: string,
-  materialId: MaterialId,
-  x: number,
-  y: number,
-  z: number,
-  width: number,
-  height: number,
-  depth: number,
-  rotationY: number
-): CompactCargoSpec {
-  return {
-    label,
-    materialId,
-    position: new THREE.Vector3(x, y, z),
-    size: new THREE.Vector3(width, height, depth),
-    rotationY
-  };
-}
-
-function trafficRoute(
-  axis: TrafficRoute["axis"],
-  min: number,
-  max: number,
-  speed: number,
-  direction: TrafficRoute["direction"],
-  laneOffset?: number
-): TrafficRoute {
-  return { axis, min, max, speed, direction, laneOffset };
-}
-
 function trafficLoop(points: Array<[number, number]>, speed: number, segmentIndex = 0): TrafficRoute {
-  const from = points[segmentIndex % points.length];
-  const to = points[(segmentIndex + 1) % points.length];
+  const normalizedSegmentIndex = normalizeLoopSegmentIndex(segmentIndex, points.length);
+  const from = points[normalizedSegmentIndex];
+  const to = points[(normalizedSegmentIndex + 1) % points.length];
   const dx = to[0] - from[0];
   const dz = to[1] - from[1];
   const axis: TrafficRoute["axis"] = Math.abs(dx) >= Math.abs(dz) ? "x" : "z";
@@ -475,39 +297,402 @@ function trafficLoop(points: Array<[number, number]>, speed: number, segmentInde
     speed,
     direction,
     waypoints: points.map(([x, z]) => ({ x, z })),
-    segmentIndex
+    segmentIndex: normalizedSegmentIndex
   };
 }
 
-function setupCompactChamber(context: LevelContext, spec: CompactChamberSpec): void {
-  spec.panels.forEach((panel, layer) => {
-    addPanel(context, panel.name, panel.x, panel.z, panel.width, panel.depth, panel.color, panel.opacity, layer);
-  });
+function addRoutedCityVehicle(
+  context: LevelContext,
+  label: string,
+  routePoints: Array<[number, number]>,
+  speed: number,
+  segmentIndex: number,
+  segmentProgress: number,
+  y: number,
+  size: THREE.Vector3,
+  accent: THREE.ColorRepresentation,
+  options: CityVehicleOptions = {}
+): void {
+  const pose = trafficLoopPose(routePoints, segmentIndex, segmentProgress, y);
+  addCityVehicle(context, label, pose.position, size, accent, pose.rotationY, undefined, trafficLoop(routePoints, speed, segmentIndex), options);
+}
 
-  for (const stack of spec.stacks) {
-    spawnBuildingStack(context, stack);
+function trafficLoopPose(
+  points: Array<[number, number]>,
+  segmentIndex: number,
+  segmentProgress: number,
+  y: number
+): { position: THREE.Vector3; rotationY: number } {
+  const fromIndex = normalizeLoopSegmentIndex(segmentIndex, points.length);
+  const from = points[fromIndex];
+  const to = points[(fromIndex + 1) % points.length];
+  const t = THREE.MathUtils.clamp(segmentProgress, 0.08, 0.92);
+  const x = THREE.MathUtils.lerp(from[0], to[0], t);
+  const z = THREE.MathUtils.lerp(from[1], to[1], t);
+  return {
+    position: new THREE.Vector3(x, y, z),
+    rotationY: Math.atan2(to[0] - from[0], to[1] - from[1])
+  };
+}
+
+function normalizeLoopSegmentIndex(index: number, length: number): number {
+  return ((Math.trunc(index) % length) + length) % length;
+}
+
+function setupBreakerYardCity(context: LevelContext): void {
+  addCityGround(context);
+  spawnNeutralCityBlocks(context);
+  spawnInfillCityBlocks(context);
+  spawnVacantLotInfill(context);
+  spawnBreakerYardCore(context);
+  spawnBreakerYardRelayWeb(context);
+  spawnBreakerYardStreetActivity(context);
+  spawnPowerGrid(context);
+  spawnStreetSetpieces(context);
+}
+
+function setupSwitchbackCrushCity(context: LevelContext): void {
+  addCityGround(context);
+  spawnNeutralCityBlocks(context);
+  spawnInfillCityBlocks(context);
+  spawnVacantLotInfill(context);
+  spawnSwitchbackArchiveCore(context);
+  spawnSwitchbackRedirectors(context);
+  spawnSwitchbackStreetActivity(context);
+  spawnStreetSetpieces(context);
+}
+
+function spawnBreakerYardCore(context: LevelContext): void {
+  const buildings: BuildingSpec[] = [
+    {
+      label: "Breaker spine megastructure",
+      materialId: "concrete",
+      position: new THREE.Vector3(-0.95, 0, -4.35),
+      size: new THREE.Vector3(0.68, 0.58, 0.68),
+      floors: 6,
+      columns: 5,
+      scoreRole: "target",
+      zoneId: "breaker-spine",
+      scoreValue: 115,
+      style: "industrial",
+      stagger: 0.1
+    },
+    {
+      label: "Breaker control tower",
+      materialId: "glass",
+      position: new THREE.Vector3(2.75, 0, -4.65),
+      size: new THREE.Vector3(0.48, 0.72, 0.48),
+      floors: 6,
+      columns: 4,
+      scoreRole: "target",
+      zoneId: "breaker-spine electric-substation",
+      scoreValue: 106,
+      style: "glassTower",
+      stagger: -0.04,
+      rotationY: -Math.PI * 0.05
+    },
+    {
+      label: "Transformer hall",
+      materialId: "metal",
+      position: new THREE.Vector3(-4.75, 0, -2.3),
+      size: new THREE.Vector3(0.56, 0.5, 0.68),
+      floors: 4,
+      columns: 5,
+      scoreRole: "target",
+      zoneId: "breaker-spine power-grid",
+      scoreValue: 98,
+      style: "warehouse",
+      stagger: 0.08,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Relay booth arcade",
+      materialId: "glass",
+      position: new THREE.Vector3(4.75, 0, -0.05),
+      size: new THREE.Vector3(0.48, 0.58, 0.52),
+      floors: 4,
+      columns: 5,
+      scoreRole: "target",
+      zoneId: "relay-booth power-grid",
+      scoreValue: 92,
+      style: "glassTower",
+      stagger: 0.06,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Coolant kiosk block",
+      materialId: "wood",
+      position: new THREE.Vector3(-5.05, 0, 2.65),
+      size: new THREE.Vector3(0.56, 0.5, 0.58),
+      floors: 4,
+      columns: 4,
+      scoreRole: "target",
+      zoneId: "coolant-kiosk fuel",
+      scoreValue: 86,
+      style: "utility",
+      stagger: -0.08,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Breaker capacitor market",
+      materialId: "foam",
+      position: new THREE.Vector3(2.85, 0, 3.05),
+      size: new THREE.Vector3(0.52, 0.44, 0.52),
+      floors: 3,
+      columns: 6,
+      scoreRole: "target",
+      zoneId: "relay-booth hazard-relay",
+      scoreValue: 76,
+      style: "market",
+      stagger: -0.06
+    },
+    {
+      label: "Breaker yard apartments",
+      materialId: "concrete",
+      position: new THREE.Vector3(-7.55, 0, -5.45),
+      size: new THREE.Vector3(0.52, 0.54, 0.54),
+      floors: 5,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "breaker-yard-fill",
+      scoreValue: 34,
+      style: "apartment",
+      stagger: 0.06,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Breaker yard office row",
+      materialId: "metal",
+      position: new THREE.Vector3(7.45, 0, 1.5),
+      size: new THREE.Vector3(0.52, 0.48, 0.58),
+      floors: 4,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "breaker-yard-fill",
+      scoreValue: 32,
+      style: "warehouse",
+      stagger: -0.04,
+      rotationY: Math.PI * 0.5
+    }
+  ];
+
+  for (const building of buildings) {
+    spawnCityBuildingStack(context, building);
   }
-  for (const cargo of spec.cargo) {
-    addStreetCargo(context, cargo.label, cargo.materialId, cargo.position, cargo.size, cargo.rotationY);
+}
+
+function spawnBreakerYardRelayWeb(context: LevelContext): void {
+  for (const [type, label, x, z, width, height, depth, rotationY] of [
+    ["transformer", "Breaker yard transformer", -2.9, -1.35, 0.56, 0.72, 0.48, Math.PI * 0.08],
+    ["transformer", "Breaker yard transformer", 1.9, -2.15, 0.56, 0.72, 0.48, -Math.PI * 0.12],
+    ["transformer", "Breaker yard transformer", -4.2, 1.25, 0.56, 0.72, 0.48, Math.PI * 0.5],
+    ["shockCanister", "Breaker shock canister", 3.45, 1.15, 0.42, 0.66, 0.42, -Math.PI * 0.5],
+    ["shockCanister", "Breaker shock canister", -6.35, -0.15, 0.42, 0.66, 0.42, Math.PI * 0.5],
+    ["springPad", "Breaker spring collision pad", -0.55, 1.65, 0.86, 0.22, 0.62, Math.PI * 0.12],
+    ["springPad", "Breaker spring collision pad", 4.15, 3.6, 0.86, 0.22, 0.62, -Math.PI * 0.08]
+  ] as const) {
+    addHazardRelay(context, type, label, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
   }
-  for (const vehicle of spec.vehicles) {
-    addCityVehicle(
-      context,
-      vehicle.label,
-      vehicle.position,
-      vehicle.size,
-      vehicle.accent,
-      vehicle.rotationY,
-      vehicle.linearVelocity,
-      vehicle.trafficRoute
-    );
+
+  for (const [label, materialId, x, z, width, height, depth, rotationY] of [
+    ["Breaker cable spool", "rubber", -3.6, 3.85, 0.68, 0.44, 0.58, Math.PI * 0.08],
+    ["Breaker meter cabinet", "glass", 0.8, 4.15, 0.48, 0.58, 0.48, -Math.PI * 0.12],
+    ["Transformer skid", "metal", -6.25, 4.75, 0.78, 0.46, 0.58, Math.PI * 0.5],
+    ["Coolant foam pallet", "foam", 5.15, 4.6, 0.76, 0.38, 0.58, -Math.PI * 0.08],
+    ["Breaker wood stop", "wood", -0.95, 6.35, 0.82, 0.42, 0.62, Math.PI * 0.5]
+  ] as const) {
+    addStreetCargo(context, label, materialId, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
   }
-  for (const [x, z] of spec.lights) {
-    addStreetLight(context, x, z);
+
+  addStrategicHazardBox(context, {
+    label: "Breaker substation transformer yard",
+    materialId: "metal",
+    position: new THREE.Vector3(6.55, 0.46, -4.85),
+    size: new THREE.Vector3(1.05, 0.92, 0.64),
+    zoneId: "breaker-spine electric-substation power-grid",
+    scoreValue: 620,
+    kind: "electric",
+    rotationY: Math.PI * 0.5
+  });
+  addStrategicHazardBox(context, {
+    label: "Breaker substation control house",
+    materialId: "metal",
+    position: new THREE.Vector3(7.55, 0.36, -4.0),
+    size: new THREE.Vector3(1.0, 0.72, 0.82),
+    zoneId: "breaker-spine electric-substation power-grid",
+    scoreValue: 440,
+    kind: "electric",
+    rotationY: Math.PI * 0.5
+  });
+}
+
+function spawnBreakerYardStreetActivity(context: LevelContext): void {
+  addRoutedCityVehicle(context, "Breaker fuel tanker", NORTH_TRAFFIC_LOOP, 0.86, 1, 0.28, 0.36, new THREE.Vector3(0.54, 0.44, 1.18), 0xffd66b, {
+    zoneId: "breaker-yard fuel gas-line moving-vehicles",
+    scoreValue: 300,
+    hazardKind: "combustible"
+  });
+  addRoutedCityVehicle(context, "Breaker maintenance van", CITY_BELT_TRAFFIC_LOOP, 0.92, 0, 0.62, 0.34, new THREE.Vector3(0.56, 0.44, 0.98), 0x9bb2bd, {
+    scoreValue: 62
+  });
+  addRoutedCityVehicle(context, "Breaker courier coupe", CENTRAL_TRAFFIC_LOOP, 1.22, 2, 0.35, 0.28, new THREE.Vector3(0.38, 0.32, 0.72), 0xff8f38, {
+    scoreValue: 44
+  });
+  addRoutedCityVehicle(context, "Breaker shuttle bus", BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.76, 2, 0.5, 0.38, new THREE.Vector3(0.62, 0.5, 1.18), 0x75e6ff, {
+    scoreValue: 80
+  });
+  addBillboard(context, -5.75, -6.15, 0xff8f38);
+  addBillboard(context, 6.25, -5.55, 0x93f6ff);
+  addBillboard(context, -6.85, 5.9, 0xffd66b);
+}
+
+function spawnSwitchbackArchiveCore(context: LevelContext): void {
+  const buildings: BuildingSpec[] = [
+    {
+      label: "Glass depot atrium",
+      materialId: "glass",
+      position: new THREE.Vector3(1.35, 0, -4.35),
+      size: new THREE.Vector3(0.5, 0.76, 0.5),
+      floors: 6,
+      columns: 5,
+      scoreRole: "target",
+      zoneId: "glass-depot",
+      scoreValue: 112,
+      style: "glassTower",
+      stagger: 0.05,
+      rotationY: Math.PI * 0.04
+    },
+    {
+      label: "Archive switchback tower",
+      materialId: "glass",
+      position: new THREE.Vector3(5.25, 0, -1.3),
+      size: new THREE.Vector3(0.46, 0.72, 0.48),
+      floors: 6,
+      columns: 4,
+      scoreRole: "target",
+      zoneId: "glass-archive",
+      scoreValue: 108,
+      style: "glassTower",
+      stagger: -0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Archive switchback tower",
+      materialId: "glass",
+      position: new THREE.Vector3(-4.85, 0, 1.25),
+      size: new THREE.Vector3(0.46, 0.72, 0.48),
+      floors: 6,
+      columns: 4,
+      scoreRole: "target",
+      zoneId: "glass-archive",
+      scoreValue: 108,
+      style: "glassTower",
+      stagger: 0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Switchback mixer block",
+      materialId: "foam",
+      position: new THREE.Vector3(-1.95, 0, -0.35),
+      size: new THREE.Vector3(0.56, 0.46, 0.58),
+      floors: 4,
+      columns: 6,
+      scoreRole: "target",
+      zoneId: "glass-depot switchback-foam",
+      scoreValue: 82,
+      style: "market",
+      stagger: -0.08
+    },
+    {
+      label: "Service compression wall",
+      materialId: "metal",
+      position: new THREE.Vector3(4.75, 0, 3.05),
+      size: new THREE.Vector3(0.52, 0.48, 0.64),
+      floors: 4,
+      columns: 5,
+      scoreRole: "target",
+      zoneId: "glass-depot switchback-service",
+      scoreValue: 88,
+      style: "warehouse",
+      stagger: 0.06,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Archive office fan",
+      materialId: "concrete",
+      position: new THREE.Vector3(-7.0, 0, -4.85),
+      size: new THREE.Vector3(0.52, 0.54, 0.56),
+      floors: 5,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "switchback-fill",
+      scoreValue: 34,
+      style: "apartment",
+      stagger: -0.06,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Archive market ledge",
+      materialId: "foam",
+      position: new THREE.Vector3(7.15, 0, 1.75),
+      size: new THREE.Vector3(0.5, 0.4, 0.52),
+      floors: 3,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "switchback-fill",
+      scoreValue: 26,
+      style: "market",
+      stagger: 0.05,
+      rotationY: Math.PI * 0.5
+    }
+  ];
+
+  for (const building of buildings) {
+    spawnCityBuildingStack(context, building);
   }
-  for (const [x, z, color] of spec.billboards) {
-    addBillboard(context, x, z, color);
+}
+
+function spawnSwitchbackRedirectors(context: LevelContext): void {
+  for (const [label, materialId, x, z, width, height, depth, rotationY] of [
+    ["Foam redirect wall", "foam", -2.95, 2.95, 1.05, 0.42, 0.58, Math.PI * 0.18],
+    ["Foam redirect wall", "foam", 2.55, 1.35, 1.05, 0.42, 0.58, -Math.PI * 0.22],
+    ["Archive glass meter crate", "glass", -0.25, -1.7, 0.5, 0.58, 0.5, Math.PI * 0.12],
+    ["Archive glass pump crate", "glass", 2.65, -0.15, 0.52, 0.58, 0.5, -Math.PI * 0.12],
+    ["Wood service pallet", "wood", -4.55, 4.35, 0.78, 0.42, 0.58, Math.PI * 0.5],
+    ["Metal switchback case", "metal", 3.8, 5.15, 0.76, 0.46, 0.52, -Math.PI * 0.5],
+    ["Foam corner skid", "foam", 6.2, -3.95, 0.82, 0.38, 0.58, Math.PI * 0.08]
+  ] as const) {
+    addStreetCargo(context, label, materialId, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
   }
+
+  for (const [type, label, x, z, width, height, depth, rotationY] of [
+    ["springPad", "Switchback spring collision pad", -1.25, 3.75, 0.9, 0.22, 0.64, Math.PI * 0.18],
+    ["springPad", "Switchback spring collision pad", 3.8, -2.45, 0.9, 0.22, 0.64, -Math.PI * 0.1],
+    ["shockCanister", "Archive shock canister", -5.75, -0.45, 0.42, 0.64, 0.42, Math.PI * 0.5],
+    ["shockCanister", "Archive shock canister", 5.95, 0.6, 0.42, 0.64, 0.42, -Math.PI * 0.5]
+  ] as const) {
+    addHazardRelay(context, type, label, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+}
+
+function spawnSwitchbackStreetActivity(context: LevelContext): void {
+  addRoutedCityVehicle(context, "Archive service van", CITY_BELT_TRAFFIC_LOOP, 0.86, 0, 0.45, 0.34, new THREE.Vector3(0.56, 0.44, 0.98), 0xff6b93, {
+    scoreValue: 62
+  });
+  addRoutedCityVehicle(context, "Switchback courier pod", CENTRAL_TRAFFIC_LOOP_OPPOSITE, 1.18, 3, 0.3, 0.27, new THREE.Vector3(0.36, 0.31, 0.68), 0x61d8ff, {
+    scoreValue: 44
+  });
+  addRoutedCityVehicle(context, "Archive tanker truck", BATTERY_TRAFFIC_LOOP, 0.78, 1, 0.58, 0.36, new THREE.Vector3(0.54, 0.44, 1.18), 0xffd66b, {
+    zoneId: "archive-service fuel moving-vehicles",
+    scoreValue: 260,
+    hazardKind: "combustible"
+  });
+  addRoutedCityVehicle(context, "Switchback bus", INNER_BELT_TRAFFIC_LOOP, 0.76, 2, 0.42, 0.38, new THREE.Vector3(0.62, 0.5, 1.18), 0x75e6ff, {
+    scoreValue: 78
+  });
+  addBillboard(context, -4.65, -6.25, 0xff6b93);
+  addBillboard(context, 5.6, -5.85, 0x7ee8ff);
+  addBillboard(context, 6.9, 4.65, 0xffd66b);
 }
 
 function spawnTargetDistrict(context: LevelContext): void {
@@ -1444,6 +1629,155 @@ function spawnStrategicHazards(context: LevelContext): void {
   }
 }
 
+function spawnMayhemSpecialSetpieces(context: LevelContext): void {
+  spawnElectricSubstation(context);
+  spawnPropaneDepot(context);
+  spawnParkingSilo(context);
+}
+
+function spawnElectricSubstation(context: LevelContext): void {
+  addStrategicHazardBox(context, {
+    label: "Electric substation control house",
+    materialId: "metal",
+    position: new THREE.Vector3(-8.15, 0.34, -5.12),
+    size: new THREE.Vector3(1.12, 0.68, 0.82),
+    zoneId: "electric-substation power-grid",
+    scoreValue: 420,
+    kind: "electric",
+    rotationY: Math.PI * 0.5
+  });
+  addStrategicHazardBox(context, {
+    label: "Electric substation transformer yard",
+    materialId: "metal",
+    position: new THREE.Vector3(-6.95, 0.43, -5.24),
+    size: new THREE.Vector3(0.9, 0.86, 0.58),
+    zoneId: "electric-substation power-grid",
+    scoreValue: 560,
+    kind: "electric",
+    rotationY: Math.PI * 0.5
+  });
+  for (const [x, z, rotationY] of [
+    [-7.5, -4.42, Math.PI * 0.08],
+    [-6.55, -4.45, -Math.PI * 0.08],
+    [-7.08, -5.98, Math.PI * 0.5]
+  ] as const) {
+    addStrategicHazardBox(context, {
+      label: "Electric substation breaker rack",
+      materialId: "glass",
+      position: new THREE.Vector3(x, 0.39, z),
+      size: new THREE.Vector3(0.36, 0.78, 0.34),
+      zoneId: "electric-substation power-grid",
+      scoreValue: 210,
+      kind: "electric",
+      rotationY
+    });
+  }
+}
+
+function spawnPropaneDepot(context: LevelContext): void {
+  addStrategicHazardBox(context, {
+    label: "Propane depot safety rack",
+    materialId: "metal",
+    position: new THREE.Vector3(-7.55, 0.23, 8.92),
+    size: new THREE.Vector3(1.36, 0.46, 0.66),
+    zoneId: "propane-depot fuel gas-line",
+    scoreValue: 360,
+    kind: "explosive",
+    rotationY: Math.PI * 0.5
+  });
+  for (const [x, z, rotationY] of [
+    [-8.05, 8.46, 0],
+    [-7.58, 8.46, 0],
+    [-7.12, 8.46, 0],
+    [-8.03, 9.38, Math.PI * 0.06],
+    [-7.55, 9.42, -Math.PI * 0.04],
+    [-7.08, 9.38, Math.PI * 0.05]
+  ] as const) {
+    addStrategicHazardBox(context, {
+      label: "Propane tank",
+      materialId: "rubber",
+      position: new THREE.Vector3(x, 0.35, z),
+      size: new THREE.Vector3(0.3, 0.7, 0.3),
+      zoneId: "propane-depot fuel gas-line",
+      scoreValue: 190,
+      kind: "explosive",
+      rotationY
+    });
+  }
+}
+
+function spawnParkingSilo(context: LevelContext): void {
+  const material = context.materials.get("concrete");
+  const renderMaterial = roleRenderMaterial(context.materials, "concrete", "target");
+  const rotationY = -Math.PI * 0.04;
+  const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0));
+  const base = alignCityObjectToRoadEdges(new THREE.Vector3(12.78, 0, 0.85), new THREE.Vector3(2.35, 2.05, 1.72), rotationY);
+  for (const [offsetX, offsetZ] of [
+    [-0.98, -0.68],
+    [0.98, -0.68],
+    [-0.98, 0.68],
+    [0.98, 0.68]
+  ] as const) {
+    const local = new THREE.Vector3(offsetX, 0, offsetZ).applyQuaternion(rotation);
+    const size = new THREE.Vector3(0.16, 1.88, 0.16);
+    const object = context.physics.addDynamicBox({
+      label: "Parking silo support column",
+      material,
+      renderMaterial,
+      position: new THREE.Vector3(base.x + local.x, 1.02, base.z + local.z),
+      size,
+      rotation,
+      category: "structure",
+      scoreRole: "target",
+      zoneId: "parking-silo parking-garage moving-vehicles",
+      canFracture: true,
+      destructible: true,
+      bodyType: "fixed",
+      chainSource: true,
+      scoreValue: 140
+    });
+    decorateHazardIndicator(object.mesh, { size, kind: "combustible" });
+    object.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(object.mesh.material);
+  }
+
+  for (let deck = 0; deck < 4; deck += 1) {
+    const size = new THREE.Vector3(2.28, 0.16, 1.68);
+    const object = context.physics.addDynamicBox({
+      label: deck === 3 ? "Parking silo roof deck" : "Parking silo collapse deck",
+      material,
+      renderMaterial,
+      position: new THREE.Vector3(base.x, 0.62 + deck * 0.42, base.z),
+      size,
+      rotation,
+      category: "structure",
+      scoreRole: "target",
+      zoneId: "parking-silo parking-garage moving-vehicles",
+      canFracture: true,
+      destructible: true,
+      bodyType: "fixed",
+      chainSource: true,
+      scoreValue: deck === 3 ? 340 : 260
+    });
+    decorateHazardIndicator(object.mesh, { size, kind: "combustible" });
+    decorateStrategicHazard(object.mesh, { label: object.label, size, kind: "combustible" });
+    object.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(object.mesh.material);
+  }
+
+  for (const [x, z, accent, label] of [
+    [12.2, 0.14, 0xffc241, "Parking silo taxi"],
+    [12.82, 0.12, 0xff6b93, "Parking silo hatchback"],
+    [13.42, 0.2, 0x61d8ff, "Parking silo coupe"],
+    [12.48, 1.55, 0xff7048, "Parking silo service car"],
+    [13.18, 1.54, 0x8fe6a9, "Parking silo compact"]
+  ] as const) {
+    addCityVehicle(context, label, new THREE.Vector3(x, 0.28, z), new THREE.Vector3(0.36, 0.31, 0.68), accent, rotationY, undefined, undefined, {
+      zoneId: "parking-silo parking-garage moving-vehicles",
+      scoreValue: 72,
+      hazardKind: "combustible"
+    });
+  }
+}
+
 function addStrategicHazardBox(
   context: LevelContext,
   options: {
@@ -1479,7 +1813,8 @@ function addStrategicHazardBox(
     ccd: true
   });
   decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
-  object.mesh.userData.disposeMaterial = true;
+  decorateStrategicHazard(object.mesh, { label: options.label, size: options.size, kind: options.kind });
+  object.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(object.mesh.material);
 }
 
 function spawnRadioTower(context: LevelContext): void {
@@ -1509,7 +1844,7 @@ function spawnRadioTower(context: LevelContext): void {
     chainSource: true,
     scoreValue: 620
   });
-  base.mesh.userData.disposeMaterial = true;
+  base.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(base.mesh.material);
   decorateHazardIndicator(base.mesh, { size: base.dimensions, kind: "electric" });
 
   for (let level = 0; level < 5; level += 1) {
@@ -1532,6 +1867,393 @@ function spawnRadioTower(context: LevelContext): void {
     });
     segment.mesh.userData.disposeMaterial = true;
     decorateRadioTowerSegment(segment.mesh, level, height);
+  }
+}
+
+function spawnCentralConstructionCrane(context: LevelContext): void {
+  const anchor = new THREE.Vector3(-3.25, 0, 0.85);
+  const supportGroupId = "central-construction-crane";
+  const fallDirection = new THREE.Vector3(1, 0, -0.16);
+  const mastHeight = 1.08;
+  const mastLevels = 11;
+  const mastBottomY = 0.5;
+  const topY = mastBottomY + mastLevels * mastHeight;
+  const assemblyHeight = topY - mastBottomY + 0.18;
+  const assemblyCenterY = mastBottomY + assemblyHeight * 0.5;
+  const boomLength = 14.4;
+  const boomCenterX = 6.15;
+  const counterJibLength = 3.3;
+  const counterJibCenterX = -1.95;
+  const counterweightX = -3.62;
+  const hookX = 10.1;
+
+  addCranePart(
+    context,
+    "Central construction crane base",
+    "concrete",
+    new THREE.MeshStandardMaterial({ color: 0x3a4247, roughness: 0.74, metalness: 0.08, map: materialAtlasTile(12) }),
+    new THREE.Vector3(anchor.x, 0.24, anchor.z),
+    new THREE.Vector3(1.58, 0.48, 1.58),
+    190,
+    {
+      supportGroupId,
+      supportReleaseRadius: 16.4,
+      supportReleaseHeight: 15.8,
+      supportReleaseFallDirection: fallDirection,
+      fractureResistance: 4.5
+    }
+  );
+
+  const mastAssembly = addCranePart(
+    context,
+    "Central construction crane mast assembly",
+    "metal",
+    craneYellowMaterial(),
+    new THREE.Vector3(anchor.x, assemblyCenterY, anchor.z),
+    new THREE.Vector3(0.46, assemblyHeight, 0.46),
+    420,
+    {
+      supportGroupId,
+      destructible: false,
+      canFracture: false,
+      supportReleaseImpulseScale: 0.72,
+      supportReleaseTorqueScale: 12,
+      supportReleaseMassScale: 0.55
+    }
+  );
+  decorateCraneMastAssembly(mastAssembly, { mastBottomY, mastHeight, mastLevels, assemblyCenterY });
+
+  const boomCenterY = topY + 0.35;
+  const boomAssembly = addCranePart(
+    context,
+    "Central construction crane boom assembly",
+    "metal",
+    craneYellowMaterial(),
+    new THREE.Vector3(anchor.x, boomCenterY, anchor.z),
+    new THREE.Vector3(0.9, 0.46, 0.9),
+    620,
+    {
+      supportGroupId,
+      destructible: false,
+      canFracture: false,
+      supportReleaseImpulseScale: 1.15,
+      supportReleaseTorqueScale: 13.5,
+      supportReleaseMassScale: 0.52,
+      compoundColliders: [
+        {
+          size: new THREE.Vector3(0.9, 0.4, 0.9),
+          offset: new THREE.Vector3(0, topY + 0.2 - boomCenterY, 0)
+        },
+        {
+          size: new THREE.Vector3(boomLength, 0.3, 0.38),
+          offset: new THREE.Vector3(boomCenterX, 0, 0)
+        },
+        {
+          size: new THREE.Vector3(counterJibLength, 0.32, 0.46),
+          offset: new THREE.Vector3(counterJibCenterX, 0, 0)
+        },
+        {
+          size: new THREE.Vector3(0.9, 0.9, 0.78),
+          offset: new THREE.Vector3(counterweightX, topY + 0.04 - boomCenterY, 0)
+        },
+        {
+          size: new THREE.Vector3(0.88, 0.58, 0.58),
+          offset: new THREE.Vector3(0.68, topY - 0.08 - boomCenterY, -0.48)
+        },
+        {
+          size: new THREE.Vector3(0.42, 0.22, 0.18),
+          offset: new THREE.Vector3(hookX, topY - 2.25 - boomCenterY, 0)
+        }
+      ]
+    }
+  );
+  decorateCraneBoomAssembly(boomAssembly, {
+    topY,
+    boomCenterY,
+    boomLength,
+    boomCenterX,
+    counterJibLength,
+    counterJibCenterX,
+    counterweightX,
+    hookX
+  });
+
+  const payload = addCranePart(
+    context,
+    "Central construction crane heavy payload",
+    "metal",
+    new THREE.MeshStandardMaterial({
+      color: 0x2d3235,
+      roughness: 0.5,
+      metalness: 0.72,
+      emissive: 0x1a0900,
+      emissiveIntensity: 0.1,
+      map: materialAtlasTile(10)
+    }),
+    new THREE.Vector3(anchor.x + hookX, topY - 2.92, anchor.z),
+    new THREE.Vector3(1.86, 1.08, 1.36),
+    260,
+    {
+      supportGroupId,
+      destructible: false,
+      canFracture: false,
+      supportReleaseImpulseScale: 0.18,
+      supportReleaseTorqueScale: 0.1,
+      supportReleaseMassScale: 4.8
+    }
+  );
+  decorateCranePayload(payload);
+}
+
+interface CranePartOptions {
+  destructible?: boolean;
+  canFracture?: boolean;
+  fractureResistance?: number;
+  supportGroupId?: string;
+  supportReleaseRadius?: number;
+  supportReleaseHeight?: number;
+  supportReleaseFallDirection?: THREE.Vector3;
+  supportReleaseImpulseScale?: number;
+  supportReleaseTorqueScale?: number;
+  supportReleaseMassScale?: number;
+  compoundColliders?: Array<{
+    size: THREE.Vector3;
+    offset: THREE.Vector3;
+    rotation?: THREE.Quaternion;
+    density?: number;
+    friction?: number;
+    restitution?: number;
+    collisionEvents?: boolean;
+  }>;
+}
+
+function addCranePart(
+  context: LevelContext,
+  label: string,
+  materialId: MaterialId,
+  renderMaterial: THREE.Material,
+  position: THREE.Vector3,
+  size: THREE.Vector3,
+  scoreValue: number,
+  options: CranePartOptions = {}
+): THREE.Mesh {
+  const object = context.physics.addDynamicBox({
+    label,
+    material: context.materials.get(materialId),
+    renderMaterial,
+    position,
+    size,
+    compoundColliders: options.compoundColliders,
+    category: "structure",
+    scoreRole: "neutral",
+    zoneId: "central-construction-crane",
+    supportGroupId: options.supportGroupId,
+    supportReleaseRadius: options.supportReleaseRadius,
+    supportReleaseHeight: options.supportReleaseHeight,
+    supportReleaseFallDirection: options.supportReleaseFallDirection,
+    supportReleaseImpulseScale: options.supportReleaseImpulseScale,
+    supportReleaseTorqueScale: options.supportReleaseTorqueScale,
+    supportReleaseMassScale: options.supportReleaseMassScale,
+    canFracture: options.canFracture ?? true,
+    fractureResistance: options.fractureResistance,
+    destructible: options.destructible ?? true,
+    bodyType: "fixed",
+    scoreValue,
+    chainSource: true,
+    restitution: 0.12
+  });
+  object.mesh.userData.disposeMaterial = true;
+  return object.mesh;
+}
+
+function craneYellowMaterial(): THREE.Material {
+  return new THREE.MeshStandardMaterial({
+    color: 0xffbd3f,
+    roughness: 0.44,
+    metalness: 0.46,
+    emissive: 0x3a2200,
+    emissiveIntensity: 0.12,
+    map: materialAtlasTile(10)
+  });
+}
+
+function decorateCraneMastAssembly(
+  mesh: THREE.Mesh,
+  config: {
+    mastBottomY: number;
+    mastHeight: number;
+    mastLevels: number;
+    assemblyCenterY: number;
+  }
+): void {
+  const localY = (worldY: number) => worldY - config.assemblyCenterY;
+  for (let level = 0; level < config.mastLevels; level += 1) {
+    const y = localY(config.mastBottomY + level * config.mastHeight + config.mastHeight * 0.5);
+    decorateCraneMastBraces(mesh, y, config.mastHeight);
+  }
+}
+
+function decorateCraneBoomAssembly(
+  mesh: THREE.Mesh,
+  config: {
+    topY: number;
+    boomCenterY: number;
+    boomLength: number;
+    boomCenterX: number;
+    counterJibLength: number;
+    counterJibCenterX: number;
+    counterweightX: number;
+    hookX: number;
+  }
+): void {
+  const localY = (worldY: number) => worldY - config.boomCenterY;
+  addCraneVisualBox(
+    mesh,
+    "construction crane slewing deck",
+    new THREE.Vector3(0.9, 0.4, 0.9),
+    craneYellowMaterial(),
+    new THREE.Vector3(0, localY(config.topY + 0.2), 0)
+  );
+  const jib = addCraneVisualBox(
+    mesh,
+    "construction crane jib",
+    new THREE.Vector3(config.boomLength, 0.3, 0.38),
+    craneYellowMaterial(),
+    new THREE.Vector3(config.boomCenterX, localY(config.topY + 0.35), 0)
+  );
+  decorateCraneBoom(jib, config.boomLength);
+
+  const counterJib = addCraneVisualBox(
+    mesh,
+    "construction crane counter-jib",
+    new THREE.Vector3(config.counterJibLength, 0.32, 0.46),
+    craneYellowMaterial(),
+    new THREE.Vector3(config.counterJibCenterX, localY(config.topY + 0.35), 0)
+  );
+  decorateCraneBoom(counterJib, config.counterJibLength);
+
+  addCraneVisualBox(
+    mesh,
+    "construction crane counterweight",
+    new THREE.Vector3(0.9, 0.9, 0.78),
+    new THREE.MeshStandardMaterial({ color: 0x2f3539, roughness: 0.8, metalness: 0.08, map: materialAtlasTile(6) }),
+    new THREE.Vector3(config.counterweightX, localY(config.topY + 0.04), 0)
+  );
+  addCraneVisualBox(
+    mesh,
+    "construction crane cab",
+    new THREE.Vector3(0.88, 0.58, 0.58),
+    new THREE.MeshStandardMaterial({
+      color: 0x84dff2,
+      roughness: 0.26,
+      metalness: 0.18,
+      transparent: true,
+      opacity: 0.78,
+      emissive: 0x08323a,
+      emissiveIntensity: 0.22
+    }),
+    new THREE.Vector3(0.68, localY(config.topY - 0.08), -0.48)
+  );
+  addCraneVisualBox(
+    mesh,
+    "construction crane hoist cable",
+    new THREE.Vector3(0.045, 2.45, 0.045),
+    new THREE.MeshStandardMaterial({ color: 0x11171b, roughness: 0.62, metalness: 0.64, map: materialAtlasTile(6) }),
+    new THREE.Vector3(config.hookX, localY(config.topY - 0.95), 0)
+  );
+  addCraneVisualBox(
+    mesh,
+    "construction crane hook",
+    new THREE.Vector3(0.42, 0.22, 0.18),
+    new THREE.MeshStandardMaterial({ color: 0x20282d, roughness: 0.48, metalness: 0.7, map: materialAtlasTile(10) }),
+    new THREE.Vector3(config.hookX, localY(config.topY - 2.25), 0)
+  );
+}
+
+function decorateCraneMastBraces(mesh: THREE.Mesh, localY: number, height: number): void {
+  const braceMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.54, metalness: 0.58, map: materialAtlasTile(10) });
+  for (const rotationZ of [Math.PI * 0.22, -Math.PI * 0.22]) {
+    const brace = addCraneVisualBox(
+      mesh,
+      "construction crane mast brace",
+      new THREE.Vector3(0.055, height * 1.04, 0.055),
+      braceMaterial.clone(),
+      new THREE.Vector3(0, localY, 0)
+    );
+    brace.rotation.z = rotationZ;
+  }
+  for (const y of [localY - height * 0.48, localY + height * 0.48]) {
+    addCraneVisualBox(
+      mesh,
+      "construction crane mast cross rail",
+      new THREE.Vector3(0.58, 0.05, 0.05),
+      braceMaterial.clone(),
+      new THREE.Vector3(0, y, 0)
+    );
+    addCraneVisualBox(
+      mesh,
+      "construction crane mast side rail",
+      new THREE.Vector3(0.05, 0.05, 0.58),
+      braceMaterial.clone(),
+      new THREE.Vector3(0, y, 0)
+    );
+  }
+}
+
+function addCraneVisualBox(
+  parent: THREE.Mesh,
+  name: string,
+  size: THREE.Vector3,
+  material: THREE.Material,
+  position: THREE.Vector3
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), material);
+  mesh.name = name;
+  mesh.position.copy(position);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData.disposeMaterial = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function decorateCraneBoom(mesh: THREE.Mesh, length: number): void {
+  const railMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.54, metalness: 0.58, map: materialAtlasTile(10) });
+  for (const y of [-0.17, 0.17]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.96, 0.045, 0.045), railMaterial.clone());
+    rail.name = "construction crane boom rail";
+    rail.position.y = y;
+    rail.userData.disposeMaterial = true;
+    mesh.add(rail);
+  }
+  const braceCount = Math.max(2, Math.floor(length / 1.1));
+  for (let index = 0; index < braceCount; index += 1) {
+    const x = THREE.MathUtils.lerp(-length * 0.42, length * 0.42, braceCount === 1 ? 0.5 : index / (braceCount - 1));
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.48, 0.05), railMaterial.clone());
+    brace.name = "construction crane boom brace";
+    brace.position.x = x;
+    brace.rotation.z = index % 2 === 0 ? Math.PI * 0.18 : -Math.PI * 0.18;
+    brace.userData.disposeMaterial = true;
+    mesh.add(brace);
+  }
+}
+
+function decorateCranePayload(mesh: THREE.Mesh): void {
+  const hazardMaterial = new THREE.MeshBasicMaterial({ color: 0xffb22e, transparent: true, opacity: 0.96 });
+  const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xff4f38, transparent: true, opacity: 0.82 });
+  for (const z of [-0.56, 0.56]) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.08, 0.035), hazardMaterial.clone());
+    stripe.name = "crane payload hazard stripe";
+    stripe.position.set(0, 0.12, z);
+    stripe.userData.disposeMaterial = true;
+    mesh.add(stripe);
+  }
+  for (const x of [-0.42, 0, 0.42]) {
+    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 1.16), glowMaterial.clone());
+    latch.name = "crane payload armed latch";
+    latch.position.set(x, 0.47, 0);
+    latch.userData.disposeMaterial = true;
+    mesh.add(latch);
   }
 }
 
@@ -1666,10 +2388,18 @@ function addHazardRelay(
 }
 
 function spawnCityBuildingStack(context: LevelContext, spec: BuildingSpec): void {
+  const scaledSpec = scaleCityBuildingHeight(spec);
   spawnBuildingStack(context, {
-    ...spec,
-    position: alignBuildingToCityRoadEdges(spec)
+    ...scaledSpec,
+    position: alignBuildingToCityRoadEdges(scaledSpec)
   });
+}
+
+function scaleCityBuildingHeight(spec: BuildingSpec): BuildingSpec {
+  return {
+    ...spec,
+    size: new THREE.Vector3(spec.size.x, spec.size.y * HAZARD_CITY_BUILDING_HEIGHT_SCALE, spec.size.z)
+  };
 }
 
 function alignBuildingToCityRoadEdges(spec: BuildingSpec): THREE.Vector3 {
@@ -1799,7 +2529,7 @@ function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
           kind: spec.zoneId.includes("power-grid") ? "electric" : spec.materialId === "wood" || spec.materialId === "foam" ? "combustible" : "explosive"
         });
       }
-      object.mesh.userData.disposeMaterial = true;
+      object.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(object.mesh.material);
       object.mesh.castShadow = spec.scoreRole !== "neutral";
     }
   }
@@ -1828,6 +2558,11 @@ function shouldRagdollBuildingStack(spec: BuildingSpec): boolean {
 }
 
 function roleRenderMaterial(materials: MaterialCatalog, materialId: MaterialId, role: ScoreRole): THREE.Material {
+  const cacheKey = `${materialId}:${role}`;
+  const existing = roleRenderMaterialCache.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
   const material = materials.getRenderMaterial(materialId).clone();
   const tint = role === "target" ? new THREE.Color(0xff7a35) : null;
   if (tint && (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial || material instanceof THREE.MeshBasicMaterial)) {
@@ -1837,7 +2572,14 @@ function roleRenderMaterial(materials: MaterialCatalog, materialId: MaterialId, 
       material.emissiveIntensity = 0.7;
     }
   }
+  material.userData.sharedRoleRenderMaterial = true;
+  roleRenderMaterialCache.set(cacheKey, material);
   return material;
+}
+
+function shouldDisposeRenderMaterial(material: THREE.Material | THREE.Material[]): boolean {
+  const materials = Array.isArray(material) ? material : [material];
+  return materials.some((entry) => entry.userData.sharedRoleRenderMaterial !== true);
 }
 
 export function relayMaterialId(type: TriggerType): MaterialId {
@@ -1866,7 +2608,7 @@ export function relayRenderMaterial(type: TriggerType): THREE.Material {
 }
 
 function addCityGround(context: LevelContext): void {
-  let groundPanelLayer = 0;
+  const panels: GroundPanelSpec[] = [];
   const addGroundPanel = (
     name: string,
     x: number,
@@ -1874,43 +2616,253 @@ function addCityGround(context: LevelContext): void {
     width: number,
     depth: number,
     color: THREE.ColorRepresentation,
-    opacity: number
+    opacity: number,
+    layer = CITY_GROUND_LAYER_BASE
   ): void => {
-    addPanel(context, name, x, z, width, depth, color, opacity, groundPanelLayer);
-    groundPanelLayer += 1;
+    panels.push({ name, x, z, width, depth, color, opacity, layer });
+  };
+  const addLaneMarker = (name: string, x: number, z: number, width: number, depth: number, opacity = 0.64): void => {
+    addGroundPanel(name, x, z, width, depth, CITY_LANE_MARKER_COLOR, opacity, CITY_GROUND_LAYER_MARKINGS);
+  };
+  const addRoadEdge = (name: string, x: number, z: number, width: number, depth: number): void => {
+    addGroundPanel(name, x, z, width, depth, CITY_ROAD_EDGE_COLOR, 0.62, CITY_GROUND_LAYER_MARKINGS);
   };
 
-  addGroundPanel("city asphalt", 0, -0.6, 30.5, 27.8, 0x1b2226, 1);
-  addGroundPanel("west urban mat", -11.45, 1.7, 7.8, 23.8, 0x171f25, 1);
-  addGroundPanel("east urban mat", 12.1, -0.1, 9.2, 23.5, 0x171f25, 1);
-  addGroundPanel("south urban mat", 0, 12.35, 29.2, 7.5, 0x171f25, 1);
-  addGroundPanel("north urban mat", 0.4, -9.25, 29.2, 2.9, 0x171f25, 1);
-  addGroundPanel("north road", 0, -0.6, 2.15, 22.2, 0x303943, 1);
-  addGroundPanel("cross road", 0, -1.35, 25.8, 1.85, 0x303943, 1);
-  addGroundPanel("south service road", 0, 5.0, 22.8, 1.05, 0x28313a, 1);
-  addGroundPanel("east service road", 10.1, -0.7, 0.88, 18.6, 0x28313a, 1);
-  addGroundPanel("battery access road", 4.2, 8.35, 13.8, 0.86, 0x28313a, 1);
-  addGroundPanel("water canal", 7.4, -3.6, 1.25, 6.8, 0x17445e, 0.9);
+  addGroundPanel("city foundation slab", 0, 0.75, 35.8, 35.8, CITY_GROUND_COLOR, 1, CITY_GROUND_LAYER_BASE);
+  addGroundPanel("north district apron", 0.1, -13.55, 34.4, 5.9, CITY_BLOCK_APRON_COLOR, 1, CITY_GROUND_LAYER_APRON);
+  addGroundPanel("west district apron", -14.3, 1.9, 5.4, 27.1, CITY_BLOCK_APRON_COLOR, 1, CITY_GROUND_LAYER_APRON);
+  addGroundPanel("east district apron", 14.4, 1.8, 5.5, 27.2, CITY_BLOCK_APRON_COLOR, 1, CITY_GROUND_LAYER_APRON);
+  addGroundPanel("south district apron", 0, 15.25, 34.6, 6.7, CITY_BLOCK_APRON_COLOR, 1, CITY_GROUND_LAYER_APRON);
+  addGroundPanel("central industrial apron", 0, 0.85, 18.6, 15.4, 0x171f25, 1, CITY_GROUND_LAYER_APRON);
 
-  addGroundPanel("target zone", 0, -2.45, 6.35, 5.35, 0xff6733, 0.34);
-  addGroundPanel("west relay hazard zone", -5.4, -4.65, 4.25, 3.45, 0xff8f38, 0.28);
-  addGroundPanel("east relay hazard zone", 5.15, 2.35, 4.4, 3.45, 0xff8f38, 0.28);
-  addGroundPanel("energy plant hazard zone", -1.9, -3.6, 2.65, 2.0, 0x7ee8ff, 0.28);
-  addGroundPanel("gas station hazard zone", 6.15, 3.55, 2.65, 1.9, 0xff4f66, 0.24);
+  addHorizontalRoadPanels(addGroundPanel);
+  addVerticalRoadPanels(addGroundPanel);
+  addHorizontalRoadCurbs(addRoadEdge);
+  addVerticalRoadCurbs(addRoadEdge);
 
-  for (const z of [-7.5, -4.55, 1.8, 5.05]) {
-    addGroundPanel("road marking", 0, z, 0.12, 0.75, 0xf0c96a, 0.78);
+  for (const z of [-9.5, -7.1, -4.55, -1.35, 1.8, 5.05, 8.05]) {
+    addRoadLaneMarker(CENTRAL_AVENUE, addLaneMarker, "central avenue dash", 0, z, 0.11, 0.76, 0.82);
   }
-  for (const z of [-6.9, -3.9, -0.8, 2.2, 5.25]) {
-    addGroundPanel("east road marking", 10.1, z, 0.09, 0.64, 0xf0c96a, 0.62);
+  for (const z of [-6.9, -3.9, -0.8, 2.2, 5.25, 7.8]) {
+    addRoadLaneMarker(EAST_SERVICE_ROAD, addLaneMarker, "east road dash", 10.1, z, 0.1, 0.66, 0.74);
+  }
+  for (const z of [-6.2, -3.1, 0.2, 3.4, 6.4]) {
+    addRoadLaneMarker(WEST_SERVICE_ROAD, addLaneMarker, "west road dash", -10.65, z, 0.1, 0.66, 0.72);
+  }
+  for (const x of [-8.6, -5.2, -1.8, 1.8, 5.2, 8.6]) {
+    addRoadLaneMarker(NORTH_SERVICE_ROAD, addLaneMarker, "north road dash", x, -7.25, 0.78, 0.1, 0.74);
+    addRoadLaneMarker(CROSS_BOULEVARD, addLaneMarker, "cross boulevard dash", x, -1.35, 0.8, 0.1, 0.8);
+    addRoadLaneMarker(SOUTH_SERVICE_ROAD, addLaneMarker, "south service dash", x, 5.0, 0.74, 0.09, 0.68);
+    addRoadLaneMarker(BATTERY_ACCESS_ROAD, addLaneMarker, "battery access dash", x, 8.35, 0.72, 0.09, 0.62);
   }
   for (const x of [-6.5, -3.1, 3.1, 6.5]) {
-    addGroundPanel("crosswalk stripe", x, -1.35, 0.95, 0.12, 0xd7e2e8, 0.72);
+    addGroundPanel("crosswalk stripe", x, -1.35, 0.95, 0.12, CITY_CROSSWALK_COLOR, 0.72, CITY_GROUND_LAYER_MARKINGS);
+  }
+  for (const z of [-7.25, -1.35, 5.0, 8.35]) {
+    addGroundPanel("west intersection stripe", -10.65, z, 0.88, 0.1, CITY_CROSSWALK_COLOR, 0.52, CITY_GROUND_LAYER_MARKINGS);
+    addGroundPanel("central intersection stripe", 0, z, 0.92, 0.1, CITY_CROSSWALK_COLOR, 0.54, CITY_GROUND_LAYER_MARKINGS);
+    addGroundPanel("east intersection stripe", 10.1, z, 0.88, 0.1, CITY_CROSSWALK_COLOR, 0.52, CITY_GROUND_LAYER_MARKINGS);
   }
   for (const x of [-11.8, -8.8, 8.8, 12.2]) {
-    addGroundPanel("dense block alley stripe", x, 4.2, 0.08, 8.6, 0x41505b, 0.52);
+    addGroundPanel("dense block alley stripe", x, 4.2, 0.08, 8.6, 0x41505b, 0.52, CITY_GROUND_LAYER_MARKINGS);
   }
+  flushGroundPanels(context, panels);
   addRoadDecals(context);
+}
+
+function addHorizontalRoadPanels(
+  addGroundPanel: (name: string, x: number, z: number, width: number, depth: number, color: THREE.ColorRepresentation, opacity: number, layer?: number) => void
+): void {
+  for (const road of CITY_HORIZONTAL_ROADS) {
+    addGroundPanel(
+      `${roadName(road)} surface`,
+      centerOf(road.minX, road.maxX),
+      centerOf(road.minZ, road.maxZ),
+      road.maxX - road.minX,
+      road.maxZ - road.minZ,
+      CITY_ROAD_SURFACE_COLOR,
+      1,
+      CITY_GROUND_LAYER_ROAD
+    );
+  }
+}
+
+function addVerticalRoadPanels(
+  addGroundPanel: (name: string, x: number, z: number, width: number, depth: number, color: THREE.ColorRepresentation, opacity: number, layer?: number) => void
+): void {
+  for (const road of CITY_VERTICAL_ROADS) {
+    for (const segment of splitRangeByRoads(road.minZ, road.maxZ, CITY_HORIZONTAL_ROADS, "z", road)) {
+      addGroundPanel(
+        `${roadName(road)} surface`,
+        centerOf(road.minX, road.maxX),
+        centerOf(segment.min, segment.max),
+        road.maxX - road.minX,
+        segment.max - segment.min,
+        CITY_ROAD_SURFACE_COLOR,
+        1,
+        CITY_GROUND_LAYER_ROAD
+      );
+    }
+  }
+}
+
+function addHorizontalRoadCurbs(addRoadEdge: (name: string, x: number, z: number, width: number, depth: number) => void): void {
+  for (const road of CITY_HORIZONTAL_ROADS) {
+    for (const segment of splitRangeByRoads(road.minX, road.maxX, CITY_VERTICAL_ROADS, "x", road)) {
+      const x = centerOf(segment.min, segment.max);
+      const width = segment.max - segment.min;
+      addRoadEdge(`${roadName(road)} upper curb`, x, road.minZ, width, 0.08);
+      addRoadEdge(`${roadName(road)} lower curb`, x, road.maxZ, width, 0.08);
+    }
+  }
+}
+
+function addVerticalRoadCurbs(addRoadEdge: (name: string, x: number, z: number, width: number, depth: number) => void): void {
+  for (const road of CITY_VERTICAL_ROADS) {
+    for (const segment of splitRangeByRoads(road.minZ, road.maxZ, CITY_HORIZONTAL_ROADS, "z", road)) {
+      const z = centerOf(segment.min, segment.max);
+      const depth = segment.max - segment.min;
+      addRoadEdge(`${roadName(road)} west curb`, road.minX, z, 0.08, depth);
+      addRoadEdge(`${roadName(road)} east curb`, road.maxX, z, 0.08, depth);
+    }
+  }
+}
+
+function addRoadLaneMarker(
+  road: CityRoadCorridor,
+  addLaneMarker: (name: string, x: number, z: number, width: number, depth: number, opacity?: number) => void,
+  name: string,
+  x: number,
+  z: number,
+  width: number,
+  depth: number,
+  opacity: number
+): void {
+  if (roadMarkerOverlapsCrossRoad(road, x, z, width, depth)) {
+    return;
+  }
+  addLaneMarker(name, x, z, width, depth, opacity);
+}
+
+function roadMarkerOverlapsCrossRoad(ownRoad: CityRoadCorridor, x: number, z: number, width: number, depth: number): boolean {
+  const minX = x - width * 0.5;
+  const maxX = x + width * 0.5;
+  const minZ = z - depth * 0.5;
+  const maxZ = z + depth * 0.5;
+  return CITY_ROAD_CORRIDORS.some((road) => road !== ownRoad && boundsOverlap(minX, maxX, road.minX, road.maxX) && boundsOverlap(minZ, maxZ, road.minZ, road.maxZ));
+}
+
+function splitRangeByRoads(
+  min: number,
+  max: number,
+  blockers: readonly CityRoadCorridor[],
+  axis: "x" | "z",
+  subject: CityRoadCorridor
+): Array<{ min: number; max: number }> {
+  const cuts = blockers
+    .filter((blocker) => roadsOverlapOnCrossAxis(subject, blocker, axis))
+    .map((blocker) => ({
+      min: axis === "x" ? blocker.minX : blocker.minZ,
+      max: axis === "x" ? blocker.maxX : blocker.maxZ
+    }))
+    .sort((a, b) => a.min - b.min);
+  const segments: Array<{ min: number; max: number }> = [];
+  let cursor = min;
+  for (const cut of cuts) {
+    const cutMin = Math.max(min, cut.min);
+    const cutMax = Math.min(max, cut.max);
+    if (cutMin - cursor > 0.02) {
+      segments.push({ min: cursor, max: cutMin });
+    }
+    cursor = Math.max(cursor, cutMax);
+  }
+  if (max - cursor > 0.02) {
+    segments.push({ min: cursor, max });
+  }
+  return segments;
+}
+
+function roadsOverlapOnCrossAxis(subject: CityRoadCorridor, blocker: CityRoadCorridor, splitAxis: "x" | "z"): boolean {
+  return splitAxis === "x"
+    ? boundsOverlap(subject.minZ, subject.maxZ, blocker.minZ, blocker.maxZ)
+    : boundsOverlap(subject.minX, subject.maxX, blocker.minX, blocker.maxX);
+}
+
+function centerOf(min: number, max: number): number {
+  return (min + max) * 0.5;
+}
+
+function roadName(road: CityRoadCorridor): string {
+  if (road === NORTH_SERVICE_ROAD) {
+    return "north service road";
+  }
+  if (road === CENTRAL_AVENUE) {
+    return "central avenue";
+  }
+  if (road === WEST_SERVICE_ROAD) {
+    return "west service road";
+  }
+  if (road === CROSS_BOULEVARD) {
+    return "cross boulevard";
+  }
+  if (road === SOUTH_SERVICE_ROAD) {
+    return "south service road";
+  }
+  if (road === EAST_SERVICE_ROAD) {
+    return "east service road";
+  }
+  return "battery access road";
+}
+
+function flushGroundPanels(context: LevelContext, panels: GroundPanelSpec[]): void {
+  const groups = new Map<string, GroundPanelSpec[]>();
+  for (const panel of panels) {
+    const key = `${String(panel.color)}:${panel.opacity}:${panel.layer}`;
+    const group = groups.get(key);
+    if (group) {
+      group.push(panel);
+    } else {
+      groups.set(key, [panel]);
+    }
+  }
+
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      const panel = group[0];
+      addPanel(context, panel.name, panel.x, panel.z, panel.width, panel.depth, panel.color, panel.opacity, panel.layer);
+    } else {
+      addMergedGroundPanel(context, group);
+    }
+  }
+}
+
+function addMergedGroundPanel(context: LevelContext, panels: GroundPanelSpec[]): void {
+  const first = panels[0];
+  const layer = Math.max(0, first.layer);
+  const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI * 0.5, 0, 0));
+  const geometries = panels.map((panel) => {
+    const geometry = new THREE.PlaneGeometry(panel.width, panel.depth);
+    geometry.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(panel.x, groundPanelY(layer), panel.z), rotation, new THREE.Vector3(1, 1, 1)));
+    return geometry;
+  });
+  const mergedGeometry = mergeGeometries(geometries, false);
+  for (const geometry of geometries) {
+    geometry.dispose();
+  }
+  if (!mergedGeometry) {
+    for (const panel of panels) {
+      addPanel(context, panel.name, panel.x, panel.z, panel.width, panel.depth, panel.color, panel.opacity, panel.layer);
+    }
+    return;
+  }
+
+  const mesh = new THREE.Mesh(mergedGeometry, panelRenderMaterial(first.color, first.opacity, layer));
+  mesh.name = `${first.name} batch`;
+  mesh.castShadow = false;
+  mesh.receiveShadow = first.opacity >= 1;
+  mesh.renderOrder = groundPanelRenderOrder(layer);
+  mesh.userData.disposeMaterial = false;
+  context.addDecoration(mesh);
 }
 
 function addRoadDecals(context: LevelContext): void {
@@ -1937,9 +2889,9 @@ function addRoadDecals(context: LevelContext): void {
     });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(decal.width, decal.depth), material);
     mesh.name = decal.name;
-    mesh.position.set(decal.x, 0.056, decal.z);
+    mesh.position.set(decal.x, CITY_GROUND_DECAL_Y, decal.z);
     mesh.rotation.set(-Math.PI * 0.5, 0, decal.rotation);
-    mesh.renderOrder = 2;
+    mesh.renderOrder = CITY_GROUND_LAYER_MARKINGS + 1;
     mesh.userData.disposeMaterial = true;
     context.addDecoration(mesh);
   }
@@ -1989,27 +2941,63 @@ function spawnStreetSetpieces(context: LevelContext): void {
     addStreetCargo(context, label, materialId, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
   }
 
-  addCityVehicle(context, "Delivery microbus", new THREE.Vector3(1.2, 0.32, -1.62), new THREE.Vector3(0.52, 0.42, 0.92), 0xf3b33c, Math.PI * 0.5, undefined, trafficLoop(CENTRAL_TRAFFIC_LOOP, 1.12, 0));
-  addCityVehicle(context, "Service van", new THREE.Vector3(9.86, 0.34, 2.0), new THREE.Vector3(0.56, 0.46, 1.0), 0xff5f8f, Math.PI, undefined, trafficLoop(CENTRAL_TRAFFIC_LOOP_OPPOSITE, 1.0, 2));
-  addCityVehicle(context, "Market scooter pod", new THREE.Vector3(6.8, 0.26, 4.78), new THREE.Vector3(0.34, 0.32, 0.64), 0xff6b93, -Math.PI * 0.5, undefined, trafficLoop(CENTRAL_TRAFFIC_LOOP, 1.12, 2));
-  addCityVehicle(context, "Grid shuttle", new THREE.Vector3(5.2, 0.28, -7.4), new THREE.Vector3(0.4, 0.34, 0.74), 0xff6b93, Math.PI * 0.5, undefined, trafficLoop(NORTH_TRAFFIC_LOOP, 0.95, 0));
-  addCityVehicle(context, "Canal maintenance truck", new THREE.Vector3(7.45, 0.34, -3.35), new THREE.Vector3(0.54, 0.44, 0.92), 0x9bb2bd);
-  addCityVehicle(context, "Battery service cart", new THREE.Vector3(2.85, 0.27, 8.12), new THREE.Vector3(0.34, 0.3, 0.62), 0xffd66b, -Math.PI * 0.5, undefined, trafficLoop(BATTERY_TRAFFIC_LOOP, 0.92, 2));
-  addCityVehicle(context, "East tram pod", new THREE.Vector3(10.34, 0.3, -0.2), new THREE.Vector3(0.48, 0.36, 0.94), 0x74dfff, 0, undefined, trafficLoop(CENTRAL_TRAFFIC_LOOP, 1.12, 1));
-  addCityVehicle(context, "Depot hauler", new THREE.Vector3(6.0, 0.31, 5.22), new THREE.Vector3(0.52, 0.4, 0.9), 0xf0c16a, Math.PI * 0.5, undefined, trafficLoop(BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.92, 1));
-  addCityVehicle(context, "West grid loader", new THREE.Vector3(-9.7, 0.31, 1.65), new THREE.Vector3(0.48, 0.38, 0.78), 0xff9d4d, Math.PI * 0.5);
-  addCityVehicle(context, "East courier pod", new THREE.Vector3(9.86, 0.28, 6.8), new THREE.Vector3(0.36, 0.32, 0.64), 0x87f0ff, 0, undefined, trafficLoop(BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.92, 2));
-  addCityVehicle(context, "Battery tram husk", new THREE.Vector3(6.6, 0.34, 8.12), new THREE.Vector3(0.58, 0.45, 1.08), 0xffd66b, -Math.PI * 0.5, undefined, trafficLoop(BATTERY_TRAFFIC_LOOP, 0.92, 2));
-  addCityVehicle(context, "South depot van", new THREE.Vector3(-0.42, 0.33, 7.2), new THREE.Vector3(0.54, 0.43, 0.96), 0xb2c0c8, Math.PI, undefined, trafficLoop(BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.92, 0));
-  addCityVehicle(context, "Fuel tanker truck", new THREE.Vector3(10.34, 0.36, -5.65), new THREE.Vector3(0.54, 0.44, 1.18), 0xffd66b, 0, undefined, trafficLoop(NORTH_TRAFFIC_LOOP, 0.82, 1), {
+  addRoutedCityVehicle(context, "Delivery microbus", CENTRAL_TRAFFIC_LOOP, 1.12, 0, 0.14, 0.32, new THREE.Vector3(0.52, 0.42, 0.92), 0xf3b33c);
+  addRoutedCityVehicle(context, "Service van", CENTRAL_TRAFFIC_LOOP_OPPOSITE, 1.0, 2, 0.38, 0.34, new THREE.Vector3(0.56, 0.46, 1.0), 0xff5f8f);
+  addRoutedCityVehicle(context, "Market scooter pod", CENTRAL_TRAFFIC_LOOP, 1.12, 2, 0.34, 0.26, new THREE.Vector3(0.34, 0.32, 0.64), 0xff6b93);
+  addRoutedCityVehicle(context, "Grid shuttle", NORTH_TRAFFIC_LOOP, 0.95, 0, 0.52, 0.28, new THREE.Vector3(0.4, 0.34, 0.74), 0xff6b93);
+  addRoutedCityVehicle(context, "Canal maintenance truck", INNER_BELT_TRAFFIC_LOOP, 0.82, 1, 0.42, 0.34, new THREE.Vector3(0.54, 0.44, 0.92), 0x9bb2bd);
+  addRoutedCityVehicle(context, "Battery service cart", BATTERY_TRAFFIC_LOOP, 0.92, 2, 0.3, 0.27, new THREE.Vector3(0.34, 0.3, 0.62), 0xffd66b);
+  addRoutedCityVehicle(context, "East tram pod", CENTRAL_TRAFFIC_LOOP, 1.12, 1, 0.25, 0.3, new THREE.Vector3(0.48, 0.36, 0.94), 0x74dfff);
+  addRoutedCityVehicle(context, "Depot hauler", BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.92, 0, 0.35, 0.31, new THREE.Vector3(0.52, 0.4, 0.9), 0xf0c16a);
+  addRoutedCityVehicle(context, "West grid loader", CENTRAL_TRAFFIC_LOOP_OPPOSITE, 0.86, 3, 0.42, 0.31, new THREE.Vector3(0.48, 0.38, 0.78), 0xff9d4d);
+  addRoutedCityVehicle(context, "East courier pod", BATTERY_TRAFFIC_LOOP, 1.08, 1, 0.48, 0.28, new THREE.Vector3(0.36, 0.32, 0.64), 0x87f0ff);
+  addRoutedCityVehicle(context, "Battery tram husk", BATTERY_TRAFFIC_LOOP, 0.82, 2, 0.76, 0.34, new THREE.Vector3(0.58, 0.45, 1.08), 0xffd66b);
+  addRoutedCityVehicle(context, "South depot van", BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.88, 1, 0.62, 0.33, new THREE.Vector3(0.54, 0.43, 0.96), 0xb2c0c8);
+  addRoutedCityVehicle(context, "Fuel tanker truck", NORTH_TRAFFIC_LOOP, 0.82, 1, 0.28, 0.36, new THREE.Vector3(0.54, 0.44, 1.18), 0xffd66b, {
     zoneId: "moving-fuel-tanker gas-line",
     scoreValue: 280,
     hazardKind: "combustible"
   });
-  addCityVehicle(context, "Fuel tanker truck", new THREE.Vector3(-0.42, 0.36, 8.12), new THREE.Vector3(0.54, 0.44, 1.18), 0xffd66b, Math.PI, undefined, trafficLoop(BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.78, 3), {
+  addRoutedCityVehicle(context, "Fuel tanker truck", BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.78, 2, 0.44, 0.36, new THREE.Vector3(0.54, 0.44, 1.18), 0xffd66b, {
     zoneId: "moving-fuel-tanker gas-line",
     scoreValue: 280,
     hazardKind: "combustible"
+  });
+  addRoutedCityVehicle(context, "West taxi", CENTRAL_TRAFFIC_LOOP_OPPOSITE, 1.28, 0, 0.36, 0.28, new THREE.Vector3(0.38, 0.34, 0.72), 0xffcc4f, {
+    scoreValue: 42
+  });
+  addRoutedCityVehicle(context, "North courier coupe", WEST_NORTH_TRAFFIC_LOOP, 1.34, 0, 0.32, 0.26, new THREE.Vector3(0.36, 0.3, 0.68), 0x61d8ff, {
+    scoreValue: 40
+  });
+  addRoutedCityVehicle(context, "North box van", CITY_BELT_TRAFFIC_LOOP, 0.94, 0, 0.56, 0.34, new THREE.Vector3(0.56, 0.46, 0.98), 0xbac4ca, {
+    scoreValue: 58
+  });
+  addRoutedCityVehicle(context, "East fastback", CITY_BELT_TRAFFIC_LOOP, 1.38, 1, 0.5, 0.27, new THREE.Vector3(0.36, 0.31, 0.72), 0xff7048, {
+    scoreValue: 44
+  });
+  addRoutedCityVehicle(context, "South hatchback", BATTERY_TRAFFIC_LOOP_OPPOSITE, 1.18, 2, 0.78, 0.27, new THREE.Vector3(0.36, 0.31, 0.68), 0x8fe6a9, {
+    scoreValue: 40
+  });
+  addRoutedCityVehicle(context, "Downtown taxi", INNER_BELT_TRAFFIC_LOOP, 1.24, 0, 0.22, 0.28, new THREE.Vector3(0.38, 0.34, 0.72), 0xffc241, {
+    scoreValue: 42
+  });
+  addRoutedCityVehicle(context, "Market bus", INNER_BELT_TRAFFIC_LOOP, 0.78, 2, 0.32, 0.38, new THREE.Vector3(0.62, 0.5, 1.18), 0x75e6ff, {
+    scoreValue: 76
+  });
+  addRoutedCityVehicle(context, "West commuter pod", WEST_NORTH_TRAFFIC_LOOP, 1.16, 3, 0.48, 0.27, new THREE.Vector3(0.36, 0.31, 0.66), 0xff8dd6, {
+    scoreValue: 40
+  });
+  addRoutedCityVehicle(context, "Arcade delivery van", CITY_BELT_TRAFFIC_LOOP, 0.9, 2, 0.42, 0.34, new THREE.Vector3(0.54, 0.44, 0.96), 0xff9d4d, {
+    scoreValue: 58
+  });
+  addRoutedCityVehicle(context, "Radio news van", NORTH_TRAFFIC_LOOP, 0.98, 2, 0.45, 0.33, new THREE.Vector3(0.52, 0.42, 0.92), 0xf4f7ff, {
+    scoreValue: 56
+  });
+  addRoutedCityVehicle(context, "Service flatbed", CENTRAL_TRAFFIC_LOOP_OPPOSITE, 0.86, 1, 0.55, 0.31, new THREE.Vector3(0.5, 0.38, 0.92), 0xa8b4bd, {
+    scoreValue: 54
+  });
+  addRoutedCityVehicle(context, "Crash coupe", CENTRAL_TRAFFIC_LOOP, 1.36, 0, 0.72, 0.27, new THREE.Vector3(0.36, 0.31, 0.72), 0xff5a6a, {
+    scoreValue: 44
   });
 
   for (const [x, z] of [
@@ -2064,18 +3052,10 @@ function addCityVehicle(
   rotationY = 0,
   linearVelocity?: THREE.Vector3,
   route?: TrafficRoute,
-  options: {
-    zoneId?: string;
-    scoreValue?: number;
-    hazardKind?: "electric" | "combustible" | "explosive";
-  } = {}
+  options: CityVehicleOptions = {}
 ): void {
   const material = context.materials.get("metal");
-  const renderMaterial = context.materials.getRenderMaterial("metal").clone();
-  if (renderMaterial instanceof THREE.MeshStandardMaterial) {
-    renderMaterial.color.lerp(new THREE.Color(accent), 0.24);
-    renderMaterial.roughness = 0.46;
-  }
+  const renderMaterial = cityVehicleRenderMaterial(context, accent);
   const object = context.physics.addDynamicBox({
     label,
     material,
@@ -2098,11 +3078,46 @@ function addCityVehicle(
     trafficRoute: route,
     ccd: true
   });
-  object.mesh.userData.disposeMaterial = true;
-  decorateCityVehicle(object.mesh, { size, accent });
+  object.mesh.userData.disposeMaterial = false;
+  decorateCityVehicle(object.mesh, { size, accent, kind: cityVehicleVisualKind(label) });
   if (options.hazardKind) {
     decorateHazardIndicator(object.mesh, { size, kind: options.hazardKind });
   }
+}
+
+function cityVehicleVisualKind(label: string): CityVehicleVisualKind {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("tanker")) {
+    return "tanker";
+  }
+  if (normalized.includes("bus")) {
+    return "bus";
+  }
+  if (normalized.includes("taxi")) {
+    return "taxi";
+  }
+  if (normalized.includes("flatbed")) {
+    return "flatbed";
+  }
+  if (normalized.includes("van") || normalized.includes("microbus") || normalized.includes("hauler") || normalized.includes("truck")) {
+    return "van";
+  }
+  return "car";
+}
+
+function cityVehicleRenderMaterial(context: LevelContext, accent: THREE.ColorRepresentation): THREE.Material {
+  const cacheKey = `vehicle:${String(accent)}`;
+  const existing = vehicleRenderMaterials.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+  const material = context.materials.getRenderMaterial("metal").clone();
+  if (material instanceof THREE.MeshStandardMaterial) {
+    material.color.lerp(new THREE.Color(accent), 0.24);
+    material.roughness = 0.46;
+  }
+  vehicleRenderMaterials.set(cacheKey, material);
+  return material;
 }
 
 function trafficInitialVelocity(route: TrafficRoute): THREE.Vector3 {
@@ -2182,16 +3197,24 @@ function addPanel(
   layer = 0
 ): void {
   const panelDepthOffset = Math.max(0, layer);
-  const renderMaterial = panelRenderMaterial(color, opacity, panelDepthOffset).clone();
+  const renderMaterial = panelRenderMaterial(color, opacity, panelDepthOffset);
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), renderMaterial);
   mesh.name = name;
-  mesh.position.set(x, 0.055 + panelDepthOffset * 0.004, z);
+  mesh.position.set(x, groundPanelY(panelDepthOffset), z);
   mesh.rotation.set(-Math.PI * 0.5, 0, 0);
   mesh.castShadow = false;
   mesh.receiveShadow = opacity >= 1;
-  mesh.renderOrder = panelDepthOffset * 0.1;
-  mesh.userData.disposeMaterial = true;
+  mesh.renderOrder = groundPanelRenderOrder(panelDepthOffset);
+  mesh.userData.disposeMaterial = false;
   context.addDecoration(mesh);
+}
+
+function groundPanelY(layer: number): number {
+  return 0.055 + Math.max(0, layer) * 0.004;
+}
+
+function groundPanelRenderOrder(layer: number): number {
+  return Math.max(0, layer) * 0.1;
 }
 
 function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, panelDepthOffset: number): THREE.Material {
@@ -2204,7 +3227,6 @@ function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, 
     opacity < 1
       ? new THREE.MeshBasicMaterial({
           color,
-          map: decalAtlasTile(panelDepthOffset % 2 === 0 ? 3 : 7),
           transparent: true,
           opacity,
           depthWrite: false,
@@ -2216,7 +3238,6 @@ function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, 
         })
       : new THREE.MeshStandardMaterial({
           color,
-          map: materialAtlasTile(12),
           roughness: 0.86,
           metalness: 0.08,
           depthWrite: true,
@@ -2229,12 +3250,49 @@ function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, 
   return material;
 }
 
+function sharedLevelMaterial(key: string, create: () => THREE.Material): THREE.Material {
+  const existing = sharedLevelMaterials.get(key);
+  if (existing) {
+    return existing;
+  }
+  const material = create();
+  sharedLevelMaterials.set(key, material);
+  return material;
+}
+
+function sharedLevelBoxGeometry(width: number, height: number, depth: number): THREE.BoxGeometry {
+  const key = `${width.toFixed(3)}:${height.toFixed(3)}:${depth.toFixed(3)}`;
+  const existing = sharedLevelBoxGeometries.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.BoxGeometry(width, height, depth);
+  geometry.userData.sharedGeometry = true;
+  sharedLevelBoxGeometries.set(key, geometry);
+  return geometry;
+}
+
+function sharedLevelPlaneGeometry(width: number, height: number): THREE.PlaneGeometry {
+  const key = `${width.toFixed(3)}:${height.toFixed(3)}`;
+  const existing = sharedLevelPlaneGeometries.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.PlaneGeometry(width, height);
+  geometry.userData.sharedGeometry = true;
+  sharedLevelPlaneGeometries.set(key, geometry);
+  return geometry;
+}
+
 function addStreetLight(context: LevelContext, x: number, z: number): void {
   const basePosition = alignCityObjectToRoadEdges(new THREE.Vector3(x, 0, z), new THREE.Vector3(0.48, 1.45, 0.42));
   const pole = context.physics.addDynamicBox({
     label: "street light pole",
     material: context.materials.get("metal"),
-    renderMaterial: new THREE.MeshStandardMaterial({ color: 0x2a3339, roughness: 0.5, metalness: 0.55, map: materialAtlasTile(0) }),
+    renderMaterial: sharedLevelMaterial(
+      "street-light-pole",
+      () => new THREE.MeshStandardMaterial({ color: 0x2a3339, roughness: 0.5, metalness: 0.55, map: materialAtlasTile(0) })
+    ),
     position: new THREE.Vector3(basePosition.x, 0.72, basePosition.z),
     size: new THREE.Vector3(0.08, 1.45, 0.08),
     category: "structure",
@@ -2245,33 +3303,58 @@ function addStreetLight(context: LevelContext, x: number, z: number): void {
     bodyType: "fixed",
     scoreValue: 8
   });
-  pole.mesh.userData.disposeMaterial = true;
+  pole.mesh.userData.disposeMaterial = false;
 
-  const lampMaterial = new THREE.MeshBasicMaterial({ color: 0xffdf8f, transparent: true, opacity: 0.92 });
-  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.18), lampMaterial);
-  lamp.name = "street light lamp";
-  lamp.position.set(0.13, 0.73, 0);
-  lamp.userData.disposeMaterial = true;
+  const armMaterial = sharedLevelMaterial(
+    "street-light-arm",
+    () => new THREE.MeshStandardMaterial({ color: 0x3b464d, roughness: 0.48, metalness: 0.62, map: materialAtlasTile(10) })
+  );
+  const lampMaterial = sharedLevelMaterial(
+    "street-light-lamp",
+    () => new THREE.MeshStandardMaterial({ color: 0x182026, roughness: 0.38, metalness: 0.58, map: materialAtlasTile(10) })
+  );
+  const lensMaterial = sharedLevelMaterial("street-light-lens", () => new THREE.MeshBasicMaterial({ color: 0xffe29b, transparent: true, opacity: 0.95 }));
+  const arm = new THREE.Mesh(sharedLevelBoxGeometry(0.34, 0.045, 0.045), armMaterial);
+  arm.name = "street light bracket";
+  arm.position.set(0.17, 0.68, 0);
+  arm.userData.disposeMaterial = false;
+  pole.mesh.add(arm);
+
+  const lamp = new THREE.Mesh(sharedLevelBoxGeometry(0.28, 0.09, 0.18), lampMaterial);
+  lamp.name = "street light housing";
+  lamp.position.set(0.38, 0.66, 0);
+  lamp.userData.disposeMaterial = false;
   pole.mesh.add(lamp);
 
-  const glowMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffc86b,
-    transparent: true,
-    opacity: 0.28,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending
-  });
-  const glowPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.58, 0.32), glowMaterial);
+  const lens = new THREE.Mesh(sharedLevelBoxGeometry(0.2, 0.026, 0.13), lensMaterial);
+  lens.name = "street light lens";
+  lens.position.set(0.38, 0.61, 0);
+  lens.userData.disposeMaterial = false;
+  pole.mesh.add(lens);
+
+  const glowMaterial = sharedLevelMaterial(
+    "street-light-glow",
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: 0xffc86b,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending
+      })
+  );
+  const glowPlane = new THREE.Mesh(sharedLevelPlaneGeometry(0.58, 0.32), glowMaterial);
   glowPlane.name = "street light fake glow";
-  glowPlane.position.set(0.13, 0.73, 0);
+  glowPlane.position.set(0.38, 0.58, 0);
+  glowPlane.rotation.x = -Math.PI * 0.5;
   glowPlane.renderOrder = 3;
-  glowPlane.userData.disposeMaterial = true;
+  glowPlane.userData.disposeMaterial = false;
   pole.mesh.add(glowPlane);
 
   if (Math.abs(x) < 8 && z > -7 && z < 7) {
     const glow = new THREE.PointLight(0xffc86b, 0.32, 3.2, 2);
-    glow.position.set(0.13, 0.73, 0);
+    glow.position.set(0.38, 0.58, 0);
     pole.mesh.add(glow);
   }
 }
@@ -2282,7 +3365,10 @@ function addBillboard(context: LevelContext, x: number, z: number, color: THREE.
     const post = context.physics.addDynamicBox({
       label: "city billboard post",
       material: context.materials.get("metal"),
-      renderMaterial: new THREE.MeshStandardMaterial({ color: 0x3d484f, roughness: 0.46, metalness: 0.62, map: materialAtlasTile(10) }),
+      renderMaterial: sharedLevelMaterial(
+        "billboard-post",
+        () => new THREE.MeshStandardMaterial({ color: 0x3d484f, roughness: 0.46, metalness: 0.62, map: materialAtlasTile(10) })
+      ),
       position: new THREE.Vector3(basePosition.x + px, 0.57, basePosition.z),
       size: new THREE.Vector3(0.055, 1.15, 0.055),
       category: "structure",
@@ -2293,12 +3379,15 @@ function addBillboard(context: LevelContext, x: number, z: number, color: THREE.
       bodyType: "fixed",
       scoreValue: 7
     });
-    post.mesh.userData.disposeMaterial = true;
+    post.mesh.userData.disposeMaterial = false;
   }
   const face = context.physics.addDynamicBox({
     label: "city billboard face",
     material: context.materials.get("foam"),
-    renderMaterial: new THREE.MeshBasicMaterial({ color, map: decalAtlasTile(5), transparent: true, opacity: 0.92, alphaTest: 0.03 }),
+    renderMaterial: sharedLevelMaterial(
+      `billboard-face:${String(color)}`,
+      () => new THREE.MeshBasicMaterial({ color, map: decalAtlasTile(5), transparent: true, opacity: 0.92, alphaTest: 0.03 })
+    ),
     position: new THREE.Vector3(basePosition.x, 1.22, basePosition.z),
     size: new THREE.Vector3(1.28, 0.45, 0.055),
     category: "structure",
@@ -2309,5 +3398,37 @@ function addBillboard(context: LevelContext, x: number, z: number, color: THREE.
     bodyType: "fixed",
     scoreValue: 12
   });
-  face.mesh.userData.disposeMaterial = true;
+  face.mesh.userData.disposeMaterial = false;
+  addBillboardFaceDetails(face.mesh, color);
+}
+
+function addBillboardFaceDetails(face: THREE.Mesh, color: THREE.ColorRepresentation): void {
+  const frameMaterial = sharedLevelMaterial(
+    "billboard-frame",
+    () => new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.62, metalness: 0.42, map: materialAtlasTile(10) })
+  );
+  const stripeMaterial = sharedLevelMaterial(`billboard-stripe:${String(color)}`, () => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 }));
+  const glowMaterial = sharedLevelMaterial("billboard-glow", () => new THREE.MeshBasicMaterial({ color: 0xfff3b0, transparent: true, opacity: 0.74 }));
+  const details: Array<[THREE.Mesh, string]> = [
+    [new THREE.Mesh(sharedLevelBoxGeometry(1.38, 0.045, 0.03), frameMaterial), "billboard top rail"],
+    [new THREE.Mesh(sharedLevelBoxGeometry(1.38, 0.045, 0.03), frameMaterial), "billboard bottom rail"],
+    [new THREE.Mesh(sharedLevelBoxGeometry(0.05, 0.52, 0.03), frameMaterial), "billboard left rail"],
+    [new THREE.Mesh(sharedLevelBoxGeometry(0.05, 0.52, 0.03), frameMaterial), "billboard right rail"],
+    [new THREE.Mesh(sharedLevelBoxGeometry(0.94, 0.035, 0.028), stripeMaterial), "billboard color stripe"],
+    [new THREE.Mesh(sharedLevelBoxGeometry(0.46, 0.026, 0.03), glowMaterial), "billboard light strip"]
+  ];
+  details[0][0].position.set(0, 0.245, 0.045);
+  details[1][0].position.set(0, -0.245, 0.045);
+  details[2][0].position.set(-0.665, 0, 0.045);
+  details[3][0].position.set(0.665, 0, 0.045);
+  details[4][0].position.set(0, 0.06, 0.052);
+  details[5][0].position.set(0.14, -0.1, 0.054);
+
+  for (const [detail, name] of details) {
+    detail.name = name;
+    detail.castShadow = false;
+    detail.receiveShadow = false;
+    detail.userData.disposeMaterial = false;
+    face.add(detail);
+  }
 }

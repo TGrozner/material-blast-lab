@@ -1,6 +1,6 @@
 import type { ScoreBreakdown } from "./scoring";
 
-export const ARCADE_PROGRESS_STORAGE_KEY = "material-blast-lab:arcade-progress";
+export const ARCADE_PROGRESS_STORAGE_KEY = "downtown-mayhem:arcade-progress";
 const ARCADE_PROGRESS_VERSION = 1;
 
 export type ArcadeStars = 0 | 1 | 2 | 3;
@@ -57,53 +57,33 @@ export type ArcadeStorage = Pick<Storage, "getItem" | "setItem">;
 
 export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
   {
-    id: "target-primer",
-    title: "Target Primer",
+    id: "hazard-junction",
+    title: "Hazard Junction",
     thresholds: {
-      missionScore: 900_000,
-      twoStarScore: 1_300_000,
-      threeStarScore: 1_800_000,
-      threeStarBonus: { metric: "targetDamage", minimum: 7_000 }
+      missionScore: 120_000,
+      twoStarScore: 425_000,
+      threeStarScore: 900_000,
+      threeStarBonus: { metric: "chainReactionCount", minimum: 320 }
     }
   },
   {
-    id: "cascade-lane",
-    title: "Cascade Lane",
+    id: "breaker-yard",
+    title: "Breaker Yard",
     thresholds: {
-      missionScore: 1_100_000,
-      twoStarScore: 1_650_000,
-      threeStarScore: 2_200_000,
-      threeStarBonus: { metric: "chainReactionCount", minimum: 3 }
+      missionScore: 160_000,
+      twoStarScore: 520_000,
+      threeStarScore: 1_050_000,
+      threeStarBonus: { metric: "chainReactionCount", minimum: 340 }
     }
   },
   {
     id: "switchback-crush",
     title: "Switchback Crush",
     thresholds: {
-      missionScore: 1_200_000,
-      twoStarScore: 1_600_000,
-      threeStarScore: 2_100_000,
-      threeStarBonus: { metric: "maxChainCombo", minimum: 2 }
-    }
-  },
-  {
-    id: "depot-breaker",
-    title: "Depot Breaker",
-    thresholds: {
-      missionScore: 1_350_000,
-      twoStarScore: 1_850_000,
-      threeStarScore: 2_350_000,
-      threeStarBonus: { metric: "collateralChaos", minimum: 4_500 }
-    }
-  },
-  {
-    id: "high-score-route",
-    title: "High-Score Route",
-    thresholds: {
-      missionScore: 1_500_000,
-      twoStarScore: 2_100_000,
-      threeStarScore: 2_800_000,
-      threeStarBonus: { metric: "chainReactionBonus", minimum: 500_000 }
+      missionScore: 175_000,
+      twoStarScore: 560_000,
+      threeStarScore: 1_120_000,
+      threeStarBonus: { metric: "collateralChaos", minimum: 70_000 }
     }
   }
 ] as const;
@@ -113,15 +93,15 @@ export function evaluateArcadeResult(
   score: ScoreBreakdown
 ): ArcadeResult {
   const thresholds = level.thresholds;
-  const completed = score.totalScore >= thresholds.missionScore;
-  const twoStar = completed && score.totalScore >= thresholds.twoStarScore;
+  const oneStar = score.totalScore >= thresholds.missionScore;
+  const twoStar = score.totalScore >= thresholds.twoStarScore;
   const bonusCompleted = evaluateBonus(score, thresholds.threeStarBonus);
   const threeStar = twoStar && score.totalScore >= thresholds.threeStarScore && bonusCompleted;
 
   return {
     levelId: level.id,
-    completed,
-    stars: threeStar ? 3 : twoStar ? 2 : completed ? 1 : 0,
+    completed: twoStar,
+    stars: threeStar ? 3 : twoStar ? 2 : oneStar ? 1 : 0,
     score: score.totalScore,
     bonusCompleted
   };
@@ -149,26 +129,22 @@ export function recordArcadeRun(
 
   const result = evaluateArcadeResult(levels[levelIndex], score);
   const previousLevel = progress.levels[levelId] ?? createEmptyLevelProgress();
+  const stars = maxStars(previousLevel.stars, result.stars);
   const levelsProgress: Record<string, ArcadeLevelProgress> = {
     ...progress.levels,
     [levelId]: {
       attempts: previousLevel.attempts + 1,
       bestScore: Math.max(previousLevel.bestScore, result.score),
-      stars: maxStars(previousLevel.stars, result.stars),
-      completed: previousLevel.completed || result.completed
+      stars,
+      completed: stars >= 2
     }
   };
-
-  const highestUnlockedLevel =
-    result.completed && levelIndex >= progress.highestUnlockedLevel
-      ? Math.min(levels.length - 1, levelIndex + 1)
-      : clampUnlockedLevel(progress.highestUnlockedLevel, levels.length);
 
   return {
     result,
     progress: recalculateTotalStars({
       version: ARCADE_PROGRESS_VERSION,
-      highestUnlockedLevel,
+      highestUnlockedLevel: deriveHighestUnlockedLevel(levels, levelsProgress),
       levels: levelsProgress,
       totalStars: progress.totalStars
     })
@@ -237,10 +213,9 @@ function normalizeProgress(value: unknown, levels: readonly ArcadeLevelDefinitio
     normalizedLevels[level.id] = normalizeLevelProgress(savedLevels[level.id]);
   }
 
-  const highestUnlockedLevel = clampUnlockedLevel(toFiniteInteger(value.highestUnlockedLevel, 0), levels.length);
   return recalculateTotalStars({
     version: ARCADE_PROGRESS_VERSION,
-    highestUnlockedLevel,
+    highestUnlockedLevel: deriveHighestUnlockedLevel(levels, normalizedLevels),
     levels: normalizedLevels,
     totalStars: 0
   });
@@ -251,12 +226,31 @@ function normalizeLevelProgress(value: unknown): ArcadeLevelProgress {
     return createEmptyLevelProgress();
   }
 
+  const stars = normalizeStars(value.stars);
   return {
     attempts: Math.max(0, toFiniteInteger(value.attempts, 0)),
     bestScore: Math.max(0, toFiniteInteger(value.bestScore, 0)),
-    stars: normalizeStars(value.stars),
-    completed: value.completed === true
+    stars,
+    completed: stars >= 2
   };
+}
+
+function deriveHighestUnlockedLevel(
+  levels: readonly ArcadeLevelDefinition[],
+  progressLevels: Record<string, ArcadeLevelProgress>
+): number {
+  if (levels.length <= 0) {
+    return -1;
+  }
+  let highestUnlockedLevel = 0;
+  for (let index = 0; index < levels.length - 1; index += 1) {
+    const levelProgress = progressLevels[levels[index].id];
+    if (!levelProgress || levelProgress.stars < 2) {
+      break;
+    }
+    highestUnlockedLevel = index + 1;
+  }
+  return highestUnlockedLevel;
 }
 
 function recalculateTotalStars(progress: ArcadeProgress): ArcadeProgress {
@@ -275,13 +269,6 @@ function normalizeStars(value: unknown): ArcadeStars {
     return value;
   }
   return 0;
-}
-
-function clampUnlockedLevel(value: number, levelCount: number): number {
-  if (levelCount <= 0) {
-    return -1;
-  }
-  return Math.max(0, Math.min(levelCount - 1, value));
 }
 
 function toFiniteInteger(value: unknown, fallback: number): number {

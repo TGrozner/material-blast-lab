@@ -19,6 +19,10 @@ export default defineConfig({
           minSize: 20000,
           groups: [
             {
+              name: "vendor-three-webgpu",
+              test: /[/\\]node_modules[/\\]three[/\\](?:build[/\\]three\.webgpu|src[/\\](?:Three\.WebGPU|renderers[/\\](?:common|webgpu|webgl-fallback)|nodes|materials[/\\]nodes|lights[/\\]webgpu))/
+            },
+            {
               name: "vendor-three",
               test: /[/\\]node_modules[/\\]three[/\\]/
             },

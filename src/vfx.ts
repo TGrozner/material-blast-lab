@@ -15,12 +15,6 @@ interface ParticleBurst {
   drag: number;
 }
 
-interface Splatter {
-  mesh: THREE.Mesh;
-  life: number;
-  maxLife: number;
-}
-
 interface FxSprite {
   sprite: THREE.Sprite;
   material: THREE.SpriteMaterial;
@@ -31,6 +25,7 @@ interface FxSprite {
   endSize: number;
   aspect: number;
   rise: number;
+  velocity: THREE.Vector3;
   rotationSpeed: number;
 }
 
@@ -40,6 +35,16 @@ interface StreakBurst {
   life: number;
   maxLife: number;
   expansion: number;
+}
+
+interface PressureWave {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  life: number;
+  maxLife: number;
+  startRadius: number;
+  endRadius: number;
+  maxOpacity: number;
 }
 
 export interface ExplosionFxContext {
@@ -67,24 +72,29 @@ interface ExplosionProfile {
   shockBias: number;
 }
 
+function sharedPlaneGeometry(): THREE.PlaneGeometry {
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  geometry.userData.sharedGeometry = true;
+  return geometry;
+}
+
 const CORE_TEXTURE = "core";
 const SMOKE_TEXTURE = "smoke";
+const SHOCK_TEXTURE = "shock";
 const RADIAL_TEXTURE_SIZE = 128;
-const DAMAGE_TEXTURE_SIZE = 128;
 const radialTextures = new Map<string, THREE.Texture>();
-const damageTextures = new Map<string, THREE.Texture>();
-const SPLATTER_GEOMETRY = sharedPlaneGeometry();
+const SHARED_PLANE_GEOMETRY = sharedPlaneGeometry();
 
 export class ParticleSystem {
   private static readonly maxBursts = 24;
-  private static readonly maxSplatters = 26;
-  private static readonly maxSprites = 38;
+  private static readonly maxSprites = 48;
   private static readonly maxStreaks = 14;
+  private static readonly maxPressureWaves = 8;
 
   private readonly bursts: ParticleBurst[] = [];
-  private readonly splatters: Splatter[] = [];
   private readonly sprites: FxSprite[] = [];
   private readonly streaks: StreakBurst[] = [];
+  private readonly pressureWaves: PressureWave[] = [];
   private readonly flashLight: THREE.PointLight;
   private readonly flashOverlay: HTMLDivElement;
   private quality: GraphicsQuality = "balanced";
@@ -124,7 +134,7 @@ export class ParticleSystem {
     this.flashLight.color.set(profile.coreColor);
     this.flashLight.distance = THREE.MathUtils.clamp(visualRadius * 4.8, 12, 42);
     this.flashLight.intensity = THREE.MathUtils.clamp(46 * impactScale, 24, 110) * this.flashScale;
-    this.flashOverlay.style.opacity = String(profile.overlayOpacity * THREE.MathUtils.clamp(impactScale, 0.72, 1.5) * this.flashScale);
+    this.setFlashOverlay(profile, impactScale);
 
     this.spawnSprite(coreOrigin, CORE_TEXTURE, profile.coreColor, visualRadius * 0.34, visualRadius * 1.15, 0.74, 0.34, 0.42, THREE.AdditiveBlending);
     this.spawnSprite(coreOrigin.clone().add(new THREE.Vector3(0, 0.16, 0)), CORE_TEXTURE, profile.edgeColor, visualRadius * 0.16, visualRadius * 0.9, 0.34, 0.42, 0.16, THREE.AdditiveBlending);
@@ -137,16 +147,14 @@ export class ParticleSystem {
     this.spawnBurst(origin, Math.round(42 * streakAmount), profile.emberColor, 0.5, 0.026, 31 * impactScale, 0.74, 0.03, THREE.AdditiveBlending);
     this.spawnBurst(origin, Math.round(92 * smokeAmount), dustColor, 1.38, 0.075, 4.6 * impactScale, 1.55, 0.32);
     this.spawnBurst(coreOrigin, Math.round(64 * smokeAmount), smokeColor, 2.25, 0.13, 2.5 * impactScale, 1.05, 0.55);
+    this.spawnPressureWave(origin, visualRadius, profile.shockColor, context.role === "primary" ? 0.5 : 0.34, impactScale);
+    this.spawnDirectionalBlast(origin, normalizedImpactDirection(context.impactDirection), visualRadius, profile, dustColor, impactScale);
     this.spawnStreaks(origin, visualRadius, profile.streakColor, Math.round(14 * streakAmount), 0.52);
     this.spawnSmokePuffs(coreOrigin, visualRadius, smokeColor, smokeAmount);
 
     if (profile.fireBias > 0.2 || context.projectileId === "ignite") {
       this.fireBurst(origin, 0.75 * impactScale + profile.fireBias);
     }
-    if (context.projectileId === "gel" && (context.result?.fracturedBodies ?? 0) > 0) {
-      this.ruptureDebrisSplash(origin.clone().add(new THREE.Vector3(0, 0.12, 0)), THREE.MathUtils.clamp(0.42 + impactScale * 0.18, 0.42, 0.9), dustColor);
-    }
-
     this.spawnProjectileSignature(origin, coreOrigin, visualRadius, profile, context, impactScale);
     this.spawnMaterialResponse(origin, visualRadius, context, profile, dustColor, impactScale);
   }
@@ -174,10 +182,6 @@ export class ParticleSystem {
     const count = Math.round(80 * intensity);
     this.spawnBurst(origin, count, color, 1.65, 0.085, 7.5 * intensity, 1.5, 0.32);
     this.spawnBurst(origin.clone().add(new THREE.Vector3(0, 0.18, 0)), Math.round(35 * intensity), 0xffc36a, 0.85, 0.045, 5, 0.7, 0.16, THREE.AdditiveBlending);
-    for (let i = 0; i < Math.round(4 + intensity * 5); i += 1) {
-      const offset = new THREE.Vector3((Math.random() - 0.5) * 2.4 * intensity, 0.022, (Math.random() - 0.5) * 2.4 * intensity);
-      this.spawnSplatter(origin.clone().add(offset), color, THREE.MathUtils.randFloat(0.28, 0.82) * intensity);
-    }
   }
 
   fireBurst(origin: THREE.Vector3, intensity = 1): void {
@@ -193,6 +197,16 @@ export class ParticleSystem {
     this.spawnSprite(origin.clone().add(new THREE.Vector3(0, 0.36, 0)), CORE_TEXTURE, 0xff7a35, 0.16 * amount, 0.72 * amount, 0.36, 0.24, 0.28, THREE.AdditiveBlending);
     this.spawnBurst(origin.clone().add(new THREE.Vector3(0, 0.34, 0)), Math.round(16 * amount), 0xff8f38, 0.36, 0.055, 3.8 * amount, 0.15, 0.12, THREE.AdditiveBlending);
     this.spawnBurst(origin.clone().add(new THREE.Vector3(0, 0.48, 0)), Math.round(10 * amount), 0x2d2824, 0.95, 0.1, 1.5 * amount, -0.12, 0.44);
+  }
+
+  armingPulse(origin: THREE.Vector3, intensity = 1, color: THREE.ColorRepresentation = 0xff9a42): void {
+    const amount = THREE.MathUtils.clamp(intensity, 0.1, 1.25);
+    const lifted = origin.clone().add(new THREE.Vector3(0, 0.26, 0));
+    this.spawnSprite(lifted, CORE_TEXTURE, color, 0.18 * amount, 0.78 * amount, 0.28 * amount, 0.22, 0.08, THREE.AdditiveBlending, 1.25);
+    if (amount > 0.55) {
+      this.spawnArcWeb(origin, 0.58 * amount, color, Math.round(4 + amount * 7), 0.24);
+      this.spawnPressureWave(origin, 0.72 * amount, color, 0.22, amount);
+    }
   }
 
   spark(origin: THREE.Vector3, color: THREE.ColorRepresentation = 0xffd25c, intensity = 1): void {
@@ -227,21 +241,6 @@ export class ParticleSystem {
       burst.material.opacity = (1 - t) ** 1.25;
     }
 
-    for (let i = this.splatters.length - 1; i >= 0; i -= 1) {
-      const splatter = this.splatters[i];
-      splatter.life += deltaSeconds;
-      const t = splatter.life / splatter.maxLife;
-      if (t >= 1) {
-        this.scene.remove(splatter.mesh);
-        disposeGeometry(splatter.mesh.geometry);
-        (splatter.mesh.material as THREE.Material).dispose();
-        this.splatters.splice(i, 1);
-        continue;
-      }
-      const material = splatter.mesh.material as THREE.MeshBasicMaterial;
-      material.opacity = 0.58 * (1 - Math.max(0, t - 0.55) / 0.45);
-    }
-
     for (let i = this.sprites.length - 1; i >= 0; i -= 1) {
       const sprite = this.sprites[i];
       sprite.life += deltaSeconds;
@@ -255,6 +254,7 @@ export class ParticleSystem {
       const size = THREE.MathUtils.lerp(sprite.startSize, sprite.endSize, easeOutCubic(t));
       sprite.sprite.scale.set(size * sprite.aspect, size, 1);
       sprite.sprite.position.y += sprite.rise * deltaSeconds;
+      sprite.sprite.position.addScaledVector(sprite.velocity, deltaSeconds);
       sprite.material.rotation += sprite.rotationSpeed * deltaSeconds;
       sprite.material.opacity = sprite.maxOpacity * (1 - t) ** 1.65;
     }
@@ -272,6 +272,21 @@ export class ParticleSystem {
       }
       streak.lines.scale.setScalar(1 + easeOutCubic(t) * streak.expansion);
       streak.material.opacity = (1 - t) ** 1.8;
+    }
+
+    for (let i = this.pressureWaves.length - 1; i >= 0; i -= 1) {
+      const wave = this.pressureWaves[i];
+      wave.life += deltaSeconds;
+      const t = wave.life / wave.maxLife;
+      if (t >= 1) {
+        this.scene.remove(wave.mesh);
+        wave.material.dispose();
+        this.pressureWaves.splice(i, 1);
+        continue;
+      }
+      const radius = THREE.MathUtils.lerp(wave.startRadius, wave.endRadius, easeOutCubic(t));
+      wave.mesh.scale.set(radius, radius, 1);
+      wave.material.opacity = wave.maxOpacity * (1 - t) ** 1.7;
     }
 
     this.flashLight.intensity = THREE.MathUtils.damp(this.flashLight.intensity, 0, 9, deltaSeconds);
@@ -295,7 +310,8 @@ export class ParticleSystem {
     maxLife: number,
     rise: number,
     blending: THREE.Blending = THREE.NormalBlending,
-    aspect = 1
+    aspect = 1,
+    velocity?: THREE.Vector3
   ): void {
     const material = new THREE.SpriteMaterial({
       map: radialTexture(textureKind),
@@ -320,6 +336,7 @@ export class ParticleSystem {
       endSize,
       aspect,
       rise,
+      velocity: velocity?.clone() ?? new THREE.Vector3(),
       rotationSpeed: THREE.MathUtils.randFloat(-1.8, 1.8)
     });
     this.trimSprites();
@@ -332,6 +349,11 @@ export class ParticleSystem {
       const distance = THREE.MathUtils.randFloat(radius * 0.06, radius * 0.28);
       const offset = new THREE.Vector3(Math.cos(angle) * distance, THREE.MathUtils.randFloat(0.05, radius * 0.12), Math.sin(angle) * distance);
       const startSize = THREE.MathUtils.randFloat(radius * 0.18, radius * 0.34);
+      const drift = new THREE.Vector3(
+        Math.cos(angle) * THREE.MathUtils.randFloat(0.08, 0.22),
+        THREE.MathUtils.randFloat(0.02, 0.08),
+        Math.sin(angle) * THREE.MathUtils.randFloat(0.08, 0.22)
+      );
       this.spawnSprite(
         origin.clone().add(offset),
         SMOKE_TEXTURE,
@@ -340,9 +362,92 @@ export class ParticleSystem {
         startSize * THREE.MathUtils.randFloat(2.1, 3.4),
         THREE.MathUtils.randFloat(0.22, 0.38),
         THREE.MathUtils.randFloat(1.1, 1.9),
-        THREE.MathUtils.randFloat(0.16, 0.46)
+        THREE.MathUtils.randFloat(0.16, 0.46),
+        THREE.NormalBlending,
+        THREE.MathUtils.randFloat(0.72, 1.38),
+        drift
       );
     }
+
+    const lingerCount = this.quality === "performance" ? 2 : this.quality === "balanced" ? 3 : 5;
+    for (let i = 0; i < lingerCount; i += 1) {
+      const angle = (i / lingerCount) * Math.PI * 2 + THREE.MathUtils.randFloatSpread(0.72);
+      const distance = THREE.MathUtils.randFloat(radius * 0.04, radius * 0.2);
+      const offset = new THREE.Vector3(Math.cos(angle) * distance, THREE.MathUtils.randFloat(radius * 0.05, radius * 0.18), Math.sin(angle) * distance);
+      const startSize = THREE.MathUtils.randFloat(radius * 0.22, radius * 0.42);
+      const drift = new THREE.Vector3(
+        Math.cos(angle) * THREE.MathUtils.randFloat(0.04, 0.15),
+        THREE.MathUtils.randFloat(0.04, 0.14),
+        Math.sin(angle) * THREE.MathUtils.randFloat(0.04, 0.15)
+      );
+      this.spawnSprite(
+        origin.clone().add(offset),
+        SMOKE_TEXTURE,
+        color,
+        startSize,
+        startSize * THREE.MathUtils.randFloat(3.1, 4.8),
+        THREE.MathUtils.randFloat(0.12, 0.2),
+        THREE.MathUtils.randFloat(2.8, 4.4),
+        THREE.MathUtils.randFloat(0.08, 0.2),
+        THREE.NormalBlending,
+        THREE.MathUtils.randFloat(0.58, 1.45),
+        drift
+      );
+    }
+  }
+
+  private spawnPressureWave(
+    origin: THREE.Vector3,
+    radius: number,
+    color: THREE.ColorRepresentation,
+    opacity: number,
+    intensity: number
+  ): void {
+    if (this.quality === "performance" && this.pressureWaves.length > 3) {
+      return;
+    }
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      map: radialTexture(SHOCK_TEXTURE),
+      transparent: true,
+      opacity: opacity * THREE.MathUtils.clamp(intensity, 0.55, 1.35),
+      depthWrite: false,
+      alphaTest: 0.035,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending
+    });
+    const mesh = new THREE.Mesh(SHARED_PLANE_GEOMETRY, material);
+    mesh.position.set(origin.x, Math.max(0.035, origin.y + 0.025), origin.z);
+    mesh.rotation.x = -Math.PI * 0.5;
+    mesh.rotation.z = Math.random() * Math.PI * 2;
+    mesh.scale.set(radius * 0.16, radius * 0.16, 1);
+    mesh.renderOrder = 4;
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+    this.pressureWaves.push({
+      mesh,
+      material,
+      life: 0,
+      maxLife: THREE.MathUtils.lerp(0.24, 0.44, THREE.MathUtils.clamp(intensity, 0, 1)),
+      startRadius: radius * 0.16,
+      endRadius: radius * THREE.MathUtils.randFloat(1.15, 1.65),
+      maxOpacity: material.opacity
+    });
+    this.trimPressureWaves();
+  }
+
+  private spawnDirectionalBlast(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    radius: number,
+    profile: ExplosionProfile,
+    dustColor: THREE.Color,
+    impactScale: number
+  ): void {
+    const blastDirection = direction.clone().add(new THREE.Vector3(0, 0.16, 0)).normalize();
+    this.spawnDirectionalBurst(origin, blastDirection, Math.round(52 * impactScale), profile.hotColor, 0.58, 0.034, 26 * impactScale, 0.52, 0.035, 0.44, THREE.AdditiveBlending);
+    this.spawnDirectionalBurst(origin, blastDirection, Math.round(48 * impactScale), dustColor, 1.25, 0.09, 8.5 * impactScale, 1.55, 0.25, 0.62);
+    this.spawnDirectionalStreaks(origin, blastDirection, radius * 1.22, profile.streakColor, Math.round(10 * impactScale), 0.42, 0.24);
   }
 
   private spawnStreaks(origin: THREE.Vector3, radius: number, color: THREE.ColorRepresentation, count: number, maxLife: number): void {
@@ -407,10 +512,6 @@ export class ParticleSystem {
       case "pulse":
         this.spawnArcWeb(origin, visualRadius * 0.96, profile.shockColor, Math.round(22 * impactScale), 0.56);
         this.spawnSprite(coreOrigin, CORE_TEXTURE, profile.shockColor, visualRadius * 0.4, visualRadius * 1.65, 0.24, 0.42, 0.08, THREE.AdditiveBlending, 1.55);
-        break;
-      case "gel":
-        this.spawnSprite(coreOrigin, CORE_TEXTURE, profile.edgeColor, visualRadius * 0.2, visualRadius * 1.38, 0.26, 0.42, 0.24, THREE.AdditiveBlending, 0.46);
-        this.spawnBurst(origin, Math.round(42 * impactScale), 0xff4f66, 0.58, 0.04, 18 * impactScale, 0.48, 0.06, THREE.AdditiveBlending);
         break;
       case "gravity":
         this.spawnArcWeb(origin, visualRadius * 0.88, 0x8d6cff, Math.round(16 * impactScale), 0.62);
@@ -555,28 +656,75 @@ export class ParticleSystem {
     this.trimStreaks();
   }
 
-  private materialResponseBudget(): number {
-    return this.quality === "performance" ? 1 : this.quality === "balanced" ? 2 : 3;
+  private spawnDirectionalBurst(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    count: number,
+    color: THREE.ColorRepresentation,
+    maxLife: number,
+    size: number,
+    speed: number,
+    gravity: number,
+    drag: number,
+    spread: number,
+    blending: THREE.Blending = THREE.NormalBlending
+  ): void {
+    const scaledCount = Math.max(1, Math.round(count * this.qualityDensity()));
+    const { forward, side, up } = directionBasis(direction);
+    const positions = new Float32Array(scaledCount * 3);
+    const colors = new Float32Array(scaledCount * 3);
+    const velocities = new Float32Array(scaledCount * 3);
+    const baseColor = new THREE.Color(color);
+    const colorJitter = new THREE.Color();
+
+    for (let i = 0; i < scaledCount; i += 1) {
+      const sideScale = THREE.MathUtils.randFloatSpread(spread);
+      const upScale = THREE.MathUtils.randFloatSpread(spread * 0.72);
+      const velocityScale = speed * THREE.MathUtils.randFloat(0.42, 1.08);
+      const velocity = forward
+        .clone()
+        .multiplyScalar(velocityScale)
+        .add(side.clone().multiplyScalar(sideScale * speed))
+        .add(up.clone().multiplyScalar((0.12 + upScale) * speed));
+      velocities[i * 3] = velocity.x;
+      velocities[i * 3 + 1] = velocity.y;
+      velocities[i * 3 + 2] = velocity.z;
+
+      const startOffset = forward
+        .clone()
+        .multiplyScalar(THREE.MathUtils.randFloat(-0.08, 0.18))
+        .add(side.clone().multiplyScalar(sideScale * 0.18))
+        .add(up.clone().multiplyScalar(upScale * 0.12));
+      positions[i * 3] = origin.x + startOffset.x;
+      positions[i * 3 + 1] = origin.y + startOffset.y;
+      positions[i * 3 + 2] = origin.z + startOffset.z;
+
+      colorJitter.copy(baseColor).offsetHSL((Math.random() - 0.5) * 0.035, 0, (Math.random() - 0.5) * 0.14);
+      colors[i * 3] = colorJitter.r;
+      colors[i * 3 + 1] = colorJitter.g;
+      colors[i * 3 + 2] = colorJitter.b;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    const material = new THREE.PointsMaterial({
+      size,
+      vertexColors: true,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      blending
+    });
+    const points = new THREE.Points(geometry, material);
+    points.frustumCulled = false;
+    this.scene.add(points);
+    this.bursts.push({ points, material, positions, velocities, life: 0, maxLife, gravity, drag });
+    this.trimBursts();
   }
 
-  private spawnSplatter(origin: THREE.Vector3, color: THREE.ColorRepresentation, radius: number): void {
-    const material = new THREE.MeshBasicMaterial({
-      color,
-      map: damageTexture("concrete"),
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-      alphaTest: 0.03
-    });
-    const mesh = new THREE.Mesh(SPLATTER_GEOMETRY, material);
-    mesh.position.copy(origin);
-    mesh.rotation.x = -Math.PI * 0.5;
-    mesh.rotation.z = Math.random() * Math.PI * 2;
-    mesh.scale.set(radius * THREE.MathUtils.randFloat(0.55, 1.35), radius * THREE.MathUtils.randFloat(0.22, 0.68), 1);
-    mesh.renderOrder = 2;
-    this.scene.add(mesh);
-    this.splatters.push({ mesh, life: 0, maxLife: 8 });
-    this.trimSplatters();
+  private materialResponseBudget(): number {
+    return this.quality === "performance" ? 1 : this.quality === "balanced" ? 2 : 3;
   }
 
   private spawnBurst(
@@ -649,18 +797,6 @@ export class ParticleSystem {
     }
   }
 
-  private trimSplatters(): void {
-    while (this.splatters.length > ParticleSystem.maxSplatters) {
-      const splatter = this.splatters.shift();
-      if (!splatter) {
-        return;
-      }
-      this.scene.remove(splatter.mesh);
-      disposeGeometry(splatter.mesh.geometry);
-      (splatter.mesh.material as THREE.Material).dispose();
-    }
-  }
-
   private trimSprites(): void {
     while (this.sprites.length > ParticleSystem.maxSprites) {
       const sprite = this.sprites.shift();
@@ -684,16 +820,29 @@ export class ParticleSystem {
     }
   }
 
+  private trimPressureWaves(): void {
+    while (this.pressureWaves.length > ParticleSystem.maxPressureWaves) {
+      const wave = this.pressureWaves.shift();
+      if (!wave) {
+        return;
+      }
+      this.scene.remove(wave.mesh);
+      wave.material.dispose();
+    }
+  }
+
+  private setFlashOverlay(profile: ExplosionProfile, impactScale: number): void {
+    const core = colorToCss(profile.coreColor, 0.72);
+    const shock = colorToCss(profile.shockColor, 0.22);
+    this.flashOverlay.style.background = `radial-gradient(circle at center, ${core}, ${shock} 34%, transparent 68%)`;
+    this.flashOverlay.style.opacity = String(profile.overlayOpacity * THREE.MathUtils.clamp(impactScale, 0.72, 1.5) * this.flashScale);
+  }
+
   private disposeAllTransientObjects(): void {
     for (const burst of this.bursts) {
       this.scene.remove(burst.points);
       disposeGeometry(burst.points.geometry);
       burst.material.dispose();
-    }
-    for (const splatter of this.splatters) {
-      this.scene.remove(splatter.mesh);
-      disposeGeometry(splatter.mesh.geometry);
-      (splatter.mesh.material as THREE.Material).dispose();
     }
     for (const sprite of this.sprites) {
       this.scene.remove(sprite.sprite);
@@ -704,10 +853,14 @@ export class ParticleSystem {
       disposeGeometry(streak.lines.geometry);
       streak.material.dispose();
     }
+    for (const wave of this.pressureWaves) {
+      this.scene.remove(wave.mesh);
+      wave.material.dispose();
+    }
     this.bursts.length = 0;
-    this.splatters.length = 0;
     this.sprites.length = 0;
     this.streaks.length = 0;
+    this.pressureWaves.length = 0;
   }
 
   private explosionScale(context: ExplosionFxContext): number {
@@ -742,13 +895,30 @@ export class ExplosionSystem {
   }
 }
 
-type DamageTextureKind = "burn" | "concrete" | "electric" | "foam" | "gel" | "glass" | "metal" | "wood";
-
 function normalizedImpactDirection(direction?: THREE.Vector3): THREE.Vector3 {
   if (!direction || direction.lengthSq() < 0.0001) {
     return new THREE.Vector3(0, 0.08, -1).normalize();
   }
   return direction.clone().normalize();
+}
+
+function directionBasis(direction: THREE.Vector3): { forward: THREE.Vector3; side: THREE.Vector3; up: THREE.Vector3 } {
+  const forward = normalizedImpactDirection(direction);
+  const side = new THREE.Vector3(-forward.z, 0, forward.x);
+  if (side.lengthSq() < 0.0001) {
+    side.set(1, 0, 0);
+  }
+  side.normalize();
+  const up = new THREE.Vector3().crossVectors(side, forward);
+  if (up.y < 0) {
+    up.multiplyScalar(-1);
+  }
+  if (up.lengthSq() < 0.0001) {
+    up.set(0, 1, 0);
+  } else {
+    up.normalize();
+  }
+  return { forward, side, up };
 }
 
 function dominantMaterials(result?: ExplosionResult, hitMaterialId?: MaterialId): MaterialId[] {
@@ -813,19 +983,6 @@ function explosionProfile(projectileId?: ProjectileId, hitMaterialId?: MaterialI
         smokeBias: 0.02,
         shockBias: 0.82
       };
-    case "gel":
-      return {
-        ...profile,
-        coreColor: 0xffc0df,
-        edgeColor: 0xf13d88,
-        shockColor: 0xff5da4,
-        hotColor: 0xff4f66,
-        emberColor: 0xff8fbc,
-        smokeColor: 0x3a172c,
-        fireBias: 0.18,
-        smokeBias: 0.28,
-        streakBias: 0.34
-      };
     case "gravity":
       return {
         ...profile,
@@ -869,168 +1026,10 @@ function explosionProfile(projectileId?: ProjectileId, hitMaterialId?: MaterialI
   return profile;
 }
 
-function sharedPlaneGeometry(): THREE.PlaneGeometry {
-  const geometry = new THREE.PlaneGeometry(1, 1);
-  geometry.userData.sharedGeometry = true;
-  return geometry;
-}
-
 function disposeGeometry(geometry: THREE.BufferGeometry): void {
   if (geometry.userData.sharedGeometry !== true) {
     geometry.dispose();
   }
-}
-
-function damageTexture(kind: DamageTextureKind): THREE.Texture {
-  const cached = damageTextures.get(kind);
-  if (cached) {
-    return cached;
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = DAMAGE_TEXTURE_SIZE;
-  canvas.height = DAMAGE_TEXTURE_SIZE;
-  const context = canvas.getContext("2d");
-  if (!context) {
-    throw new Error("Unable to create damage texture canvas");
-  }
-
-  context.clearRect(0, 0, DAMAGE_TEXTURE_SIZE, DAMAGE_TEXTURE_SIZE);
-  context.lineCap = "round";
-  context.lineJoin = "round";
-
-  if (kind === "burn") {
-    const gradient = context.createRadialGradient(64, 64, 4, 64, 64, 58);
-    gradient.addColorStop(0, "rgba(255,255,255,0.76)");
-    gradient.addColorStop(0.36, "rgba(255,255,255,0.38)");
-    gradient.addColorStop(0.74, "rgba(255,255,255,0.12)");
-    gradient.addColorStop(1, "rgba(255,255,255,0)");
-    context.fillStyle = gradient;
-    context.beginPath();
-    context.ellipse(64, 65, 44, 34, -0.22, 0, Math.PI * 2);
-    context.fill();
-    drawScratchLines(context, 9, 0.24, 2.8);
-  } else if (kind === "gel") {
-    context.strokeStyle = "rgba(255,255,255,0.72)";
-    context.lineWidth = 5.4;
-    for (let i = 0; i < 6; i += 1) {
-      context.beginPath();
-      context.moveTo(20 + i * 11, 30 + (i % 3) * 8);
-      context.quadraticCurveTo(58 + (i % 2) * 18, 52 + (i % 4) * 7, 112 - i * 7, 86 - (i % 3) * 8);
-      context.stroke();
-    }
-    context.fillStyle = "rgba(255,255,255,0.42)";
-    for (let i = 0; i < 7; i += 1) {
-      context.beginPath();
-      context.ellipse(28 + i * 13, 30 + ((i * 17) % 74), 3 + (i % 2) * 2, 2 + (i % 3), i * 0.4, 0, Math.PI * 2);
-      context.fill();
-    }
-  } else if (kind === "glass" || kind === "electric") {
-    drawCrackWeb(context, kind === "electric" ? 0.78 : 0.58, kind === "electric" ? 2.6 : 1.65);
-    if (kind === "electric") {
-      drawSparkCrosses(context, 7);
-    }
-  } else if (kind === "metal") {
-    drawScratchLines(context, 15, 0.62, 2.2);
-    drawSparkCrosses(context, 4);
-  } else if (kind === "wood") {
-    drawWoodSplinters(context);
-  } else if (kind === "foam") {
-    drawTornFoam(context);
-  } else {
-    drawCrackWeb(context, 0.46, 2.2);
-    context.fillStyle = "rgba(255,255,255,0.18)";
-    for (let i = 0; i < 10; i += 1) {
-      context.beginPath();
-      context.ellipse(22 + ((i * 19) % 84), 22 + ((i * 31) % 82), 5 + (i % 3), 3 + (i % 4), i * 0.34, 0, Math.PI * 2);
-      context.fill();
-    }
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  damageTextures.set(kind, texture);
-  return texture;
-}
-
-function drawCrackWeb(context: CanvasRenderingContext2D, opacity: number, lineWidth: number): void {
-  context.strokeStyle = `rgba(255,255,255,${opacity})`;
-  context.lineWidth = lineWidth;
-  const branches = [
-    [64, 72, 28, 42, 14, 22],
-    [64, 72, 92, 34, 114, 22],
-    [64, 72, 76, 102, 92, 120],
-    [55, 69, 30, 88, 8, 93],
-    [72, 65, 101, 78, 120, 70]
-  ];
-  for (const [x0, y0, x1, y1, x2, y2] of branches) {
-    context.beginPath();
-    context.moveTo(x0, y0);
-    context.lineTo(x1, y1);
-    context.lineTo(x2, y2);
-    context.stroke();
-  }
-  context.lineWidth = Math.max(0.75, lineWidth * 0.55);
-  context.strokeStyle = `rgba(255,255,255,${opacity * 0.55})`;
-  for (let i = 0; i < 8; i += 1) {
-    context.beginPath();
-    context.moveTo(38 + ((i * 17) % 54), 34 + ((i * 23) % 58));
-    context.lineTo(24 + ((i * 29) % 78), 28 + ((i * 13) % 82));
-    context.stroke();
-  }
-}
-
-function drawScratchLines(context: CanvasRenderingContext2D, count: number, opacity: number, lineWidth: number): void {
-  context.strokeStyle = `rgba(255,255,255,${opacity})`;
-  context.lineWidth = lineWidth;
-  for (let i = 0; i < count; i += 1) {
-    const y = 22 + ((i * 17) % 78);
-    const x = 12 + ((i * 23) % 26);
-    context.beginPath();
-    context.moveTo(x, y);
-    context.lineTo(78 + ((i * 11) % 34), y + ((i % 5) - 2) * 3);
-    context.stroke();
-  }
-}
-
-function drawSparkCrosses(context: CanvasRenderingContext2D, count: number): void {
-  context.strokeStyle = "rgba(255,255,255,0.86)";
-  context.lineWidth = 1.6;
-  for (let i = 0; i < count; i += 1) {
-    const x = 24 + ((i * 31) % 86);
-    const y = 22 + ((i * 23) % 82);
-    const length = 5 + (i % 3) * 3;
-    context.beginPath();
-    context.moveTo(x - length, y);
-    context.lineTo(x + length, y);
-    context.moveTo(x, y - length);
-    context.lineTo(x, y + length);
-    context.stroke();
-  }
-}
-
-function drawWoodSplinters(context: CanvasRenderingContext2D): void {
-  context.strokeStyle = "rgba(255,255,255,0.62)";
-  context.lineWidth = 2.2;
-  for (let i = 0; i < 11; i += 1) {
-    const x = 18 + ((i * 19) % 84);
-    context.beginPath();
-    context.moveTo(x, 18 + (i % 4) * 8);
-    context.lineTo(x + ((i % 3) - 1) * 10, 106 - (i % 5) * 6);
-    context.stroke();
-  }
-}
-
-function drawTornFoam(context: CanvasRenderingContext2D): void {
-  context.fillStyle = "rgba(255,255,255,0.32)";
-  for (let i = 0; i < 18; i += 1) {
-    context.beginPath();
-    context.ellipse(18 + ((i * 23) % 92), 18 + ((i * 31) % 86), 4 + (i % 4), 3 + (i % 3), i * 0.2, 0, Math.PI * 2);
-    context.fill();
-  }
-  drawScratchLines(context, 5, 0.36, 1.8);
 }
 
 function radialTexture(kind: string): THREE.Texture {
@@ -1054,6 +1053,13 @@ function radialTexture(kind: string): THREE.Texture {
     gradient.addColorStop(0.38, "rgba(220,220,220,0.22)");
     gradient.addColorStop(0.74, "rgba(120,120,120,0.07)");
     gradient.addColorStop(1, "rgba(0,0,0,0)");
+  } else if (kind === SHOCK_TEXTURE) {
+    gradient.addColorStop(0, "rgba(255,255,255,0)");
+    gradient.addColorStop(0.32, "rgba(255,255,255,0)");
+    gradient.addColorStop(0.48, "rgba(255,255,255,0.78)");
+    gradient.addColorStop(0.62, "rgba(255,255,255,0.24)");
+    gradient.addColorStop(0.82, "rgba(255,255,255,0.06)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
   } else {
     gradient.addColorStop(0, "rgba(255,255,255,1)");
     gradient.addColorStop(0.18, "rgba(255,245,210,0.95)");
@@ -1063,12 +1069,68 @@ function radialTexture(kind: string): THREE.Texture {
 
   context.fillStyle = gradient;
   context.fillRect(0, 0, RADIAL_TEXTURE_SIZE, RADIAL_TEXTURE_SIZE);
+  if (kind === SMOKE_TEXTURE) {
+    drawSmokeTextureBreakup(context);
+  } else if (kind === SHOCK_TEXTURE) {
+    drawShockTextureBreakup(context);
+  } else {
+    drawCoreTextureBreakup(context);
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   radialTextures.set(kind, texture);
   return texture;
+}
+
+function drawSmokeTextureBreakup(context: CanvasRenderingContext2D): void {
+  context.globalCompositeOperation = "destination-out";
+  for (let i = 0; i < 18; i += 1) {
+    const angle = i * 2.39996;
+    const distance = 18 + ((i * 17) % 38);
+    const x = 64 + Math.cos(angle) * distance;
+    const y = 64 + Math.sin(angle) * distance * 0.82;
+    context.fillStyle = `rgba(0,0,0,${0.08 + (i % 4) * 0.035})`;
+    context.beginPath();
+    context.ellipse(x, y, 8 + (i % 5) * 2.2, 5 + (i % 3) * 2.6, angle, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.globalCompositeOperation = "source-over";
+}
+
+function drawShockTextureBreakup(context: CanvasRenderingContext2D): void {
+  context.strokeStyle = "rgba(255,255,255,0.26)";
+  context.lineWidth = 1.8;
+  for (let i = 0; i < 20; i += 1) {
+    const angle = i * 0.314 + ((i % 3) - 1) * 0.03;
+    const inner = 44 + (i % 4) * 1.3;
+    const outer = 62 - (i % 5) * 1.1;
+    context.beginPath();
+    context.moveTo(64 + Math.cos(angle) * inner, 64 + Math.sin(angle) * inner);
+    context.lineTo(64 + Math.cos(angle + 0.035) * outer, 64 + Math.sin(angle + 0.035) * outer);
+    context.stroke();
+  }
+}
+
+function drawCoreTextureBreakup(context: CanvasRenderingContext2D): void {
+  context.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 16; i += 1) {
+    const angle = i * 2.39996;
+    const length = 28 + ((i * 19) % 34);
+    context.strokeStyle = `rgba(255,${180 + (i % 4) * 16},90,${0.12 + (i % 3) * 0.06})`;
+    context.lineWidth = 3 + (i % 4);
+    context.beginPath();
+    context.moveTo(64 + Math.cos(angle) * 8, 64 + Math.sin(angle) * 8);
+    context.lineTo(64 + Math.cos(angle + 0.08) * length, 64 + Math.sin(angle + 0.08) * length);
+    context.stroke();
+  }
+  context.globalCompositeOperation = "source-over";
+}
+
+function colorToCss(color: THREE.ColorRepresentation, alpha: number): string {
+  const parsed = new THREE.Color(color);
+  return `rgba(${Math.round(parsed.r * 255)}, ${Math.round(parsed.g * 255)}, ${Math.round(parsed.b * 255)}, ${alpha})`;
 }
 
 function easeOutCubic(t: number): number {

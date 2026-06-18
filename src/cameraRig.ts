@@ -2,6 +2,11 @@ import * as THREE from "three";
 
 type CameraMode = "cannon" | "projectile" | "spectacle";
 
+interface CameraRenderer {
+  setPixelRatio(value?: number): void;
+  setSize(width: number, height: number, updateStyle?: boolean): void;
+}
+
 const SPECTACLE_RADIUS = 16.2;
 const SPECTACLE_RADIUS_PORTRAIT = 31;
 const SPECTACLE_HEIGHT = 8.2;
@@ -25,7 +30,7 @@ export class CameraRig {
   private shakeScale = 1;
   private pixelRatioCap = 1.5;
 
-  constructor(private readonly renderer: THREE.WebGLRenderer) {
+  constructor(private readonly renderer: CameraRenderer) {
     this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 180);
     this.camera.position.copy(this.desiredPosition);
     this.camera.lookAt(this.desiredTarget);

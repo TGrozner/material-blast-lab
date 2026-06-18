@@ -6,6 +6,7 @@ interface InputCallbacks {
   fire(): void;
   reset(): void;
   clearDebris(): void;
+  finishRun(): void;
   selectProjectile(id: ProjectileId): void;
   nextLevel(): void;
 }
@@ -61,6 +62,11 @@ export class InputController {
       this.callbacks.clearDebris();
       return;
     }
+    if (event.key === "Enter" || event.key === "f" || event.key === "F") {
+      event.preventDefault();
+      this.callbacks.finishRun();
+      return;
+    }
     if (event.key === "Tab") {
       event.preventDefault();
       this.callbacks.nextLevel();
@@ -71,9 +77,7 @@ export class InputController {
       "1": "slug",
       "2": "scatter",
       "3": "pulse",
-      "4": "gel",
-      "5": "gravity",
-      "6": "ignite"
+      "4": "gravity"
     };
     const projectile = projectileByKey[event.key];
     if (projectile) {

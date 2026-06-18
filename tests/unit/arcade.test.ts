@@ -101,14 +101,17 @@ describe("Arcade progress", () => {
     expect(second.totalStars).toBe(3);
   });
 
-  test("unlocks the next highest level only after mission completion", () => {
+  test("unlocks the next highest level only after earning two stars", () => {
     const initial = createInitialArcadeProgress(LEVELS);
     const failed = recordArcadeRun(initial, LEVELS, "alpha", score({ totalScore: 999 })).progress;
-    const alphaComplete = recordArcadeRun(failed, LEVELS, "alpha", score({ totalScore: 1000 })).progress;
-    const bravoComplete = recordArcadeRun(alphaComplete, LEVELS, "bravo", score({ totalScore: 1200 })).progress;
+    const alphaOneStar = recordArcadeRun(failed, LEVELS, "alpha", score({ totalScore: 1000 })).progress;
+    const alphaComplete = recordArcadeRun(alphaOneStar, LEVELS, "alpha", score({ totalScore: 1500 })).progress;
+    const bravoComplete = recordArcadeRun(alphaComplete, LEVELS, "bravo", score({ totalScore: 1700 })).progress;
 
     expect(initial.highestUnlockedLevel).toBe(0);
     expect(failed.highestUnlockedLevel).toBe(0);
+    expect(alphaOneStar.highestUnlockedLevel).toBe(0);
+    expect(alphaOneStar.levels.alpha).toMatchObject({ stars: 1, completed: false });
     expect(alphaComplete.highestUnlockedLevel).toBe(1);
     expect(bravoComplete.highestUnlockedLevel).toBe(2);
   });
@@ -146,6 +149,30 @@ describe("Arcade progress storage", () => {
     expect(loadArcadeProgress(LEVELS, throwingStorage)).toEqual(createInitialArcadeProgress(LEVELS));
     expect(saveArcadeProgress(createInitialArcadeProgress(LEVELS), null)).toBe(false);
     expect(saveArcadeProgress(createInitialArcadeProgress(LEVELS), throwingStorage)).toBe(false);
+  });
+
+  test("normalizes old completed one-star saves back to locked progression", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      ARCADE_PROGRESS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        highestUnlockedLevel: 2,
+        totalStars: 1,
+        levels: {
+          alpha: { attempts: 1, bestScore: 1000, stars: 1, completed: true },
+          bravo: { attempts: 0, bestScore: 0, stars: 0, completed: false },
+          charlie: { attempts: 0, bestScore: 0, stars: 0, completed: false }
+        }
+      })
+    );
+
+    expect(loadArcadeProgress(LEVELS, storage)).toMatchObject({
+      highestUnlockedLevel: 0,
+      levels: {
+        alpha: { stars: 1, completed: false }
+      }
+    });
   });
 });
 

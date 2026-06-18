@@ -100,7 +100,6 @@ const PROJECTILE_BLASTS: Record<ProjectileId, SampleId[]> = {
   slug: ["blastCrunchA", "lowBoomA", "metalHeavyA"],
   scatter: ["blastCrunchB", "plateHeavyA", "plank"],
   pulse: ["blastCrunchC", "forceField", "lowBoomB"],
-  gel: ["blastCrunchB", "plateHeavyB", "lowBoomA"],
   gravity: ["blastCrunchC", "lowBoomA", "bellHeavy"],
   ignite: ["blastCrunchA", "forceField", "lowBoomB"]
 };

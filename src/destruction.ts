@@ -49,7 +49,11 @@ interface BlastRecord {
   energy: number;
 }
 
-const MAX_FRACTURES_PER_EXPLOSION = 46;
+const MAX_FRACTURES_PER_EXPLOSION = 26;
+
+function fractureThresholdFor(material: MaterialDefinition, object: PhysicsObject, scale = 1): number {
+  return material.fractureThreshold * Math.max(0.1, object.fractureResistance ?? 1) * scale;
+}
 
 export class DestructibleObject {
   constructor(readonly object: PhysicsObject) {}
@@ -89,8 +93,8 @@ export class DestructionSystem {
       const volume = Math.max(0.08, object.dimensions.x * object.dimensions.y * object.dimensions.z);
       const energy = (blastStrength * falloff * 2.05) / Math.max(0.5, material.massFactor) + volume * 0.45;
       records.push({ object, material, sample, falloff, energy });
-      const thresholdScale = object.scoreRole === "target" ? 0.86 : 0.92;
-      if (object.destructible && object.canFracture && energy > material.fractureThreshold * thresholdScale) {
+      const thresholdScale = object.scoreRole === "target" ? 1.12 : 1.2;
+      if (object.destructible && object.canFracture && energy > fractureThresholdFor(material, object, thresholdScale)) {
         fractureCandidates.push({ object, energy });
       }
     }
@@ -121,7 +125,7 @@ export class DestructionSystem {
       if (fractured) {
         dustColors.push(material.dustColor);
       }
-      const weightedDamage = Math.round(object.scoreValue * Math.min(1.8, energy / Math.max(1, material.fractureThreshold)));
+      const weightedDamage = Math.round(object.scoreValue * Math.min(1.8, energy / Math.max(1, fractureThresholdFor(material, object))));
       if (object.scoreRole === "target") {
         structureDamage += Math.round(weightedDamage * 1.1);
       } else if (object.category === "structure") {
@@ -165,8 +169,8 @@ export class DestructionSystem {
     const chainBoost = source.chainSource ? (source.isDebris ? 1.32 : 1.08) : 1;
     const impactMass = Math.max(0.35, sourceVolume * sourceMaterial.density * 7.8 * chainBoost);
     const energy = (relativeSpeed * impactMass * Math.max(0.65, sourceMaterial.massFactor)) / Math.max(0.55, targetMaterial.massFactor);
-    const thresholdScale = target.scoreRole === "target" ? 0.82 : 0.88;
-    const energeticFracture = target.destructible && target.canFracture && energy > targetMaterial.fractureThreshold * thresholdScale;
+    const thresholdScale = target.scoreRole === "target" ? 1.08 : 1.16;
+    const energeticFracture = target.destructible && target.canFracture && energy > fractureThresholdFor(targetMaterial, target, thresholdScale);
     const dominoFracture =
       !energeticFracture && this.shouldDominoFracture(source, target, sourceMaterial, targetMaterial, relativeSpeed, energy);
     const fractured = energeticFracture || dominoFracture;
@@ -194,7 +198,7 @@ export class DestructionSystem {
       );
     }
 
-    const weightedDamage = Math.round(target.scoreValue * Math.min(1.6, energy / Math.max(1, targetMaterial.fractureThreshold)));
+    const weightedDamage = Math.round(target.scoreValue * Math.min(1.6, energy / Math.max(1, fractureThresholdFor(targetMaterial, target))));
     let structureDamage = 0;
     let materialChaos = 0;
     if (target.scoreRole === "target") {
@@ -224,7 +228,7 @@ export class DestructionSystem {
       this.fracture(target, origin, Math.max(dominoFracture ? 5.5 : 8, energy * (dominoFracture ? 0.34 : 0.52)), 1.35, energy);
     }
     if (sourceShattered && this.physics.getObject(source.id)) {
-      const sourceWeightedDamage = Math.round(source.scoreValue * Math.min(1.2, energy / Math.max(1, sourceMaterial.fractureThreshold * 1.6)));
+      const sourceWeightedDamage = Math.round(source.scoreValue * Math.min(1.2, energy / Math.max(1, fractureThresholdFor(sourceMaterial, source, 1.6))));
       affectedObjects.push({
         id: source.id,
         label: source.label,
@@ -258,15 +262,15 @@ export class DestructionSystem {
     const material = this.materials.get(source.materialId);
     const sourceVolume = Math.max(0.02, source.dimensions.x * source.dimensions.y * source.dimensions.z);
     const energy = impactSpeed * sourceVolume * material.density * Math.max(0.55, material.massFactor) * (source.isDebris ? 4.8 : 3.9);
-    const thresholdScale = source.isDebris ? 0.74 : 0.92;
+    const thresholdScale = source.isDebris ? 1.06 : 1.32;
     const canFracture = source.destructible && source.canFracture && source.category !== "projectile";
-    const energyRatio = energy / Math.max(1, material.fractureThreshold * thresholdScale);
+    const energyRatio = energy / Math.max(1, fractureThresholdFor(material, source, thresholdScale));
     const breakChance = clamp(
-      -0.16 + energyRatio * 0.46 + Math.max(0, impactSpeed - groundFractureMinSpeed(source)) * 0.085 + materialDominoFragility(material.id) * 0.14,
+      -0.26 + energyRatio * 0.26 + Math.max(0, impactSpeed - groundFractureMinSpeed(source)) * 0.04 + materialDominoFragility(material.id) * 0.05,
       0,
-      source.isDebris ? 0.68 : 0.52
+      source.isDebris ? 0.36 : 0.24
     );
-    const fractured = canFracture && impactSpeed >= groundFractureMinSpeed(source) && energyRatio >= 0.58 && this.rng.next() < breakChance;
+    const fractured = canFracture && impactSpeed >= groundFractureMinSpeed(source) && energyRatio >= 0.95 && this.rng.next() < breakChance;
     const sourcePosition = vectorFromRapier(source.body.translation());
     const weightedDamage = Math.round(source.scoreValue * Math.min(1.35, energyRatio));
 
@@ -485,9 +489,9 @@ export class DestructionSystem {
     if (volume < 0.045 || relativeSpeed < 4.2) {
       return false;
     }
-    const energyRatio = impactEnergy / Math.max(1, material.fractureThreshold * (source.isDebris ? 1.25 : 1.75));
-    const chance = clamp(0.12 + energyRatio * 0.24 + relativeSpeed * 0.012, 0.08, source.isDebris ? 0.58 : 0.42);
-    return energyRatio >= 0.72 && this.rng.next() < chance;
+    const energyRatio = impactEnergy / Math.max(1, fractureThresholdFor(material, source, source.isDebris ? 1.25 : 1.75));
+    const chance = clamp(0.04 + energyRatio * 0.12 + relativeSpeed * 0.005, 0.02, source.isDebris ? 0.3 : 0.2);
+    return energyRatio >= 1.15 && this.rng.next() < chance;
   }
 
   private shouldDominoFracture(
@@ -501,17 +505,17 @@ export class DestructionSystem {
     if (!source.chainSource || !target.destructible || !target.canFracture) {
       return false;
     }
-    if (relativeSpeed < 1.9) {
+    if (relativeSpeed < 3) {
       return false;
     }
 
     const sourceVolume = source.dimensions.x * source.dimensions.y * source.dimensions.z;
     const targetFragility = materialDominoFragility(targetMaterial.id);
     const sourceBite = materialDominoBite(sourceMaterial.id);
-    const speedFactor = clamp((relativeSpeed - 1.6) / 5.2, 0, 1);
+    const speedFactor = clamp((relativeSpeed - 2.5) / 5.4, 0, 1);
     const massFactor = clamp(sourceVolume / 0.075, 0.25, 1.35);
-    const energyFactor = clamp(impactEnergy / Math.max(1, targetMaterial.fractureThreshold), 0, 1);
-    const chance = clamp(0.05 + targetFragility * 0.16 + sourceBite * 0.1 + speedFactor * 0.2 + massFactor * 0.08 + energyFactor * 0.16, 0, 0.48);
+    const energyFactor = clamp(impactEnergy / Math.max(1, fractureThresholdFor(targetMaterial, target)), 0, 1);
+    const chance = clamp(0.015 + targetFragility * 0.08 + sourceBite * 0.05 + speedFactor * 0.11 + massFactor * 0.04 + energyFactor * 0.08, 0, 0.22);
     return this.rng.next() < chance;
   }
 

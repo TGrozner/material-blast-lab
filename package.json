@@ -1,5 +1,5 @@
 {
-  "name": "material-blast-lab",
+  "name": "downtown-mayhem",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "test:unit": "vitest run --config vitest.config.ts",
     "test:smoke": "playwright test --config playwright.config.ts",
     "build": "tsc --noEmit && vite build",
-    "build:pages": "BASE_PATH=/material-blast-lab/ npm run build && npm run harden:dist",
+    "build:pages": "BASE_PATH=/downtown-mayhem/ npm run build && npm run harden:dist",
     "harden:dist": "node scripts/harden-dist.mjs",
     "preview": "vite preview"
   },

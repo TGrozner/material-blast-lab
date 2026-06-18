@@ -4,7 +4,7 @@ import { PhysicsWorld, type PhysicsObject } from "./physics";
 import { type RandomSource, randomRange } from "./random";
 import { materialAtlasTile } from "./visualAssets";
 
-export type ProjectileId = "slug" | "scatter" | "pulse" | "gel" | "gravity" | "ignite";
+export type ProjectileId = "slug" | "scatter" | "pulse" | "gravity" | "ignite";
 
 export interface ProjectileDefinition {
   id: ProjectileId;
@@ -34,93 +34,77 @@ export interface ActiveProjectile {
   piercedObjectIds: Set<number>;
 }
 
-export const PROJECTILE_ORDER: ProjectileId[] = ["slug", "scatter", "pulse", "gel", "gravity", "ignite"];
+export const PROJECTILE_ORDER: ProjectileId[] = ["slug", "scatter", "pulse", "gravity"];
 
 export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
   slug: {
     id: "slug",
     key: "1",
-    name: "Kinetic Slug",
-    shortName: "Slug",
+    name: "Normal Shell",
+    shortName: "Normal",
     color: new THREE.Color(0x9fb7c8),
     materialId: "metal",
-    baseRadius: 0.22,
+    baseRadius: 0.24,
     density: 7.2,
-    speed: 48,
-    impulse: 58,
-    blastRadius: 2.85,
-    fractureBoost: 1.55,
+    speed: 46,
+    impulse: 56,
+    blastRadius: 3.35,
+    fractureBoost: 1.24,
     scoreModifier: 1.05,
-    description: "Long-range penetrator for punching through city structures."
+    description: "Standard cannon shell with a readable medium explosion."
   },
   scatter: {
     id: "scatter",
     key: "2",
-    name: "Scatter Pod",
-    shortName: "Scatter",
+    name: "Fragmentation Cluster",
+    shortName: "Frag",
     color: new THREE.Color(0xffc961),
     materialId: "foam",
     baseRadius: 0.26,
     density: 1.1,
     speed: 40,
-    impulse: 42,
-    blastRadius: 4.1,
-    fractureBoost: 1.22,
+    impulse: 36,
+    blastRadius: 2.75,
+    fractureBoost: 0.82,
     scoreModifier: 1.2,
-    description: "Air-burst pod that scatters hot fragments through a block."
+    description: "Weak first hit that seeds explosive clusters around the impact."
   },
   pulse: {
     id: "pulse",
     key: "3",
-    name: "Pulse Orb",
-    shortName: "Pulse",
+    name: "Impulse Orb",
+    shortName: "Impulse",
     color: new THREE.Color(0x61f4ff),
     materialId: "glass",
     baseRadius: 0.31,
     density: 0.9,
     speed: 35,
-    impulse: 68,
-    blastRadius: 7.1,
-    fractureBoost: 1.24,
+    impulse: 74,
+    blastRadius: 7.8,
+    fractureBoost: 0.72,
     scoreModifier: 1.12,
-    description: "Wide siege shockwave that shoves whole streets at once."
-  },
-  gel: {
-    id: "gel",
-    key: "4",
-    name: "Ripper Burst",
-    shortName: "Ripper",
-    color: new THREE.Color(0xf13d88),
-    materialId: "metal",
-    baseRadius: 0.3,
-    density: 0.8,
-    speed: 36,
-    impulse: 50,
-    blastRadius: 5.45,
-    fractureBoost: 1.52,
-    scoreModifier: 1.35,
-    description: "Heavy rupture shell for opening dense streets and multiplying object breakage."
+    description: "Large pressure radius with low destructive force outside the core."
   },
   gravity: {
     id: "gravity",
-    key: "5",
-    name: "Gravity Hammer",
-    shortName: "Hammer",
+    key: "4",
+    name: "Heavy Penetrator",
+    shortName: "Heavy",
     color: new THREE.Color(0x9c71ff),
     materialId: "metal",
-    baseRadius: 0.42,
+    baseRadius: 0.4,
     density: 9.5,
-    speed: 30,
+    speed: 32,
     impulse: 96,
-    blastRadius: 5.1,
-    fractureBoost: 1.82,
+    blastRadius: 0.8,
+    fractureBoost: 1.35,
     scoreModifier: 1.22,
-    description: "Super-heavy siege hammer with brutal downward authority."
+    description: "Dense penetrator that punches through solid buildings without exploding."
   },
   ignite: {
     id: "ignite",
-    key: "6",
-    name: "Ignition Lance",
+    key: "0",
+    name: "Hazard Ignition",
     shortName: "Ignite",
     color: new THREE.Color(0xff7a35),
     materialId: "rubber",
@@ -131,7 +115,7 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     blastRadius: 4.65,
     fractureBoost: 1.18,
     scoreModifier: 1.18,
-    description: "Fictional ignition charge that starts arcade fire chains and delayed building pops."
+    description: "Internal hazard ignition profile for gas and fire chain reactions."
   }
 };
 
@@ -215,6 +199,12 @@ export class ProjectileSystem {
     this.clearActive();
   }
 
+  releaseActive(): ActiveProjectile | null {
+    const active = this.active;
+    this.active = null;
+    return active;
+  }
+
   private getRenderMaterial(id: ProjectileId): THREE.Material {
     const existing = this.materialsByProjectile.get(id);
     if (existing) {
@@ -242,8 +232,6 @@ function projectileTexture(id: ProjectileId): THREE.Texture {
       return materialAtlasTile(7);
     case "pulse":
       return materialAtlasTile(8);
-    case "gel":
-      return materialAtlasTile(9);
     case "gravity":
       return materialAtlasTile(10);
     case "ignite":

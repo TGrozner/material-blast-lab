@@ -2,10 +2,16 @@ import { describe, expect, test } from "vitest";
 import * as THREE from "three";
 import type { ExplosionAffectedObject, ExplosionResult } from "../../src/destruction";
 import type { PhysicsWorld } from "../../src/physics";
-import { PROJECTILES } from "../../src/projectile";
+import { PROJECTILE_ORDER, PROJECTILES } from "../../src/projectile";
 import { ShotScoreTracker } from "../../src/scoring";
 
 describe("ShotScoreTracker", () => {
+  test("exposes exactly four player projectile choices on keys one through four", () => {
+    expect(PROJECTILE_ORDER).toEqual(["slug", "scatter", "pulse", "gravity"]);
+    expect(PROJECTILE_ORDER.map((id) => PROJECTILES[id].key)).toEqual(["1", "2", "3", "4"]);
+    expect(PROJECTILE_ORDER.map((id) => PROJECTILES[id].shortName)).toEqual(["Normal", "Frag", "Impulse", "Heavy"]);
+  });
+
   test("deduplicates object damage while emitting high-value collateral chaos events", () => {
     const tracker = new ShotScoreTracker();
     tracker.beginShot(PROJECTILES.slug);

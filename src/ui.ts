@@ -5,14 +5,17 @@ import { PROJECTILE_ORDER, PROJECTILES } from "./projectile";
 import type { ScoreBreakdown } from "./scoring";
 import {
   GRAPHICS_QUALITY_LABELS,
+  RENDERER_BACKEND_LABELS,
   type GameSettings,
-  type GraphicsQuality
+  type GraphicsQuality,
+  type RendererBackendPreference
 } from "./settings";
 
 interface UIState {
   projectileId: ProjectileId;
   projectile: ProjectileDefinition;
   shotAvailable: boolean;
+  canFinishRun: boolean;
   bodyCount: number;
   levelName: string;
   levelDescription: string;
@@ -21,6 +24,7 @@ interface UIState {
   mission: ArcadeMissionFields;
   levelIndex: number;
   levelCount: number;
+  levels: UILevelOption[];
   levelProgress: ArcadeLevelProgress;
   totalStars: number;
   arcadeResult: ArcadeResult | null;
@@ -30,22 +34,31 @@ interface UIState {
   score: ScoreBreakdown | null;
 }
 
+interface UILevelOption {
+  index: number;
+  name: string;
+  description: string;
+  objective: string;
+  progress: ArcadeLevelProgress;
+  locked: boolean;
+}
+
 interface UICallbacks {
   fire(): void;
   reset(): void;
   clearDebris(): void;
+  finishRun(): void;
   selectProjectile(id: ProjectileId): void;
+  selectLevel(index: number): boolean;
   nextLevel(): void;
   updateSettings(patch: Partial<GameSettings>): void;
   resetSettings(): void;
 }
 
 type UIScreen = "home" | "settings" | "play";
-type UIMode = "Arcade" | "Free Play";
 
 export class GameUI {
   private readonly root: HTMLDivElement;
-  private readonly modeValue: HTMLSpanElement;
   private readonly projectileValue: HTMLSpanElement;
   private readonly chamberValue: HTMLSpanElement;
   private readonly objectiveValue: HTMLSpanElement;
@@ -55,6 +68,8 @@ export class GameUI {
   private readonly fpsValue: HTMLElement;
   private readonly statusValue: HTMLDivElement;
   private readonly fireButton: HTMLButtonElement;
+  private readonly finishButton: HTMLButtonElement;
+  private readonly finishHint: HTMLDivElement;
   private readonly scorePanel: HTMLDivElement;
   private readonly homeLevelRail: HTMLDivElement;
   private readonly targetScoreValue: HTMLSpanElement;
@@ -71,9 +86,9 @@ export class GameUI {
   private readonly showFpsInput: HTMLInputElement;
   private readonly projectileButtons = new Map<ProjectileId, HTMLButtonElement>();
   private readonly qualityButtons = new Map<GraphicsQuality, HTMLButtonElement>();
+  private readonly rendererBackendButtons = new Map<RendererBackendPreference, HTMLButtonElement>();
 
   private screen: UIScreen = "home";
-  private mode: UIMode = "Arcade";
   private scoreWasVisible = false;
   private renderedScore: ScoreBreakdown | null = null;
   private activeProjectileId: ProjectileId | null = null;
@@ -90,10 +105,10 @@ export class GameUI {
     this.root.innerHTML = `
       <div class="hud__topbar" aria-live="polite">
         <div class="hud__brand">
-          <span class="hud__brand-mark">MBL</span>
+          <span class="hud__brand-mark">DM</span>
           <div>
-            <strong>Material Blast Lab</strong>
-            <span><span data-role="mode">Arcade</span> / Object destruction range</span>
+            <strong>Downtown Mayhem</strong>
+            <span>Object destruction range</span>
           </div>
         </div>
         <div class="hud__telemetry">
@@ -115,7 +130,7 @@ export class GameUI {
         </div>
 
         <div class="hud__goal-grid">
-          <div><span>1-star clear</span><strong data-role="target-score"></strong></div>
+          <div><span>2-star unlock</span><strong data-role="target-score"></strong></div>
           <div><span>Object damage</span><strong data-role="target-damage"></strong></div>
           <div><span>3-star route</span><strong data-role="three-star"></strong></div>
           <div><span>Bonus</span><strong data-role="bonus-goal"></strong></div>
@@ -130,22 +145,22 @@ export class GameUI {
         <button class="hud__fire" type="button">FIRE</button>
 
         <div class="hud__utility">
+          <button type="button" data-action="finish-run" hidden>Score Now</button>
           <button type="button" data-action="reset">Retry</button>
         </div>
+        <div class="hud__finish-hint" data-role="finish-hint" hidden>Done watching? Press F or Enter, or click Score Now.</div>
         <div class="hud__status" data-role="status"></div>
       </section>
 
       <section class="hud__results" data-role="score" aria-live="polite"></section>
 
-      <section class="hud__home" aria-label="Material Blast Lab menu">
+      <section class="hud__home" aria-label="Downtown Mayhem menu">
         <div class="hud__hero">
           <div class="hud__hero-copy">
             <span class="hud__eyebrow">DESTRUCTIBLE OBJECT ARCADE</span>
-            <h1>Material Blast Lab</h1>
-            <p>Pick a destructible city route, choose one fictional sci-fi payload, fire once, then chase a high Mayhem Score through readable object chains.</p>
+            <h1>Downtown Mayhem</h1>
+            <p>Select a district, choose a payload, fire once, then chase a high Mayhem Score.</p>
             <div class="hud__hero-actions">
-              <button type="button" data-action="start-arcade">Arcade</button>
-              <button type="button" data-action="start-free">Free Play</button>
               <button type="button" data-action="settings">Settings</button>
             </div>
           </div>
@@ -169,6 +184,15 @@ export class GameUI {
               <button type="button" data-quality="performance">Performance</button>
               <button type="button" data-quality="balanced">Balanced</button>
               <button type="button" data-quality="cinematic">Cinematic</button>
+            </div>
+          </div>
+
+          <div class="hud__setting-row hud__setting-row--stacked">
+            <span>Renderer</span>
+            <div class="hud__segmented" role="group" aria-label="Renderer backend">
+              <button type="button" data-renderer-backend="auto">Auto</button>
+              <button type="button" data-renderer-backend="webgpu">WebGPU</button>
+              <button type="button" data-renderer-backend="webgl">WebGL</button>
             </div>
           </div>
 
@@ -203,7 +227,6 @@ export class GameUI {
     `;
     document.body.appendChild(this.root);
 
-    this.modeValue = this.requireElement("[data-role='mode']");
     this.projectileValue = this.requireElement("[data-role='projectile']");
     this.chamberValue = this.requireElement("[data-role='chamber']");
     this.objectiveValue = this.requireElement("[data-role='objective']");
@@ -213,6 +236,8 @@ export class GameUI {
     this.fpsValue = this.requireElement("[data-role='fps']");
     this.statusValue = this.requireElement("[data-role='status']");
     this.fireButton = this.requireElement(".hud__fire");
+    this.finishButton = this.requireElement("[data-action='finish-run']");
+    this.finishHint = this.requireElement("[data-role='finish-hint']");
     this.scorePanel = this.requireElement("[data-role='score']");
     this.homeLevelRail = this.requireElement("[data-role='home-levels']");
     this.targetScoreValue = this.requireElement("[data-role='target-score']");
@@ -244,10 +269,9 @@ export class GameUI {
     }
 
     this.fireButton.addEventListener("click", () => this.callbacks.fire());
+    this.finishButton.addEventListener("click", () => this.callbacks.finishRun());
     this.requireElement<HTMLButtonElement>("[data-action='reset']").addEventListener("click", () => this.callbacks.reset());
     this.requireElement<HTMLButtonElement>("[data-action='menu']").addEventListener("click", () => this.showScreen("home"));
-    this.requireElement<HTMLButtonElement>("[data-action='start-arcade']").addEventListener("click", () => this.startMode("Arcade"));
-    this.requireElement<HTMLButtonElement>("[data-action='start-free']").addEventListener("click", () => this.startMode("Free Play"));
     this.requireElement<HTMLButtonElement>("[data-action='settings']").addEventListener("click", () => this.showScreen("settings"));
     this.requireElement<HTMLButtonElement>("[data-action='settings-back']").addEventListener("click", () => this.showScreen("home"));
     this.requireElement<HTMLButtonElement>("[data-action='settings-defaults']").addEventListener("click", () => this.callbacks.resetSettings());
@@ -257,6 +281,13 @@ export class GameUI {
       if (isGraphicsQuality(quality)) {
         this.qualityButtons.set(quality, button);
         button.addEventListener("click", () => this.callbacks.updateSettings({ graphicsQuality: quality }));
+      }
+    }
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-renderer-backend]")) {
+      const rendererBackend = button.dataset.rendererBackend;
+      if (isRendererBackendPreference(rendererBackend)) {
+        this.rendererBackendButtons.set(rendererBackend, button);
+        button.addEventListener("click", () => this.callbacks.updateSettings({ rendererBackend }));
       }
     }
     this.antialiasInput.addEventListener("change", () =>
@@ -276,7 +307,6 @@ export class GameUI {
 
   update(state: UIState): void {
     this.currentState = state;
-    setText(this.modeValue, this.mode);
     setText(this.projectileValue, state.projectile.shortName);
     setTitle(this.projectileValue, state.projectile.name);
     setText(this.chamberValue, state.levelName);
@@ -293,7 +323,7 @@ export class GameUI {
       setText(this.fpsValue, `${state.fps} FPS`);
     }
     setText(this.statusValue, state.status);
-    setText(this.targetScoreValue, `${formatScoreNumber(state.mission.scoreThresholds.oneStar)}+`);
+    setText(this.targetScoreValue, `${formatScoreNumber(state.mission.scoreThresholds.twoStar)}+`);
     setText(this.targetDamageValue, formatScoreNumber(state.mission.targetDamageThreshold));
     setText(this.threeStarValue, `${formatScoreNumber(state.mission.scoreThresholds.threeStar)}+`);
     setText(this.bonusGoalValue, bonusSummary(state.mission));
@@ -301,6 +331,16 @@ export class GameUI {
     const blocked = this.isGameplayBlocked();
     if (this.fireButton.disabled !== (!state.shotAvailable || blocked)) {
       this.fireButton.disabled = !state.shotAvailable || blocked;
+    }
+    const finishHidden = !state.canFinishRun || Boolean(state.score);
+    if (this.finishButton.hidden !== finishHidden) {
+      this.finishButton.hidden = finishHidden;
+    }
+    if (this.finishHint.hidden !== finishHidden) {
+      this.finishHint.hidden = finishHidden;
+    }
+    if (this.finishButton.disabled !== (finishHidden || blocked)) {
+      this.finishButton.disabled = finishHidden || blocked;
     }
 
     if (this.activeProjectileId !== state.projectileId) {
@@ -348,13 +388,18 @@ export class GameUI {
     return this.screen !== "play";
   }
 
+  showPlayScreen(): void {
+    this.showScreen("play");
+  }
+
   dispose(): void {
     this.root.remove();
   }
 
-  private startMode(mode: UIMode): void {
-    this.mode = mode;
-    this.showScreen("play");
+  private startLevel(levelIndex: number): void {
+    if (this.callbacks.selectLevel(levelIndex)) {
+      this.showScreen("play");
+    }
   }
 
   private showScreen(screen: UIScreen): void {
@@ -366,27 +411,27 @@ export class GameUI {
   }
 
   private renderHomeLevels(state: UIState): void {
-    const progress = state.levelProgress;
-    const html = `
-      <button type="button" class="hud__level-card is-current" data-action="start-arcade">
-        <span>${String(state.levelIndex + 1).padStart(2, "0")} / ACTIVE / ${state.totalStars} TOTAL STARS</span>
-        <strong>${escapeHtml(state.levelName)}</strong>
-        <em>${starText(progress.stars)} / best ${progress.bestScore} / attempts ${progress.attempts}</em>
-      </button>
-      <button type="button" class="hud__level-card is-locked" disabled>
-        <span>${String(Math.min(state.levelIndex + 2, state.levelCount)).padStart(2, "0")} / CAMPAIGN</span>
-        <strong>${state.levelIndex + 1 < state.levelCount ? "Next unlocked mission" : "Campaign loop"}</strong>
-        <em>${state.levelIndex + 1 < state.levelCount ? "Complete the current run" : "Replay for a higher Mayhem Score"}</em>
-      </button>
-      <button type="button" class="hud__level-card is-locked" disabled>
-        <span>FREE PLAY</span>
-        <strong>Payload practice</strong>
-        <em>Replay the current route for cleaner chains</em>
-      </button>
-    `;
+    const html = state.levels
+      .map((level) => {
+        const active = level.index === state.levelIndex;
+        const locked = level.locked;
+        const progressText = locked
+          ? "LOCKED / get 2 stars on previous level"
+          : `${active ? "ACTIVE" : "LEVEL"} / ${starText(level.progress.stars)}`;
+        return `
+          <button type="button" class="hud__level-card${active ? " is-current" : ""}${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${level.index}" ${locked ? "disabled" : ""}>
+            <span>${String(level.index + 1).padStart(2, "0")} / ${progressText}</span>
+            <strong>${escapeHtml(level.name)}</strong>
+            <em>${escapeHtml(level.objective)}</em>
+          </button>
+        `;
+      })
+      .join("");
     if (this.homeLevelRail.innerHTML !== html) {
       this.homeLevelRail.innerHTML = html;
-      this.homeLevelRail.querySelector<HTMLButtonElement>("[data-action='start-arcade']")?.addEventListener("click", () => this.startMode("Arcade"));
+      for (const button of this.homeLevelRail.querySelectorAll<HTMLButtonElement>("[data-action='start-arcade']")) {
+        button.addEventListener("click", () => this.startLevel(Number(button.dataset.levelIndex ?? 0)));
+      }
     }
   }
 
@@ -396,11 +441,16 @@ export class GameUI {
     this.root.dataset.quality = settings.graphicsQuality;
     setText(
       this.settingsSummaryValue,
-      `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]} / AA ${settings.antialias ? "on" : "off"} / ${volume}% volume / ${shake}% shake`
+      `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]} / ${RENDERER_BACKEND_LABELS[settings.rendererBackend]} renderer / AA ${settings.antialias ? "on" : "off"} / ${volume}% volume / ${shake}% shake`
     );
 
     for (const [quality, button] of this.qualityButtons) {
       const active = quality === settings.graphicsQuality;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+    for (const [rendererBackend, button] of this.rendererBackendButtons) {
+      const active = rendererBackend === settings.rendererBackend;
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", String(active));
     }
@@ -429,21 +479,26 @@ export class GameUI {
 }
 
 function homeRenderKey(state: UIState): string {
-  const progress = state.levelProgress;
   return [
     state.levelIndex,
     state.levelCount,
     state.totalStars,
-    state.levelName,
-    progress.stars,
-    progress.bestScore,
-    progress.attempts
+    ...state.levels.flatMap((level) => [
+      level.index,
+      level.name,
+      level.objective,
+      Number(level.locked),
+      level.progress.stars,
+      level.progress.bestScore,
+      level.progress.attempts
+    ])
   ].join("|");
 }
 
 function settingsRenderKey(settings: GameSettings): string {
   return [
     settings.graphicsQuality,
+    settings.rendererBackend,
     Number(settings.antialias),
     settings.masterVolume.toFixed(3),
     settings.cameraShake.toFixed(3),
@@ -463,7 +518,7 @@ function renderScore(state: UIState): string {
   }
   const result = state.arcadeResult;
   const stars = result?.stars ?? 0;
-  const resultLabel = result?.completed ? (stars >= 3 ? "Maximum Mayhem" : "Mayhem Complete") : "Mayhem Failed";
+  const resultLabel = result?.completed ? (stars >= 3 ? "Maximum Mayhem" : "Mayhem Complete") : "Needs 2 Stars";
   const bonusValue = bonusMetricValue(score, state.mission.bonusThreshold.metric);
   const goals = [
     {
@@ -472,12 +527,12 @@ function renderScore(state: UIState): string {
       passed: score.targetDamage >= state.mission.targetDamageThreshold
     },
     {
-      label: "1-star clear",
+      label: "1-star score",
       value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.oneStar)}`,
       passed: score.totalScore >= state.mission.scoreThresholds.oneStar
     },
     {
-      label: "2-star route",
+      label: "2-star unlock",
       value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.twoStar)}`,
       passed: score.totalScore >= state.mission.scoreThresholds.twoStar
     },
@@ -582,6 +637,10 @@ function setRangeValue(input: HTMLInputElement, value: number): void {
 
 function isGraphicsQuality(value: string | undefined): value is GraphicsQuality {
   return value === "performance" || value === "balanced" || value === "cinematic";
+}
+
+function isRendererBackendPreference(value: string | undefined): value is RendererBackendPreference {
+  return value === "auto" || value === "webgpu" || value === "webgl";
 }
 
 function setText(element: HTMLElement, value: string): void {
@@ -907,7 +966,7 @@ function installStyles(): void {
 
     .hud__projectiles {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 7px;
       min-width: 0;
     }
@@ -972,7 +1031,6 @@ function installStyles(): void {
     }
 
     .hud__fire,
-    .hud__hero-actions button:first-child,
     .hud__result-actions button:last-child {
       color: #051016;
       background: linear-gradient(180deg, #92f2ff, #55d4f1);
@@ -1002,6 +1060,14 @@ function installStyles(): void {
       min-width: 0;
     }
 
+    .hud__utility {
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    }
+
+    .hud__hero-actions {
+      grid-template-columns: minmax(0, 160px);
+    }
+
     .hud__utility button,
     .hud__result-actions button,
     .hud__hero-actions button {
@@ -1010,6 +1076,15 @@ function installStyles(): void {
       padding: 0 8px;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .hud__finish-hint {
+      min-height: 14px;
+      color: #bfe9f2;
+      font-size: 10px;
+      line-height: 1.25;
+      text-align: left;
+      opacity: 0.82;
     }
 
     .hud__status {
@@ -1399,11 +1474,7 @@ function installStyles(): void {
       }
 
       .hud__hero-actions {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .hud__hero-actions button:last-child {
-        grid-column: 1 / -1;
+        grid-template-columns: minmax(0, 150px);
       }
 
       .hud__level-path {
@@ -1503,7 +1574,7 @@ function installStyles(): void {
       }
 
       .hud__projectiles {
-        grid-template-columns: repeat(6, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 4px;
       }
 
@@ -1541,6 +1612,11 @@ function installStyles(): void {
       .hud__result-actions button {
         min-height: 40px;
         font-size: 10px;
+      }
+
+      .hud__finish-hint {
+        font-size: 9px;
+        line-height: 1.15;
       }
 
       .hud__loadout-head {

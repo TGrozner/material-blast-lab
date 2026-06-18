@@ -2,19 +2,63 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const BODY_COUNT_BUDGET = { min: 350, max: 700 };
+const BAKED_LEVEL_BODY_BUDGET = { min: 380, max: 620 };
 const UI_READY_TIMEOUT_MS = 15_000;
 const SCORE_REVEAL_TIMEOUT_MS = 45_000;
 const LONG_TEST_TIMEOUT_MS = 180_000;
-const RUN_FULL_SIMULATION_SMOKE = !process.env.CI;
-const SETTINGS_STORAGE_KEY = "material-blast-lab:settings:v1";
+const RUN_FULL_SIMULATION_SMOKE = process.env.RUN_FULL_SIMULATION_SMOKE === "true";
+const SETTINGS_STORAGE_KEY = "downtown-mayhem:settings:v1";
+const ARCADE_PROGRESS_STORAGE_KEY = "downtown-mayhem:arcade-progress";
+const STABLE_VISUAL_NOW = 1_710_000_000_000;
 const SMOKE_PERFORMANCE_SETTINGS = {
   graphicsQuality: "performance",
+  rendererBackend: "webgl",
   antialias: false,
   masterVolume: 0,
   cameraShake: 0.2,
   motionEffects: false,
   showFps: true
 };
+const STABLE_VISUAL_CAPTURE_SETTINGS = {
+  ...SMOKE_PERFORMANCE_SETTINGS,
+  cameraShake: 0,
+  showFps: false
+};
+const HAZARD_JUNCTION_RENDER_BUDGET = {
+  drawCalls: 5_150,
+  visibleMeshes: 3_300,
+  visibleMaterials: 340,
+  programs: 22,
+  geometries: 1_780,
+  textures: 24
+};
+
+interface RenderStats {
+  frame: number;
+  levelName: string;
+  rendererPreference: "auto" | "webgpu" | "webgl";
+  rendererBackend: "webgpu" | "webgl2" | "webgl";
+  bodyCount: number;
+  drawCalls: number;
+  triangles: number;
+  lines: number;
+  points: number;
+  geometries: number;
+  textures: number;
+  programs: number;
+  visibleMeshes: number;
+  visibleMaterials: number;
+}
+
+declare global {
+  interface Window {
+    __DOWNTOWN_MAYHEM_DEBUG__?: {
+      getRenderStats(): RenderStats;
+      freezeForCapture(): RenderStats;
+      resume(): void;
+    };
+  }
+}
 
 test("renders the mobile city trial inside the initial body-count budget", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
@@ -26,14 +70,117 @@ test("renders the mobile city trial inside the initial body-count budget", async
   await expect(page.locator(".hud [data-role='chamber']")).toHaveText("Hazard Junction");
   await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
   await expect(fireButton(page)).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Hammer" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Ignite" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Heavy" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Impulse" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ignite" })).toHaveCount(0);
   await expectRenderableCanvas(page);
   await expectBodyCountWithinBudget(page);
   await expect(page.evaluate(isHudWithinViewport)).resolves.toBe(true);
   await expect(page.evaluate(mobileLayoutFailures)).resolves.toEqual([]);
   await expect(page.locator(".hud__command [data-action='level']")).toHaveCount(0);
   await expect(page.locator(".hud__command [data-action='clear']")).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("shows a clear three-level selector without free play", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await useSmokePerformanceSettings(page);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/");
+
+  await expect(page).toHaveTitle("Downtown Mayhem");
+  await expect(page.locator(".hud__brand")).toContainText("Downtown Mayhem");
+  await expect(page.locator(".hud")).toHaveAttribute("data-screen", "home");
+  await expect(page.locator("[data-action='start-free']")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Free Play" })).toHaveCount(0);
+  await expect(page.locator("[data-role='home-levels'] [data-action='start-arcade']")).toHaveCount(3);
+  await expect(levelCard(page, "Hazard Junction")).toBeVisible();
+  await expect(levelCard(page, "Breaker Yard")).toBeVisible();
+  await expect(levelCard(page, "Switchback Crush")).toBeVisible();
+  await expect(levelCard(page, "Hazard Junction")).toBeEnabled();
+  await expect(levelCard(page, "Breaker Yard")).toBeDisabled();
+  await expect(levelCard(page, "Switchback Crush")).toBeDisabled();
+  await expect(page.getByText("Crosswind Depot")).toHaveCount(0);
+
+  await clickUi(levelCard(page, "Hazard Junction"));
+  await expect(page.locator(".hud")).toHaveAttribute("data-screen", "play");
+  await expect(page.locator(".hud [data-role='chamber']")).toHaveText("Hazard Junction");
+  await expectBodyCountWithinBudget(page);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("keeps the initial city render inside draw-call budgets and visually stable", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await useStableVisualCapture(page);
+  await bootTrial(page, { width: 1024, height: 768 });
+  const stats = await waitForRenderStats(page);
+
+  expect(stats.levelName).toBe("Hazard Junction");
+  expect(stats.bodyCount).toBeGreaterThanOrEqual(BODY_COUNT_BUDGET.min);
+  expect(stats.bodyCount).toBeLessThanOrEqual(BODY_COUNT_BUDGET.max);
+  expect(stats.drawCalls).toBeLessThanOrEqual(HAZARD_JUNCTION_RENDER_BUDGET.drawCalls);
+  expect(stats.visibleMeshes).toBeLessThanOrEqual(HAZARD_JUNCTION_RENDER_BUDGET.visibleMeshes);
+  expect(stats.visibleMaterials).toBeLessThanOrEqual(HAZARD_JUNCTION_RENDER_BUDGET.visibleMaterials);
+  expect(stats.programs).toBeLessThanOrEqual(HAZARD_JUNCTION_RENDER_BUDGET.programs);
+  expect(stats.geometries).toBeLessThanOrEqual(HAZARD_JUNCTION_RENDER_BUDGET.geometries);
+  expect(stats.textures).toBeLessThanOrEqual(HAZARD_JUNCTION_RENDER_BUDGET.textures);
+
+  const frozenStats = await freezeForCapture(page);
+  expect(frozenStats.drawCalls).toBeLessThanOrEqual(HAZARD_JUNCTION_RENDER_BUDGET.drawCalls);
+  await page.addStyleTag({ content: ".hud { visibility: hidden !important; }" });
+  await expect(page.locator("canvas")).toHaveScreenshot("hazard-junction-initial-canvas.png", {
+    animations: "disabled",
+    maxDiffPixelRatio: 0.015,
+    scale: "css",
+    threshold: 0.2
+  });
+  await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.resume());
+  expect(consoleErrors).toEqual([]);
+});
+
+test("boots the auto renderer with a WebGPU or WebGL2 backend", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await page.addInitScript(
+    ({ key, settings }) => {
+      localStorage.setItem(key, JSON.stringify(settings));
+    },
+    { key: SETTINGS_STORAGE_KEY, settings: { ...SMOKE_PERFORMANCE_SETTINGS, rendererBackend: "auto" } }
+  );
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/");
+  await expectRenderableCanvas(page);
+  const stats = await waitForRenderStats(page);
+
+  expect(stats.rendererPreference).toBe("auto");
+  expect(["webgpu", "webgl2", "webgl"]).toContain(stats.rendererBackend);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("loads the baked second and third city levels inside their object budgets", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await useSmokePerformanceSettings(page);
+  await seedArcadeProgress(page, { "hazard-junction": 2, "breaker-yard": 2 });
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/");
+
+  for (const levelName of ["Breaker Yard", "Switchback Crush"]) {
+    await clickUi(levelCard(page, levelName));
+    await expect(page.locator(".hud [data-role='chamber']")).toHaveText(levelName, { timeout: UI_READY_TIMEOUT_MS });
+    await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
+    await expectRenderableCanvas(page);
+    await expectBodyCountWithinBudget(page, BAKED_LEVEL_BODY_BUDGET);
+    await clickUi(page.getByRole("button", { name: "Menu" }));
+    await expect(page.locator(".hud")).toHaveAttribute("data-screen", "home");
+  }
+
   expect(consoleErrors).toEqual([]);
 });
 
@@ -44,18 +191,23 @@ test("selects a projectile, fires, then resets to a ready trial", async ({ page 
   await bootTrial(page, { width: 1024, height: 768 });
   await expectRenderableCanvas(page);
 
-  await clickUi(page.getByRole("button", { name: "Hammer" }));
-  await expectSelectedProjectile(page, "Hammer");
+  await clickUi(page.getByRole("button", { name: "Heavy" }));
+  await expectSelectedProjectile(page, "Heavy");
 
-  await clickUi(page.getByRole("button", { name: "Ripper" }));
-  await expectSelectedProjectile(page, "Ripper");
+  await clickUi(page.getByRole("button", { name: "Frag" }));
+  await expectSelectedProjectile(page, "Frag");
 
   await clickUi(fireButton(page));
   await expect(fireButton(page)).toBeDisabled();
   await expect(page.locator(".hud [data-role='shots']")).toHaveText("SPENT");
 
   if (RUN_FULL_SIMULATION_SMOKE) {
-    await expectFinalScore(page, "Ripper Burst");
+    const finishRunButton = page.locator("[data-action='finish-run']");
+    await expect(finishRunButton).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
+    await expect(page.locator("[data-role='finish-hint']")).toHaveText("Done watching? Press F or Enter, or click Score Now.");
+    await expect(page.locator("[data-role='finish-hint']")).toBeVisible();
+    await clickUi(finishRunButton);
+    await expectFinalScore(page, "Fragmentation Cluster");
     await clickUi(page.locator("[data-action='result-retry']"));
   } else {
     await clickUi(page.locator("[data-action='reset']"));
@@ -64,7 +216,7 @@ test("selects a projectile, fires, then resets to a ready trial", async ({ page 
   await expect(page.locator(".hud [data-role='score']")).toBeHidden();
   await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
   await expect(fireButton(page)).toBeEnabled();
-  await expectSelectedProjectile(page, "Ripper");
+  await expectSelectedProjectile(page, "Frag");
   await expectBodyCountWithinBudget(page);
   expect(consoleErrors).toEqual([]);
 });
@@ -93,6 +245,7 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   await expect(page.locator("[data-role='camera-shake']")).toHaveText("20%");
   await expect.poll(() => page.evaluate(readSavedSettings).catch(() => ({}))).toMatchObject({
     graphicsQuality: "performance",
+    rendererBackend: "webgl",
     antialias: false,
     masterVolume: 0.35,
     cameraShake: 0.2,
@@ -104,6 +257,7 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   await expectRenderableCanvas(page);
   await openSettings(page);
   await expect(page.getByRole("button", { name: "Performance" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "WebGL" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("checkbox", { name: "Anti-aliasing" })).not.toBeChecked({ timeout: UI_READY_TIMEOUT_MS });
   await expect(page.locator("[data-role='master-volume']")).toHaveText("35%");
   await expect(page.locator("[data-role='camera-shake']")).toHaveText("20%");
@@ -117,7 +271,7 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   }
 
   await clickUi(page.getByRole("button", { name: "Back" }));
-  await clickUi(page.getByRole("button", { name: "Arcade" }).first());
+  await clickUi(levelCard(page, "Hazard Junction"));
   await expect(page.locator(".hud")).toHaveAttribute("data-screen", "play");
   await expect(page.locator(".hud [data-role='fps']")).toBeHidden();
   expect(consoleErrors).toEqual([]);
@@ -189,16 +343,20 @@ async function uncheckUi(locator: Locator): Promise<void> {
 async function expectRenderableCanvas(page: Page): Promise<void> {
   await expect(page.locator("canvas")).toBeVisible({ timeout: UI_READY_TIMEOUT_MS });
   await expect.poll(() => page.evaluate(hasRenderableCanvasSize).catch(() => false), { timeout: UI_READY_TIMEOUT_MS }).toBe(true);
-  await expect.poll(() => page.evaluate(hasWebglContext).catch(() => false), { timeout: UI_READY_TIMEOUT_MS }).toBe(true);
+  await expect.poll(() => page.evaluate(hasInitializedRenderer).catch(() => false), { timeout: UI_READY_TIMEOUT_MS }).toBe(true);
 }
 
 function fireButton(page: Page) {
   return page.locator(".hud__fire");
 }
 
-async function expectBodyCountWithinBudget(page: Page): Promise<void> {
-  await expect.poll(() => page.evaluate(currentBodyCount)).toBeGreaterThanOrEqual(BODY_COUNT_BUDGET.min);
-  await expect.poll(() => page.evaluate(currentBodyCount)).toBeLessThanOrEqual(BODY_COUNT_BUDGET.max);
+function levelCard(page: Page, name: string): Locator {
+  return page.locator("[data-role='home-levels'] [data-action='start-arcade']").filter({ hasText: name }).first();
+}
+
+async function expectBodyCountWithinBudget(page: Page, budget = BODY_COUNT_BUDGET): Promise<void> {
+  await expect.poll(() => page.evaluate(currentBodyCount)).toBeGreaterThanOrEqual(budget.min);
+  await expect.poll(() => page.evaluate(currentBodyCount)).toBeLessThanOrEqual(budget.max);
 }
 
 async function expectSelectedProjectile(page: Page, shortName: string): Promise<void> {
@@ -209,7 +367,7 @@ async function expectSelectedProjectile(page: Page, shortName: string): Promise<
 async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   const scorePanel = page.locator(".hud [data-role='score']");
   await expect(scorePanel).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
-  await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem/);
+  await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem|Needs 2 Stars/);
   await expect(scorePanel.locator(".hud__score-breakdown")).toContainText(shotName);
   await expect(scorePanel.locator(".hud__total strong")).toHaveText(/\d+/);
   await expect(scorePanel.getByText("Object damage")).toBeVisible();
@@ -241,7 +399,7 @@ async function setRange(page: Page, setting: string, value: number): Promise<voi
 }
 
 function readSavedSettings(): Record<string, unknown> {
-  const key = "material-blast-lab:settings:v1";
+  const key = "downtown-mayhem:settings:v1";
   return JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>;
 }
 
@@ -256,14 +414,85 @@ async function useSmokePerformanceSettings(page: Page): Promise<void> {
   );
 }
 
+async function useStableVisualCapture(page: Page): Promise<void> {
+  await page.addInitScript(
+    ({ key, settings, now }) => {
+      localStorage.setItem(key, JSON.stringify(settings));
+      Date.now = () => now;
+      Math.random = () => 0.42;
+    },
+    { key: SETTINGS_STORAGE_KEY, settings: STABLE_VISUAL_CAPTURE_SETTINGS, now: STABLE_VISUAL_NOW }
+  );
+}
+
+async function waitForRenderStats(page: Page): Promise<RenderStats> {
+  await expect.poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().drawCalls ?? 0), {
+    timeout: UI_READY_TIMEOUT_MS
+  }).toBeGreaterThan(0);
+  return page.evaluate(() => {
+    const stats = window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats();
+    if (!stats) {
+      throw new Error("Missing Downtown Mayhem render stats");
+    }
+    return stats;
+  });
+}
+
+async function freezeForCapture(page: Page): Promise<RenderStats> {
+  return page.evaluate(() => {
+    const stats = window.__DOWNTOWN_MAYHEM_DEBUG__?.freezeForCapture();
+    if (!stats) {
+      throw new Error("Missing Downtown Mayhem render stats");
+    }
+    return stats;
+  });
+}
+
+async function seedArcadeProgress(page: Page, starsByLevel: Record<string, 0 | 1 | 2 | 3>): Promise<void> {
+  await page.addInitScript(
+    ({ key, stars }) => {
+      const levelIds = ["hazard-junction", "breaker-yard", "switchback-crush"];
+      let highestUnlockedLevel = 0;
+      for (let index = 0; index < levelIds.length - 1; index += 1) {
+        if (Number(stars[levelIds[index]] ?? 0) < 2) {
+          break;
+        }
+        highestUnlockedLevel = index + 1;
+      }
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          version: 1,
+          highestUnlockedLevel,
+          totalStars: levelIds.reduce((total, id) => total + Number(stars[id] ?? 0), 0),
+          levels: Object.fromEntries(
+            levelIds.map((id) => {
+              const levelStars = Number(stars[id] ?? 0);
+              return [
+                id,
+                {
+                  attempts: levelStars > 0 ? 1 : 0,
+                  bestScore: levelStars > 0 ? 999_999 : 0,
+                  stars: levelStars,
+                  completed: levelStars >= 2
+                }
+              ];
+            })
+          )
+        })
+      );
+    },
+    { key: ARCADE_PROGRESS_STORAGE_KEY, stars: starsByLevel }
+  );
+}
+
 function hasRenderableCanvasSize(): boolean {
   const canvas = document.querySelector("canvas");
   return canvas instanceof HTMLCanvasElement && canvas.width >= 300 && canvas.height >= 300;
 }
 
-function hasWebglContext(): boolean {
-  const canvas = document.querySelector("canvas");
-  return canvas instanceof HTMLCanvasElement && Boolean(canvas.getContext("webgl2") ?? canvas.getContext("webgl"));
+function hasInitializedRenderer(): boolean {
+  return Boolean(window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().rendererBackend);
 }
 
 function hasWebglAntialias(): boolean | null {

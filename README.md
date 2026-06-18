@@ -1,6 +1,6 @@
-# Material Blast Lab
+# Downtown Mayhem
 
-Material Blast Lab is a compact browser arcade physics toy built with Vite, TypeScript, Three.js, and Rapier3D. The current prototype mode is **Cannon Trial**: choose one fictional sci-fi projectile, aim from behind a city siege cannon, fire once, then watch the destructible city fracture into debris, vehicle wrecks, chain reactions, camera shake, slow motion, and a Mayhem Score.
+Downtown Mayhem is a compact browser arcade physics toy built with Vite, TypeScript, Three.js, and Rapier3D. The current prototype mode is **Cannon Trial**: choose one fictional sci-fi projectile, aim from behind a city siege cannon, fire once, then watch the destructible city fracture into debris, vehicle wrecks, chain reactions, camera shake, slow motion, and a Mayhem Score.
 
 This is not a realistic explosive simulator and does not model real devices or weapons tactics. The game is a fictional arcade object-destruction toy focused on readable chains and score mastery.
 
@@ -60,26 +60,23 @@ DIST_DIR="$AUDIT_DIST" npm run harden:dist
 
 - Mouse move: aim the cannon
 - Left click / Space: fire the one available shot
-- 1-6: choose projectile
+- 1-4: choose projectile
 - R: reset the current chamber
 - C: clear dynamic debris
 - Tab: switch test chamber
 
 ## Projectiles
 
-- Kinetic Slug: fast, heavy, tight impact damage
-- Scatter Pod: fragments into small physical shards on impact
-- Pulse Orb: broad shockwave that pushes the chamber
-- Ripper Burst: rupture shell for opening dense streets and multiplying object breakage
-- Gravity Hammer: slower heavy local smash
-- Ignition Lance: delayed fire starter for chain reactions and building pops
+- Normal Shell: standard cannon shell with a readable medium explosion
+- Fragmentation Cluster: weaker first hit that seeds explosive clusters around impact
+- Impulse Orb: broad pressure radius with limited destructive force outside the core
+- Heavy Penetrator: direct-impact round that punches through solid buildings without exploding
 
 ## Chambers
 
 - Hazard Junction: dense city block with a central hazard core, transformer relays, moving vehicles, cargo, and power lines
-- Breaker Yard: short direct-damage yard with fragile relay booths and loose cargo
-- Switchback Crush: compact side-chain lane around a glass depot, archive pods, service crates, and relays
-- Crosswind Depot: crosswind depot route with volatile side pods and market debris
+- Breaker Yard: full breaker district with a concrete spine, transformer yards, relay towers, fuel traffic, and dense blocks
+- Switchback Crush: full glass-and-foam district with archive towers, baffles, service traffic, and redirect paths
 
 ## Score
 
@@ -110,10 +107,10 @@ The score appears after the shot settles for a few seconds. Mayhem Score is the 
 
 GitHub Actions runs `npm ci`, `npm test`, and `npm run build:pages` on pushes and pull requests targeting `main`, so CI validates fast unit/browser behavior plus the same minified, split, and obfuscated artifact shape used by deployment.
 
-GitHub Pages deployment runs on pushes to `main` and from manual workflow dispatch. The deploy workflow builds the Vite app with `BASE_PATH=/material-blast-lab/`, splits application and vendor chunks, obfuscates the first-party application chunk, uploads `dist`, and deploys it through the `github-pages` environment.
+GitHub Pages deployment runs on pushes to `main` and from manual workflow dispatch. The deploy workflow builds the Vite app with `BASE_PATH=/downtown-mayhem/`, splits application and vendor chunks, obfuscates the first-party application chunk, uploads `dist`, and deploys it through the `github-pages` environment.
 
 Published site:
 
 ```text
-https://tgrozner.github.io/material-blast-lab/
+https://tgrozner.github.io/downtown-mayhem/
 ```

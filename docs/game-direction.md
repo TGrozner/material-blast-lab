@@ -8,7 +8,7 @@ requirement to copy that game wholesale.
 
 ## North Star
 
-Material Blast Lab should become a compact one-shot arcade physics game:
+Downtown Mayhem should become a compact one-shot arcade physics game:
 pick a mission, choose a fictional sci-fi projectile/loadout, fire once, watch
 a satisfying destruction chain, then get a clear result that makes retrying or
 moving to the next mission feel natural.
@@ -31,8 +31,8 @@ Deadly Dispatch is sticky because it wraps each action in a complete game loop:
 The important transferable patterns are:
 
 - A playable-looking animated scene behind the first screen.
-- A small number of clear entry points: Arcade, Free Play, Settings.
-- Future content visible early through level lists, locks, stars, and current
+- A small number of clear entry points: three level cards and Settings.
+- Future content visible early through level lists, stars, and current
   mission state.
 - One default viable loadout so the first run is fast.
 - Knobs that create mastery after the first run, not before it.
@@ -45,7 +45,7 @@ The important transferable patterns are:
 
 ## What We Should Not Copy
 
-Material Blast Lab should keep its own fiction and safety boundary:
+Downtown Mayhem should keep its own fiction and safety boundary:
 
 - Do not pivot into real-world weapons, real explosive tactics, or realistic
   victim simulation.
@@ -74,8 +74,9 @@ The main mode should become Arcade:
    and unlock/next-level state.
 7. **Retry Or Next**: make either action a single click/key press.
 
-Free Play should remain the sandbox: all unlocked levels, projectiles, and
-settings available without campaign pressure.
+The menu should stay as a direct three-level selector with settings one click
+away. A separate Free Play mode is intentionally out unless it gains genuinely
+different rules.
 
 ## Progression Model
 
@@ -142,7 +143,7 @@ Suggested initial level arc:
 Highest priority:
 
 - Replace pure sandbox startup with a title/menu that shows the live scene.
-- Add Arcade and Free Play mode split.
+- Keep the three-level selector readable.
 - Add persistent level stars/best scores.
 - Add a results ceremony with animated score and stars.
 - Add a compact level-select path.
@@ -182,13 +183,13 @@ As of this note, the project already has a strong short loop:
 
 - phase machine: aim, flight, spectacle, scored
 - one-shot cannon firing
-- five projectile types
+- four projectile types
 - chain triggers
 - volatile hazard chains
 - score popups
 - delayed score reveal
 - four active object-destruction city levels with per-level cannon placement
-- six projectile types, including Ignite for delayed fire chains
+- four projectile types: Normal, Fragmentation, Impulse, and Heavy
 
 The missing layer is not more raw destruction. The missing layer is structure:
 Arcade progression, persistent results, objective thresholds, and a stronger
