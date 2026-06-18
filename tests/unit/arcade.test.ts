@@ -17,11 +17,8 @@ const LEVELS: ArcadeLevelDefinition[] = [
     title: "Alpha",
     thresholds: {
       missionScore: 1000,
-      missionMaxProtectedPenalty: 300,
       twoStarScore: 1500,
-      twoStarMaxProtectedPenalty: 150,
       threeStarScore: 2000,
-      threeStarMaxProtectedPenalty: 75,
       threeStarBonus: { metric: "chainReactionCount", minimum: 3 }
     }
   },
@@ -30,11 +27,8 @@ const LEVELS: ArcadeLevelDefinition[] = [
     title: "Bravo",
     thresholds: {
       missionScore: 1200,
-      missionMaxProtectedPenalty: 250,
       twoStarScore: 1700,
-      twoStarMaxProtectedPenalty: 100,
       threeStarScore: 2300,
-      threeStarMaxProtectedPenalty: 40,
       threeStarBonus: { metric: "targetDamage", minimum: 900 }
     }
   },
@@ -43,25 +37,22 @@ const LEVELS: ArcadeLevelDefinition[] = [
     title: "Charlie",
     thresholds: {
       missionScore: 1400,
-      missionMaxProtectedPenalty: 240,
       twoStarScore: 1900,
-      twoStarMaxProtectedPenalty: 120,
       threeStarScore: 2600,
-      threeStarMaxProtectedPenalty: 50
     }
   }
 ];
 
 describe("Arcade result evaluation", () => {
-  test("assigns 0, 1, 2, and 3 stars from score, protected penalty, and bonus thresholds", () => {
-    expect(evaluateArcadeResult(LEVELS[0], score({ totalScore: 999, protectedPenalty: 0 })).stars).toBe(0);
-    expect(evaluateArcadeResult(LEVELS[0], score({ totalScore: 1000, protectedPenalty: 300 })).stars).toBe(1);
-    expect(evaluateArcadeResult(LEVELS[0], score({ totalScore: 1500, protectedPenalty: 150 })).stars).toBe(2);
+  test("assigns 0, 1, 2, and 3 stars from score and bonus thresholds", () => {
+    expect(evaluateArcadeResult(LEVELS[0], score({ totalScore: 999 })).stars).toBe(0);
+    expect(evaluateArcadeResult(LEVELS[0], score({ totalScore: 1000 })).stars).toBe(1);
+    expect(evaluateArcadeResult(LEVELS[0], score({ totalScore: 1500 })).stars).toBe(2);
 
     expect(
       evaluateArcadeResult(
         LEVELS[0],
-        score({ totalScore: 2000, protectedPenalty: 75, chainReactionCount: 3 })
+        score({ totalScore: 2000, chainReactionCount: 3 })
       )
     ).toMatchObject({
       completed: true,
@@ -70,22 +61,22 @@ describe("Arcade result evaluation", () => {
     });
   });
 
-  test("protected penalty can fail a high-scoring run or block higher stars", () => {
+  test("bonus gates the third star without blocking lower stars", () => {
     expect(
-      evaluateArcadeResult(LEVELS[0], score({ totalScore: 5000, protectedPenalty: 301 }))
+      evaluateArcadeResult(LEVELS[0], score({ totalScore: 5000 }))
     ).toMatchObject({
-      completed: false,
-      stars: 0
+      completed: true,
+      stars: 2
     });
 
     expect(
       evaluateArcadeResult(
         LEVELS[0],
-        score({ totalScore: 5000, protectedPenalty: 151, chainReactionCount: 3 })
+        score({ totalScore: 5000, chainReactionCount: 3 })
       )
     ).toMatchObject({
       completed: true,
-      stars: 1
+      stars: 3
     });
   });
 });
@@ -97,9 +88,9 @@ describe("Arcade progress", () => {
       initial,
       LEVELS,
       "alpha",
-      score({ totalScore: 2100, protectedPenalty: 50, chainReactionCount: 3 })
+      score({ totalScore: 2100, chainReactionCount: 3 })
     ).progress;
-    const second = recordArcadeRun(first, LEVELS, "alpha", score({ totalScore: 1200, protectedPenalty: 100 })).progress;
+    const second = recordArcadeRun(first, LEVELS, "alpha", score({ totalScore: 1200 })).progress;
 
     expect(second.levels.alpha).toEqual({
       attempts: 2,
@@ -130,7 +121,7 @@ describe("Arcade progress storage", () => {
       createInitialArcadeProgress(LEVELS),
       LEVELS,
       "alpha",
-      score({ totalScore: 2000, protectedPenalty: 75, chainReactionCount: 3 })
+      score({ totalScore: 2000, chainReactionCount: 3 })
     ).progress;
 
     expect(saveArcadeProgress(progress, storage)).toBe(true);
@@ -162,11 +153,9 @@ function score(overrides: Partial<ScoreBreakdown> = {}): ScoreBreakdown {
   return {
     targetDamage: 0,
     cityChaos: 0,
-    contaminationPurge: 0,
     chainReactionBonus: 0,
-    protectedPenalty: 0,
     remainingDebrisMotion: 0,
-    containmentRating: "CONTAINED",
+    mayhemRating: "SPARK SHOW",
     totalScore: 0,
     shotName: "Test Shot",
     chainReactionCount: 0,

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { ProjectileDefinition } from "./projectile";
+import { materialAtlasTile } from "./visualAssets";
 
 const LAUNCH_MUZZLE_CLEARANCE = 0.58;
 
@@ -12,7 +13,8 @@ export class Cannon {
     new THREE.MeshStandardMaterial({
       color: 0x27323d,
       metalness: 0.72,
-      roughness: 0.34
+      roughness: 0.34,
+      map: materialAtlasTile(0)
     })
   );
   private readonly glowRing = new THREE.Mesh(
@@ -35,7 +37,7 @@ export class Cannon {
 
     const base = new THREE.Mesh(
       new THREE.CylinderGeometry(1.04, 1.34, 0.42, 36),
-      new THREE.MeshStandardMaterial({ color: 0x1c242d, metalness: 0.45, roughness: 0.52 })
+      new THREE.MeshStandardMaterial({ color: 0x1c242d, metalness: 0.45, roughness: 0.52, map: materialAtlasTile(10) })
     );
     base.castShadow = true;
     base.receiveShadow = true;
@@ -43,7 +45,7 @@ export class Cannon {
 
     const yoke = new THREE.Mesh(
       new THREE.BoxGeometry(1.78, 0.62, 0.68),
-      new THREE.MeshStandardMaterial({ color: 0x2a3440, metalness: 0.55, roughness: 0.44 })
+      new THREE.MeshStandardMaterial({ color: 0x2a3440, metalness: 0.55, roughness: 0.44, map: materialAtlasTile(0) })
     );
     yoke.castShadow = true;
     yoke.position.y = 0.42;
@@ -53,6 +55,7 @@ export class Cannon {
     this.barrel.castShadow = true;
     this.barrel.receiveShadow = true;
 
+    const accentMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4754, metalness: 0.78, roughness: 0.28, map: materialAtlasTile(10) });
     const muzzle = new THREE.Mesh(
       new THREE.TorusGeometry(0.38, 0.06, 8, 32),
       new THREE.MeshBasicMaterial({ color: 0x72ecff })
@@ -62,7 +65,15 @@ export class Cannon {
 
     this.glowRing.position.z = -2.0;
     this.glowRing.rotation.x = Math.PI * 0.5;
-    this.barrelPivot.add(this.barrel, muzzle, this.glowRing);
+    const leftRail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.11, 2.35), accentMaterial);
+    leftRail.position.set(-0.34, 0.02, -1.32);
+    const rightRail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.11, 2.35), accentMaterial);
+    rightRail.position.set(0.34, 0.02, -1.32);
+    const rearBand = new THREE.Mesh(new THREE.TorusGeometry(0.43, 0.028, 8, 32), accentMaterial);
+    rearBand.position.z = -0.28;
+    const muzzleBand = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.026, 8, 32), accentMaterial);
+    muzzleBand.position.z = -2.62;
+    this.barrelPivot.add(this.barrel, muzzle, this.glowRing, leftRail, rightRail, rearBand, muzzleBand);
     this.barrelPivot.position.y = 0.62;
     this.group.add(base, yoke, this.barrelPivot);
     this.scene.add(this.group);
@@ -145,6 +156,13 @@ export class Cannon {
 
   getCameraAnchor(): THREE.Vector3 {
     return this.group.position.clone().add(new THREE.Vector3(0, 0.85, 0));
+  }
+
+  setBasePosition(position: THREE.Vector3): void {
+    this.basePosition.copy(position);
+    this.group.position.copy(this.basePosition);
+    this.updateTransforms();
+    this.trajectoryDirty = true;
   }
 
   setTrajectoryVisible(visible: boolean): void {

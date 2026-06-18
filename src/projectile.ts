@@ -4,7 +4,7 @@ import { PhysicsWorld, type PhysicsObject } from "./physics";
 import { type RandomSource, randomRange } from "./random";
 import { materialAtlasTile } from "./visualAssets";
 
-export type ProjectileId = "slug" | "scatter" | "pulse" | "gel" | "gravity";
+export type ProjectileId = "slug" | "scatter" | "pulse" | "gel" | "gravity" | "ignite";
 
 export interface ProjectileDefinition {
   id: ProjectileId;
@@ -34,7 +34,7 @@ export interface ActiveProjectile {
   piercedObjectIds: Set<number>;
 }
 
-export const PROJECTILE_ORDER: ProjectileId[] = ["slug", "scatter", "pulse", "gel", "gravity"];
+export const PROJECTILE_ORDER: ProjectileId[] = ["slug", "scatter", "pulse", "gel", "gravity", "ignite"];
 
 export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
   slug: {
@@ -88,10 +88,10 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
   gel: {
     id: "gel",
     key: "4",
-    name: "Gel Burst",
-    shortName: "Gel",
+    name: "Ripper Burst",
+    shortName: "Ripper",
     color: new THREE.Color(0xf13d88),
-    materialId: "bioGel",
+    materialId: "metal",
     baseRadius: 0.3,
     density: 0.8,
     speed: 36,
@@ -99,7 +99,7 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     blastRadius: 5.45,
     fractureBoost: 1.52,
     scoreModifier: 1.35,
-    description: "Heavy splash shell for flooding a district with synthetic gel."
+    description: "Heavy rupture shell for opening dense streets and multiplying object breakage."
   },
   gravity: {
     id: "gravity",
@@ -116,6 +116,22 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     fractureBoost: 1.82,
     scoreModifier: 1.22,
     description: "Super-heavy siege hammer with brutal downward authority."
+  },
+  ignite: {
+    id: "ignite",
+    key: "6",
+    name: "Ignition Lance",
+    shortName: "Ignite",
+    color: new THREE.Color(0xff7a35),
+    materialId: "rubber",
+    baseRadius: 0.24,
+    density: 1.4,
+    speed: 42,
+    impulse: 46,
+    blastRadius: 4.65,
+    fractureBoost: 1.18,
+    scoreModifier: 1.18,
+    description: "Fictional ignition charge that starts arcade fire chains and delayed building pops."
   }
 };
 
@@ -230,5 +246,7 @@ function projectileTexture(id: ProjectileId): THREE.Texture {
       return materialAtlasTile(9);
     case "gravity":
       return materialAtlasTile(10);
+    case "ignite":
+      return materialAtlasTile(11);
   }
 }

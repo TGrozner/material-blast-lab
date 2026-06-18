@@ -2,6 +2,13 @@ import * as THREE from "three";
 
 type CameraMode = "cannon" | "projectile" | "spectacle";
 
+const SPECTACLE_RADIUS = 14.5;
+const SPECTACLE_RADIUS_PORTRAIT = 24;
+const SPECTACLE_HEIGHT = 7.4;
+const SPECTACLE_HEIGHT_PORTRAIT = 13.2;
+const DEFAULT_CANNON_ANCHOR = new THREE.Vector3(0, 6.9, 24.55);
+const DEFAULT_CITY_TARGET = new THREE.Vector3(0, 0.9, -2.6);
+
 export class CameraRig {
   readonly camera: THREE.PerspectiveCamera;
 
@@ -24,13 +31,13 @@ export class CameraRig {
     this.camera.lookAt(this.desiredTarget);
   }
 
-  setCityAimView(cannonAnchor = new THREE.Vector3(0, 6.9, 24.55)): void {
+  setCityAimView(cannonAnchor = DEFAULT_CANNON_ANCHOR, target = DEFAULT_CITY_TARGET): void {
     this.mode = "cannon";
     const portrait = window.innerHeight > window.innerWidth;
     const backDistance = portrait ? 16.8 : 15.2;
     const shoulderHeight = portrait ? 8.9 : 8.2;
     const sideOffset = portrait ? -1.6 : -3.6;
-    this.desiredTarget.set(0, -2.4, -5.4);
+    this.desiredTarget.copy(target);
     this.desiredPosition.set(cannonAnchor.x + sideOffset, cannonAnchor.y + shoulderHeight, cannonAnchor.z + backDistance);
   }
 
@@ -88,10 +95,12 @@ export class CameraRig {
 
     if (this.mode === "spectacle") {
       this.spectacleYaw += deltaSeconds * 0.34;
-      const radius = 9.2;
+      const portrait = this.camera.aspect < 0.75;
+      const radius = portrait ? SPECTACLE_RADIUS_PORTRAIT : SPECTACLE_RADIUS;
+      const height = portrait ? SPECTACLE_HEIGHT_PORTRAIT : SPECTACLE_HEIGHT;
       this.desiredPosition.set(
         this.desiredTarget.x + Math.sin(this.spectacleYaw) * radius,
-        this.desiredTarget.y + 5.5,
+        this.desiredTarget.y + height,
         this.desiredTarget.z + Math.cos(this.spectacleYaw) * radius
       );
     }
@@ -122,7 +131,7 @@ export class CameraRig {
     this.camera.fov = height > width ? 62 : 60;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setPixelRatio(this.pixelRatioCap);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.pixelRatioCap));
     this.renderer.setSize(width, height);
   }
 }

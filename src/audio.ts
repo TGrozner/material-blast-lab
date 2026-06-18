@@ -25,9 +25,7 @@ type SampleId =
   | "plateHeavyA"
   | "plateHeavyB"
   | "punchHeavy"
-  | "bellHeavy"
-  | "slimeA"
-  | "slimeB";
+  | "bellHeavy";
 
 interface BufferPlayOptions {
   gain: number;
@@ -86,9 +84,7 @@ const SAMPLE_PATHS: Record<SampleId, string> = {
   plateHeavyA: "audio/kenney-impact/impactPlate_heavy_000.ogg",
   plateHeavyB: "audio/kenney-impact/impactPlate_heavy_004.ogg",
   punchHeavy: "audio/kenney-impact/impactPunch_heavy_000.ogg",
-  bellHeavy: "audio/kenney-impact/impactBell_heavy_001.ogg",
-  slimeA: "audio/kenney-scifi/slime_000.ogg",
-  slimeB: "audio/kenney-scifi/slime_001.ogg"
+  bellHeavy: "audio/kenney-impact/impactBell_heavy_001.ogg"
 };
 
 const MATERIAL_SAMPLES: Record<MaterialId, SampleId[]> = {
@@ -97,16 +93,16 @@ const MATERIAL_SAMPLES: Record<MaterialId, SampleId[]> = {
   concrete: ["concreteA", "concreteB", "punchHeavy"],
   metal: ["metalHeavyA", "metalHeavyB", "metalSci", "plateHeavyA"],
   rubber: ["punchHeavy", "plateHeavyB"],
-  foam: ["punchHeavy", "plank"],
-  bioGel: ["slimeA", "slimeB"]
+  foam: ["punchHeavy", "plank"]
 };
 
 const PROJECTILE_BLASTS: Record<ProjectileId, SampleId[]> = {
   slug: ["blastCrunchA", "lowBoomA", "metalHeavyA"],
   scatter: ["blastCrunchB", "plateHeavyA", "plank"],
   pulse: ["blastCrunchC", "forceField", "lowBoomB"],
-  gel: ["blastCrunchB", "slimeB", "lowBoomA"],
-  gravity: ["blastCrunchC", "lowBoomA", "bellHeavy"]
+  gel: ["blastCrunchB", "plateHeavyB", "lowBoomA"],
+  gravity: ["blastCrunchC", "lowBoomA", "bellHeavy"],
+  ignite: ["blastCrunchA", "forceField", "lowBoomB"]
 };
 
 const SAMPLE_IDS = Object.keys(SAMPLE_PATHS) as SampleId[];
@@ -259,18 +255,6 @@ export class DestructionAudio {
     const pan = this.panFromPoint(point);
     this.playMaterialHits(["metal", "metal", "glass"], THREE.MathUtils.clamp(intensity, 0.75, 1.8), pan, 0.02, 5);
     this.playNoiseBurst(0.1 * intensity, 0.22, pan, 900, 5200, 0.015);
-  }
-
-  playBioSplash(point: THREE.Vector3, intensity: number): void {
-    const pan = this.panFromPoint(point);
-    const loudness = THREE.MathUtils.clamp(intensity, 0.55, 1.7);
-    this.playBuffer(this.pick(["slimeA", "slimeB"]), {
-      gain: 0.32 * loudness,
-      rate: this.randomRange(0.72, 0.94),
-      pan,
-      lowpass: 2600
-    });
-    this.playNoiseBurst(0.05 * loudness, 0.24, pan, 180, 1400, 0.018);
   }
 
   playGravityCrush(point: THREE.Vector3, intensity: number): void {
@@ -577,7 +561,7 @@ export class DestructionAudio {
   private impactIntensity(result: ExplosionResult, powerScale: number, sizeScale: number): number {
     const fractureWeight = result.fracturedBodies * 0.24;
     const bodyWeight = result.affectedBodies * 0.035;
-    const damageWeight = (result.structureDamage + result.materialChaos + result.bioGelSplash) / 520;
+    const damageWeight = (result.structureDamage + result.materialChaos) / 520;
     return THREE.MathUtils.clamp(0.58 + fractureWeight + bodyWeight + damageWeight + powerScale * 0.18 + sizeScale * 0.12, 0.66, 2.25);
   }
 

@@ -8,10 +8,9 @@ import {
   type ArcadeResult
 } from "./arcade";
 import { DestructionAudio } from "./audio";
-import { BioGoreSystem } from "./bioGore";
 import { CameraRig } from "./cameraRig";
 import { Cannon } from "./cannon";
-import { DestructionSystem, type ExplosionResult } from "./destruction";
+import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
 import { MaterialCatalog } from "./materialCatalog";
@@ -38,13 +37,23 @@ const CHAIN_DEBRIS_MIN_SPEED = 1.85;
 const CHAIN_DEBRIS_MIN_SPEED_SQ = CHAIN_DEBRIS_MIN_SPEED * CHAIN_DEBRIS_MIN_SPEED;
 const CHAIN_IMPACT_COOLDOWN_MS = 220;
 const CHAIN_IMPACT_MAX_PER_FRAME = 14;
+const CHAIN_IMPACT_SWEEP_MS = 160;
 const SCORE_SETTLED_SPEED = 1.55;
+const FIRE_MIN_DELAY_MS = 760;
+const FIRE_MAX_DELAY_MS = 1850;
+const MAX_BURNING_HAZARDS = 18;
+const CANNON_DECK_OFFSETS = [
+  new THREE.Vector3(0, -3.23, 1.9),
+  new THREE.Vector3(-3.3, -0.22, 1.9),
+  new THREE.Vector3(3.3, -0.22, 1.9)
+];
 const MAX_PROJECTILE_PENETRATIONS: Record<ProjectileId, number> = {
   slug: 4,
   scatter: 0,
   pulse: 1,
   gel: 0,
-  gravity: 3
+  gravity: 3,
+  ignite: 1
 };
 const IMPACT_BOUNDS = {
   minX: -18.8,
@@ -53,6 +62,16 @@ const IMPACT_BOUNDS = {
   maxZ: 35.8
 };
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
+
+interface BurningHazard {
+  id: number;
+  origin: THREE.Vector3;
+  explodeAt: number;
+  nextFxAt: number;
+  strength: number;
+  radius: number;
+  materialId: PhysicsObject["materialId"];
+}
 
 class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -67,7 +86,6 @@ class Game {
   private readonly cameraRig: CameraRig;
   private readonly cannon: Cannon;
   private readonly projectiles: ProjectileSystem;
-  private readonly bioGore: BioGoreSystem;
   private readonly scoreTracker = new ShotScoreTracker();
   private readonly runState = new ShotRunState();
   private readonly scorePopups: ScorePopupLayer;
@@ -85,9 +103,14 @@ class Game {
   });
   private readonly aimMarker = createAimMarker(this.aimMarkerMaterial);
   private readonly arenaObjects: THREE.Object3D[] = [];
+  private readonly cannonBatteryObjects: THREE.Object3D[] = [];
   private readonly levelDecorations: THREE.Object3D[] = [];
+  private readonly handleResize = () => this.resize();
+  private readonly handleBeforeUnload = () => this.input.dispose();
   private readonly chainImpactCooldowns = new Map<string, number>();
   private readonly surfaceImpactCooldowns = new Map<number, number>();
+  private readonly triggeredHazards = new Set<number>();
+  private readonly burningHazards = new Map<number, BurningHazard>();
 
   private settings: GameSettings = loadGameSettings();
   private selectedProjectile: ProjectileId = "slug";
@@ -103,6 +126,8 @@ class Game {
   private fpsSampleElapsed = 0;
   private fpsSampleFrames = 0;
   private displayedFps = 0;
+  private nextChainCooldownSweep = 0;
+  private disposed = false;
 
   constructor() {
     const app = document.querySelector<HTMLDivElement>("#app");
@@ -118,6 +143,8 @@ class Game {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
     this.renderer.setPixelRatio(graphicsPixelRatioCap(this.settings.graphicsQuality));
     app.appendChild(this.renderer.domElement);
 
@@ -131,7 +158,6 @@ class Game {
     this.destruction = new DestructionSystem(this.physics, this.materials, this.rng);
     this.particles = new ParticleSystem(this.scene);
     this.explosion = new ExplosionSystem(this.particles);
-    this.bioGore = new BioGoreSystem(this.physics, this.materials, this.particles);
     this.projectiles = new ProjectileSystem(this.physics, this.materials, this.rng);
     this.cannon = new Cannon(this.scene);
     this.scene.add(this.aimMarker);
@@ -143,8 +169,6 @@ class Game {
       clearDebris: () => this.clearDebris(),
       selectProjectile: (id) => this.selectProjectile(id),
       nextLevel: () => this.nextLevel(),
-      adjustPower: (delta) => this.adjustPower(delta),
-      adjustSize: (delta) => this.adjustSize(delta),
       updateSettings: (patch) => this.updateSettings(patch),
       resetSettings: () => this.resetSettings()
     });
@@ -154,8 +178,6 @@ class Game {
       fire: () => this.fire(),
       reset: () => this.reset(),
       clearDebris: () => this.clearDebris(),
-      adjustPower: (delta) => this.adjustPower(delta),
-      adjustSize: (delta) => this.adjustSize(delta),
       selectProjectile: (id) => this.selectProjectile(id),
       nextLevel: () => this.nextLevel()
     });
@@ -166,13 +188,55 @@ class Game {
     this.loadLevel();
     this.audio.preload();
     this.resize();
-    window.addEventListener("resize", () => this.resize());
-    window.visualViewport?.addEventListener("resize", () => this.resize());
-    window.addEventListener("beforeunload", () => this.input.dispose());
+    window.addEventListener("resize", this.handleResize);
+    window.visualViewport?.addEventListener("resize", this.handleResize);
+    window.addEventListener("beforeunload", this.handleBeforeUnload);
   }
 
   start(): void {
     this.renderer.setAnimationLoop(() => this.update());
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.renderer.setAnimationLoop(null);
+    window.removeEventListener("resize", this.handleResize);
+    window.visualViewport?.removeEventListener("resize", this.handleResize);
+    window.removeEventListener("beforeunload", this.handleBeforeUnload);
+    this.input.dispose();
+    this.scorePopups.dispose();
+    this.particles.dispose();
+    this.projectiles.clearActive();
+    this.physics.clearDynamic();
+    this.physics.clearStatics();
+    this.clearLevelDecorations();
+    const disposedObjects = new Set<THREE.Object3D>();
+    const disposedMaterials = new Set<THREE.Material>();
+    for (const object of this.arenaObjects) {
+      if (disposedObjects.has(object)) {
+        continue;
+      }
+      disposedObjects.add(object);
+      this.scene.remove(object);
+      disposeObject(object, disposedMaterials);
+    }
+    this.arenaObjects.length = 0;
+    for (const object of this.cannonBatteryObjects) {
+      if (disposedObjects.has(object)) {
+        continue;
+      }
+      disposedObjects.add(object);
+      this.scene.remove(object);
+      disposeObject(object, disposedMaterials);
+    }
+    this.cannonBatteryObjects.length = 0;
+    this.ui.dispose();
+    this.physics.world.free();
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
   }
 
   private update(): void {
@@ -193,6 +257,9 @@ class Game {
     }
 
     this.cannon.update(delta, PROJECTILES[this.selectedProjectile], this.powerScale, this.sizeScale);
+    if (this.runState.phase === "aim") {
+      this.physics.advanceTrafficRoutes(delta);
+    }
     if (this.runState.phase !== "aim") {
       this.physics.step(delta * timeScale);
       this.projectiles.update(delta * timeScale);
@@ -200,6 +267,10 @@ class Game {
     const chainEvents = this.processDebrisImpacts();
     if (chainEvents.length > 0) {
       this.scorePopups.push(chainEvents);
+    }
+    const fireEvents = this.updateBurningHazards();
+    if (fireEvents.length > 0) {
+      this.scorePopups.push(fireEvents);
     }
     this.updatePhase();
     this.particles.update(delta * visualScale);
@@ -209,14 +280,12 @@ class Game {
     this.ui.update({
       projectileId: this.selectedProjectile,
       projectile: PROJECTILES[this.selectedProjectile],
-      powerScale: this.powerScale,
-      sizeScale: this.sizeScale,
       shotAvailable: this.runState.shotAvailable,
       bodyCount: this.physics.getDynamicBodyCount(),
       levelName: this.currentLevel().name,
       levelDescription: this.currentLevel().description,
       objective: this.currentLevel().objective,
-      protectedBrief: this.currentLevel().protectedBrief,
+      chaosBrief: this.currentLevel().chaosBrief,
       mission: this.currentLevel().mission,
       levelIndex: this.levelIndex,
       levelCount: TEST_CHAMBERS.length,
@@ -245,7 +314,7 @@ class Game {
     const active = this.projectiles.getActive();
     if (this.runState.phase === "aim") {
       this.cannon.setTrajectoryVisible(true);
-      this.cameraRig.setCityAimView(this.cannon.getCameraAnchor());
+      this.cameraRig.setCityAimView(this.cannon.getCameraAnchor(), this.currentLevel().cameraTarget);
       return;
     }
 
@@ -347,6 +416,7 @@ class Game {
     );
     cannonDeck.castShadow = true;
     this.arenaObjects.push(cannonDeck);
+    this.cannonBatteryObjects.push(cannonDeck);
 
     for (const x of [-3.3, 3.3]) {
       const curb = this.addArenaVisualBox(
@@ -357,6 +427,7 @@ class Game {
       );
       curb.castShadow = true;
       this.arenaObjects.push(curb);
+      this.cannonBatteryObjects.push(curb);
     }
 
     const grid = new THREE.GridHelper(38, 76, 0x3f8da0, 0x26333a);
@@ -366,6 +437,13 @@ class Game {
     grid.material.opacity = 0.35;
     this.scene.add(grid);
     this.arenaObjects.push(grid);
+  }
+
+  private positionCannonBattery(cannonPosition: THREE.Vector3): void {
+    this.cannonBatteryObjects.forEach((object, index) => {
+      const offset = CANNON_DECK_OFFSETS[index] ?? CANNON_DECK_OFFSETS[0];
+      object.position.copy(cannonPosition).add(offset);
+    });
   }
 
   private addArenaVisualBox(
@@ -389,6 +467,9 @@ class Game {
     this.projectiles.clearActive();
     this.chainImpactCooldowns.clear();
     this.surfaceImpactCooldowns.clear();
+    this.triggeredHazards.clear();
+    this.burningHazards.clear();
+    this.nextChainCooldownSweep = 0;
     this.runState.resetAim();
     this.arcadeResult = null;
     this.runSeed = createRunSeed();
@@ -399,14 +480,17 @@ class Game {
     this.scorePopups.clear();
     this.slowMotionTimer = 0;
     this.hitStopTimer = 0;
-    this.aimPoint.copy(DEFAULT_AIM_POINT);
-    this.currentLevel().setup({
+    const level = this.currentLevel();
+    this.cannon.setBasePosition(level.cannonPosition);
+    this.positionCannonBattery(level.cannonPosition);
+    this.aimPoint.copy(level.defaultAimPoint ?? DEFAULT_AIM_POINT);
+    level.setup({
       physics: this.physics,
       materials: this.materials,
       addDecoration: (object) => this.addDecoration(object)
     });
     this.renderer.shadowMap.needsUpdate = true;
-    this.status = `${this.currentLevel().name}: ${this.currentLevel().objective}`;
+    this.status = `${level.name}: ${level.objective}`;
     this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
   }
 
@@ -462,7 +546,7 @@ class Game {
     }
 
     let best: { point: THREE.Vector3; object: PhysicsObject; distance: number } | null = null;
-    for (const object of this.physics.objects.values()) {
+    for (const object of this.physics.getSegmentCandidates(previous, current, active.radius + 0.28)) {
       if (
         object.id === active.object.id ||
         active.piercedObjectIds.has(object.id) ||
@@ -517,20 +601,27 @@ class Game {
       hitMaterialId: hitObject?.materialId
     });
     const scoreEvents = [
-      ...(directResult ? this.applyExplosionResult(directResult, projectile.id === "gel" ? 0.65 : 0.32) : []),
-      ...this.applyExplosionResult(result, projectile.id === "gel" ? 1.2 : 0.85),
+      ...(directResult ? this.applyExplosionResult(directResult, 0, projectile.id === "ignite" ? 1 : 0) : []),
+      ...this.applyExplosionResult(result, 0, projectile.id === "ignite" ? 1.35 : projectile.id === "pulse" ? 0.35 : 0),
       ...this.playProjectileSpecial(projectile.id, point, directionVector, active)
     ];
     this.scorePopups.push(scoreEvents);
 
-    this.explosion.play(point, visualRadius, result.dustColors);
+    this.explosion.play(point, visualRadius, result.dustColors, {
+      projectileId: projectile.id,
+      result,
+      powerScale: active.powerScale,
+      sizeScale: active.sizeScale,
+      hitMaterialId: hitObject?.materialId,
+      role: "primary"
+    });
     this.particles.cityDebrisSpray(point, result.dustColors, 1 + result.fracturedBodies * 0.085);
     this.cameraRig.spectacle(point);
     this.cameraRig.shake(projectile.id === "gravity" ? 0.78 : 0.52, 0.92);
     this.hitStopTimer = this.settings.motionEffects ? (projectile.id === "gravity" ? 0.09 : 0.065) : 0;
     this.slowMotionTimer = this.settings.motionEffects ? (projectile.id === "gravity" ? 0.72 : 0.58) : 0;
     this.runState.beginSpectacle(performance.now());
-    this.status = `${projectile.name} impact: ${(directResult?.fracturedBodies ?? 0) + result.fracturedBodies} fractures, ${result.affectedBodies} bodies hit.`;
+    this.status = `${projectile.name} impact: ${(directResult?.fracturedBodies ?? 0) + result.fracturedBodies} fractures, ${result.affectedBodies} objects hit.`;
   }
 
   private shouldProjectilePenetrate(active: ActiveProjectile, hitObject: PhysicsObject): boolean {
@@ -544,7 +635,7 @@ class Game {
       return active.definition.id === "slug" || active.definition.id === "gravity" || active.definition.id === "pulse";
     }
     if (hitObject.materialId === "foam") {
-      return active.definition.id === "slug" || active.definition.id === "gravity";
+      return active.definition.id === "slug" || active.definition.id === "gravity" || active.definition.id === "ignite";
     }
     if (hitObject.materialId === "wood") {
       return active.definition.id === "gravity" && Math.min(hitObject.dimensions.x, hitObject.dimensions.z) <= 0.58;
@@ -562,7 +653,7 @@ class Game {
     const speed = speedOf(active.object);
     const impactSpeed = speed * penetrationImpactScale(active.definition.id, hitObject);
     const result = this.destruction.impact(active.object, hitObject, point, impactSpeed);
-    const scoreEvents = this.applyExplosionResult(result, active.definition.id === "gel" ? 0.9 : 0.45);
+    const scoreEvents = this.applyExplosionResult(result, 0, active.definition.id === "ignite" ? 0.9 : 0);
     if (scoreEvents.length > 0) {
       this.scorePopups.push(scoreEvents);
     }
@@ -597,9 +688,22 @@ class Game {
       return [];
     }
     if (projectileId === "gel") {
-      this.bioGore.splashAt(point, 1.45);
-      this.audio.playBioSplash(point, 1.35 * active.sizeScale * active.powerScale);
+      this.particles.spark(point, 0xff4f66, 1.25 * active.sizeScale * active.powerScale);
+      this.audio.playScatterBurst(point, 0.82 * active.sizeScale * active.powerScale);
       return [];
+    }
+    if (projectileId === "ignite") {
+      const ignition = this.destruction.explode(point.clone().add(new THREE.Vector3(0, 0.12, 0)), 18 * active.powerScale, 2.35 * active.sizeScale);
+      this.particles.fireBurst(point, 1.35 * active.sizeScale * active.powerScale);
+      this.audio.playProjectileImpact({
+        point,
+        projectileId,
+        result: ignition,
+        powerScale: active.powerScale,
+        sizeScale: active.sizeScale,
+        hitMaterialId: "rubber"
+      });
+      return this.applyExplosionResult(ignition, 0, 1.2);
     }
     if (projectileId === "gravity") {
       const crush = this.destruction.explode(point.clone().add(new THREE.Vector3(0, -0.25, 0)), 30 * active.powerScale, 2.15 * active.sizeScale);
@@ -612,14 +716,132 @@ class Game {
         sizeScale: active.sizeScale,
         hitMaterialId: "concrete"
       });
-      return this.applyExplosionResult(crush, 0.35);
+      return this.applyExplosionResult(crush);
     }
     return [];
   }
 
-  private applyExplosionResult(result: ExplosionResult, bioIntensity: number): ScoreEvent[] {
-    const extraBio = this.bioGore.reactToExplosion(result.affectedObjects) * bioIntensity;
-    return this.scoreTracker.addExplosion(result, extraBio);
+  private applyExplosionResult(result: ExplosionResult, cascadeDepth = 0, igniteBias = 0): ScoreEvent[] {
+    const events = this.scoreTracker.addExplosion(result);
+    this.queueIgnitions(result, igniteBias, cascadeDepth);
+    if (cascadeDepth < 2) {
+      events.push(...this.triggerVolatileHazards(result, cascadeDepth));
+    }
+    return events;
+  }
+
+  private triggerVolatileHazards(result: ExplosionResult, cascadeDepth: number): ScoreEvent[] {
+    const events: ScoreEvent[] = [];
+    for (const object of result.affectedObjects) {
+      if (!object.fractured || this.triggeredHazards.has(object.id) || !isVolatileHazard(object)) {
+        continue;
+      }
+      this.triggeredHazards.add(object.id);
+      const origin = object.position.clone().add(new THREE.Vector3(0, 0.22, 0));
+      const isPowerGrid = object.zoneId?.includes("power-grid") ?? false;
+      const strength = isPowerGrid ? 21 : 18;
+      const radius = isPowerGrid ? 2.35 : 2.55;
+      const secondary = this.destruction.explode(origin, strength, radius);
+      this.explosion.play(origin, radius * 1.35, secondary.dustColors, {
+        projectileId: isPowerGrid ? "pulse" : "scatter",
+        result: secondary,
+        powerScale: 0.84,
+        sizeScale: 0.8,
+        hitMaterialId: object.materialId,
+        role: "secondary"
+      });
+      this.particles.spark(origin, isPowerGrid ? 0x8ff7ff : 0xff4f66, isPowerGrid ? 1.7 : 1.45);
+      if (secondary.dustColors.length > 0) {
+        this.particles.cityDebrisSpray(origin, secondary.dustColors, 0.42 + secondary.fracturedBodies * 0.08);
+      }
+      this.audio.playProjectileImpact({
+        point: origin,
+        projectileId: "pulse",
+        result: secondary,
+        powerScale: 0.8,
+        sizeScale: 0.8,
+        hitMaterialId: object.materialId
+      });
+      events.push(...this.scoreTracker.addChainReaction(Math.max(70, Math.round(secondary.materialChaos * 0.35)), origin));
+      events.push(...this.applyExplosionResult(secondary, cascadeDepth + 1));
+    }
+    return events;
+  }
+
+  private queueIgnitions(result: ExplosionResult, igniteBias: number, cascadeDepth: number): void {
+    if (igniteBias <= 0 && cascadeDepth > 0) {
+      return;
+    }
+    const now = performance.now();
+    for (const object of result.affectedObjects) {
+      if (this.burningHazards.size >= MAX_BURNING_HAZARDS) {
+        return;
+      }
+      if (this.burningHazards.has(object.id) || !canIgniteObject(object)) {
+        continue;
+      }
+      const energyRatio = object.energy / Math.max(1, object.scoreValue * 0.42);
+      const ignitionChance = THREE.MathUtils.clamp(igniteBias * 0.58 + energyRatio * 0.08 + (object.fractured ? 0.16 : 0), 0, 0.92);
+      if (igniteBias < 0.2 && !object.fractured) {
+        continue;
+      }
+      if (igniteBias < 0.95 && Math.random() > ignitionChance) {
+        continue;
+      }
+      const delay = THREE.MathUtils.lerp(FIRE_MAX_DELAY_MS, FIRE_MIN_DELAY_MS, THREE.MathUtils.clamp(igniteBias + energyRatio * 0.18, 0, 1));
+      const radius = object.zoneId?.includes("power-grid") ? 2.15 : object.materialId === "foam" ? 2.65 : 2.35;
+      const strength = object.materialId === "wood" || object.materialId === "foam" ? 18 : 14;
+      const origin = object.position.clone().add(new THREE.Vector3(0, 0.38, 0));
+      this.burningHazards.set(object.id, {
+        id: object.id,
+        origin,
+        explodeAt: now + delay + Math.random() * 320,
+        nextFxAt: now,
+        strength,
+        radius,
+        materialId: object.materialId
+      });
+      this.particles.fireBurst(origin, 0.72 + igniteBias * 0.45);
+    }
+  }
+
+  private updateBurningHazards(): ScoreEvent[] {
+    const events: ScoreEvent[] = [];
+    if (this.burningHazards.size === 0 || this.runState.phase === "aim" || this.runState.score) {
+      return events;
+    }
+    const now = performance.now();
+    for (const hazard of this.burningHazards.values()) {
+      if (now >= hazard.nextFxAt) {
+        this.particles.fireLick(hazard.origin, 0.62);
+        hazard.nextFxAt = now + 180;
+      }
+      if (now < hazard.explodeAt) {
+        continue;
+      }
+      this.burningHazards.delete(hazard.id);
+      const result = this.destruction.explode(hazard.origin, hazard.strength, hazard.radius);
+      this.explosion.play(hazard.origin, hazard.radius * 1.24, result.dustColors, {
+        projectileId: "ignite",
+        result,
+        powerScale: 0.76,
+        sizeScale: 0.82,
+        hitMaterialId: hazard.materialId,
+        role: "ignition"
+      });
+      this.particles.fireBurst(hazard.origin, 1.25);
+      this.audio.playProjectileImpact({
+        point: hazard.origin,
+        projectileId: "ignite",
+        result,
+        powerScale: 0.76,
+        sizeScale: 0.82,
+        hitMaterialId: hazard.materialId
+      });
+      events.push(...this.scoreTracker.addChainReaction(Math.max(58, Math.round((result.materialChaos + result.structureDamage) * 0.28)), hazard.origin));
+      events.push(...this.applyExplosionResult(result, 1, 0.18));
+    }
+    return events;
   }
 
   private processDebrisImpacts(): ScoreEvent[] {
@@ -632,10 +854,13 @@ class Game {
     const activeProjectile = this.runState.phase === "flight" ? this.projectiles.getActive() : null;
 
     const now = performance.now();
-    for (const [key, expiresAt] of this.chainImpactCooldowns) {
-      if (expiresAt <= now) {
-        this.chainImpactCooldowns.delete(key);
+    if (now >= this.nextChainCooldownSweep) {
+      for (const [key, expiresAt] of this.chainImpactCooldowns) {
+        if (expiresAt <= now) {
+          this.chainImpactCooldowns.delete(key);
+        }
       }
+      this.nextChainCooldownSweep = now + CHAIN_IMPACT_SWEEP_MS;
     }
 
     let impactsThisFrame = 0;
@@ -705,14 +930,12 @@ class Game {
         relativeSpeed,
         materialId: damaged.materialId
       });
-      events.push(...this.applyExplosionResult(result, 0.45));
-      if (damaged.scoreRole !== "protected") {
-        const points = Math.max(45, Math.round(damaged.weightedDamage * 0.85 + relativeSpeed * 8));
-        events.push(...this.scoreTracker.addChainReaction(points, damaged.position));
-        this.particles.spark(origin, 0xffd25c, Math.min(1.4, 0.55 + relativeSpeed * 0.045));
-        if (result.dustColors.length > 0) {
-          this.particles.cityDebrisSpray(origin, result.dustColors, 0.35 + result.fracturedBodies * 0.04);
-        }
+      events.push(...this.applyExplosionResult(result));
+      const points = Math.max(45, Math.round(damaged.weightedDamage * 0.85 + relativeSpeed * 8));
+      events.push(...this.scoreTracker.addChainReaction(points, damaged.position));
+      this.particles.spark(origin, 0xffd25c, Math.min(1.4, 0.55 + relativeSpeed * 0.045));
+      if (result.dustColors.length > 0) {
+        this.particles.cityDebrisSpray(origin, result.dustColors, 0.35 + result.fracturedBodies * 0.04);
       }
       impactsThisFrame += 1;
     }
@@ -756,11 +979,9 @@ class Game {
         relativeSpeed: impactSpeed,
         materialId: damaged.materialId
       });
-      events.push(...this.applyExplosionResult(result, 0.25));
-      if (damaged.scoreRole !== "protected") {
-        const points = Math.max(22, Math.round(damaged.weightedDamage * 0.45 + impactSpeed * 6));
-        events.push(...this.scoreTracker.addChainReaction(points, damaged.position));
-      }
+      events.push(...this.applyExplosionResult(result));
+      const points = Math.max(22, Math.round(damaged.weightedDamage * 0.45 + impactSpeed * 6));
+      events.push(...this.scoreTracker.addChainReaction(points, damaged.position));
       if (result.dustColors.length > 0) {
         this.particles.cityDebrisSpray(origin, result.dustColors, 0.22 + result.fracturedBodies * 0.045);
       }
@@ -769,6 +990,9 @@ class Game {
   }
 
   private isSceneSettled(): boolean {
+    if (this.burningHazards.size > 0) {
+      return false;
+    }
     for (const object of this.physics.objects.values()) {
       if (object.category === "projectile" || object.bodyType === "fixed" || object.body.isSleeping()) {
         continue;
@@ -849,33 +1073,6 @@ class Game {
     this.status = `${PROJECTILES[id].name}: ${PROJECTILES[id].description}`;
   }
 
-  private adjustPower(delta: number): void {
-    if (this.ui.isGameplayBlocked()) {
-      return;
-    }
-    if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
-      this.audio.playUiReject();
-      return;
-    }
-    this.powerScale = THREE.MathUtils.clamp(this.powerScale + delta, 0.65, 1.65);
-    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
-    this.audio.playUiTick();
-    this.status = `Power set to ${Math.round(this.powerScale * 100)}%.`;
-  }
-
-  private adjustSize(delta: number): void {
-    if (this.ui.isGameplayBlocked()) {
-      return;
-    }
-    if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
-      this.audio.playUiReject();
-      return;
-    }
-    this.sizeScale = THREE.MathUtils.clamp(this.sizeScale + delta, 0.75, 1.55);
-    this.audio.playLoadoutPreview(this.selectedProjectile, this.powerScale, this.sizeScale);
-    this.status = `Projectile size set to ${Math.round(this.sizeScale * 100)}%.`;
-  }
-
   private updateSettings(patch: Partial<GameSettings>): void {
     this.settings = sanitizeGameSettings({ ...this.settings, ...patch });
     this.applySettings();
@@ -896,6 +1093,7 @@ class Game {
     this.cameraRig.setShakeScale(this.settings.cameraShake);
     this.audio.setMasterVolume(this.settings.masterVolume);
     this.particles.setFlashScale(this.settings.motionEffects ? 1 : 0);
+    this.particles.setQuality(this.settings.graphicsQuality);
     this.renderer.shadowMap.enabled = this.settings.graphicsQuality === "cinematic";
     this.renderer.shadowMap.needsUpdate = true;
     this.resize();
@@ -956,10 +1154,20 @@ function createAimMarker(material: THREE.MeshBasicMaterial): THREE.Group {
   return group;
 }
 
+let activeGame: Game | null = null;
+
 async function boot(): Promise<void> {
   await RAPIER.init();
+  activeGame?.dispose();
   const game = new Game();
+  activeGame = game;
   game.start();
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+      activeGame?.dispose();
+      activeGame = null;
+    });
+  }
 }
 
 function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
@@ -989,11 +1197,38 @@ function chainCollisionPair(first: PhysicsObject, second: PhysicsObject): { sour
 }
 
 function isChainSource(object: PhysicsObject): boolean {
-  return object.chainSource && object.scoreRole !== "protected" && object.category !== "projectile" && object.bodyType === "dynamic";
+  return object.chainSource && object.category !== "projectile" && object.bodyType === "dynamic";
 }
 
 function isChainTarget(object: PhysicsObject): boolean {
   return object.category !== "projectile" && !object.isDebris && object.destructible && object.canFracture;
+}
+
+function isVolatileHazard(object: ExplosionAffectedObject): boolean {
+  const label = object.label.toLowerCase();
+  const zone = object.zoneId ?? "";
+  return (
+    zone.includes("hazard-relay") ||
+    zone.includes("power-grid") ||
+    zone.includes("moving-vehicles") ||
+    label.includes("shock canister") ||
+    label.includes("power-grid")
+  );
+}
+
+function canIgniteObject(object: ExplosionAffectedObject): boolean {
+  if (object.category !== "structure") {
+    return false;
+  }
+  const zone = object.zoneId ?? "";
+  return (
+    object.materialId === "wood" ||
+    object.materialId === "foam" ||
+    object.materialId === "rubber" ||
+    zone.includes("hazard") ||
+    zone.includes("power-grid") ||
+    zone.includes("moving-vehicles")
+  );
 }
 
 function isGroundSurface(label: string): boolean {
@@ -1005,13 +1240,10 @@ function horizontalSpeed(velocity: THREE.Vector3): number {
 }
 
 function canGroundImpactBreak(object: PhysicsObject, impactSpeed: number): boolean {
-  if (object.scoreRole === "protected") {
-    return impactSpeed >= 5.6;
-  }
   if (object.isDebris) {
     return impactSpeed >= (object.materialId === "glass" || object.materialId === "foam" ? 3.2 : 3.8);
   }
-  if (object.materialId === "glass" || object.materialId === "foam" || object.materialId === "bioGel") {
+  if (object.materialId === "glass" || object.materialId === "foam") {
     return impactSpeed >= 4.0;
   }
   if (object.materialId === "wood") {
@@ -1065,6 +1297,8 @@ function directImpactScale(projectileId: ProjectileId): number {
       return 0.72;
     case "gel":
       return 0.68;
+    case "ignite":
+      return 0.74;
   }
 }
 
@@ -1080,6 +1314,8 @@ function residualBlastScale(projectileId: ProjectileId): number {
       return 0.76;
     case "gel":
       return 0.82;
+    case "ignite":
+      return 0.78;
   }
 }
 
@@ -1095,6 +1331,8 @@ function residualBlastRadiusScale(projectileId: ProjectileId): number {
       return 0.88;
     case "gel":
       return 0.94;
+    case "ignite":
+      return 0.86;
   }
 }
 
@@ -1110,6 +1348,8 @@ function impactVisualRadiusScale(projectileId: ProjectileId): number {
       return 0.98;
     case "gel":
       return 1.02;
+    case "ignite":
+      return 1.06;
   }
 }
 
@@ -1258,8 +1498,7 @@ function distancePointToSegmentSq(point: { x: number; y: number; z: number }, a:
   return dx * dx + dy * dy + dz * dz;
 }
 
-function disposeObject(object: THREE.Object3D): void {
-  const disposedMaterials = new Set<THREE.Material>();
+function disposeObject(object: THREE.Object3D, disposedMaterials = new Set<THREE.Material>()): void {
   object.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       if (child.geometry.userData.sharedGeometry !== true) {
@@ -1284,11 +1523,8 @@ function chamberToArcadeLevel(chamber: TestChamber): ArcadeLevelDefinition {
     title: chamber.name,
     thresholds: {
       missionScore: mission.scoreThresholds.oneStar,
-      missionMaxProtectedPenalty: mission.protectedDamageLimit,
       twoStarScore: mission.scoreThresholds.twoStar,
-      twoStarMaxProtectedPenalty: mission.cleanBlastLimit,
       threeStarScore: mission.scoreThresholds.threeStar,
-      threeStarMaxProtectedPenalty: mission.cleanBlastLimit,
       threeStarBonus: mission.bonusThreshold
     }
   };

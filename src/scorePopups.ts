@@ -6,8 +6,15 @@ interface ScorePopup {
   position: THREE.Vector3;
   life: number;
   maxLife: number;
+  maxOpacity: number;
   visible: boolean;
 }
+
+const MAX_POPUPS_PER_PUSH = 3;
+const MAX_ACTIVE_POPUPS = 10;
+const MAX_CHAIN_POPUPS_PER_PUSH = 1;
+const MAX_NON_CHAIN_POPUPS_PER_PUSH = 2;
+const MIN_POPUP_POINTS = 18;
 
 export class ScorePopupLayer {
   private readonly root: HTMLDivElement;
@@ -37,15 +44,29 @@ export class ScorePopupLayer {
   }
 
   push(events: ScoreEvent[]): void {
-    const sorted = events.sort((a, b) => Math.abs(b.points) - Math.abs(a.points));
+    const sorted = [...events].sort((a, b) => Math.abs(b.points) - Math.abs(a.points));
     const topChain = sorted.find((event) => event.kind === "chain" && event.combo);
     if (topChain) {
       this.showChainMeter(topChain);
     }
 
-    for (const event of sorted.slice(0, 10)) {
-      if (Math.abs(event.points) < 12) {
+    let added = 0;
+    let chainAdded = 0;
+    let nonChainAdded = 0;
+    for (const event of sorted) {
+      if (added >= MAX_POPUPS_PER_PUSH || Math.abs(event.points) < MIN_POPUP_POINTS) {
         continue;
+      }
+      if (event.kind === "chain") {
+        if (chainAdded >= MAX_CHAIN_POPUPS_PER_PUSH) {
+          continue;
+        }
+        chainAdded += 1;
+      } else {
+        if (nonChainAdded >= MAX_NON_CHAIN_POPUPS_PER_PUSH) {
+          continue;
+        }
+        nonChainAdded += 1;
       }
       const element = document.createElement("div");
       const positive = event.points >= 0;
@@ -57,10 +78,13 @@ export class ScorePopupLayer {
         element,
         position: event.position.clone(),
         life: 0,
-        maxLife: event.kind === "chain" ? 1.85 + Math.min(0.75, ((event.combo ?? 1) - 1) * 0.18) : 1.35,
+        maxLife: event.kind === "chain" ? 1.85 + Math.min(0.55, ((event.combo ?? 1) - 1) * 0.14) : 1.65,
+        maxOpacity: event.kind === "chain" ? 0.9 : 0.84,
         visible: true
       });
+      added += 1;
     }
+    this.trimPopups();
   }
 
   update(deltaSeconds: number, camera: THREE.Camera): void {
@@ -89,9 +113,10 @@ export class ScorePopupLayer {
         continue;
       }
       const x = this.viewportOffsetX + (this.scratch.x * 0.5 + 0.5) * this.viewportWidth;
-      const y = this.viewportOffsetY + (-this.scratch.y * 0.5 + 0.5) * this.viewportHeight - easeOutCubic(t) * 34;
-      const scale = THREE.MathUtils.lerp(0.92, 1.08, Math.min(1, t * 3));
-      popup.element.style.opacity = String(Math.max(0, 1 - Math.max(0, t - 0.62) / 0.38));
+      const y = this.viewportOffsetY + (-this.scratch.y * 0.5 + 0.5) * this.viewportHeight - easeOutCubic(t) * 24;
+      const scale = THREE.MathUtils.lerp(0.86, 1, Math.min(1, t * 3));
+      const fade = Math.max(0, 1 - Math.max(0, t - 0.62) / 0.38);
+      popup.element.style.opacity = String(popup.maxOpacity * fade);
       popup.element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${scale})`;
     }
   }
@@ -117,10 +142,17 @@ export class ScorePopupLayer {
 
   private showChainMeter(event: ScoreEvent): void {
     const combo = event.combo ?? 1;
-    this.chainMeterLife = 2.75;
+    this.chainMeterLife = 2.45;
     this.chainMeter.className = `chain-meter is-visible ${chainPopupClass(combo)}`;
     this.chainMeterVisible = true;
     this.chainMeter.textContent = `${event.label}  +${event.points}`;
+  }
+
+  private trimPopups(): void {
+    while (this.popups.length > MAX_ACTIVE_POPUPS) {
+      const popup = this.popups.shift();
+      popup?.element.remove();
+    }
   }
 
   private setChainMeterVisible(visible: boolean): void {
@@ -178,7 +210,6 @@ function installScorePopupStyles(): void {
 
     .score-popup--target,
     .score-popup--chain,
-    .score-popup--purge,
     .score-popup--chaos {
       border-color: rgba(124, 255, 169, 0.42);
       color: #baffcb;
@@ -239,16 +270,6 @@ function installScorePopupStyles(): void {
       color: #ffffff;
       border-color: rgba(255, 154, 67, 0.9);
       background: rgba(69, 29, 8, 0.84);
-    }
-
-    .score-popup--purge {
-      color: #ff9bc4;
-      border-color: rgba(255, 110, 178, 0.46);
-    }
-
-    .score-popup--protected {
-      color: #ff9b9b;
-      border-color: rgba(255, 120, 120, 0.5);
     }
 
     @media (max-width: 520px) {

@@ -12,14 +12,12 @@ import {
 interface UIState {
   projectileId: ProjectileId;
   projectile: ProjectileDefinition;
-  powerScale: number;
-  sizeScale: number;
   shotAvailable: boolean;
   bodyCount: number;
   levelName: string;
   levelDescription: string;
   objective: string;
-  protectedBrief: string;
+  chaosBrief: string;
   mission: ArcadeMissionFields;
   levelIndex: number;
   levelCount: number;
@@ -38,8 +36,6 @@ interface UICallbacks {
   clearDebris(): void;
   selectProjectile(id: ProjectileId): void;
   nextLevel(): void;
-  adjustPower(delta: number): void;
-  adjustSize(delta: number): void;
   updateSettings(patch: Partial<GameSettings>): void;
   resetSettings(): void;
 }
@@ -53,9 +49,7 @@ export class GameUI {
   private readonly projectileValue: HTMLSpanElement;
   private readonly chamberValue: HTMLSpanElement;
   private readonly objectiveValue: HTMLSpanElement;
-  private readonly protectedValue: HTMLElement;
-  private readonly powerValue: HTMLSpanElement;
-  private readonly sizeValue: HTMLSpanElement;
+  private readonly chaosBriefValue: HTMLElement;
   private readonly shotsValue: HTMLSpanElement;
   private readonly bodyValue: HTMLSpanElement;
   private readonly fpsValue: HTMLElement;
@@ -65,7 +59,7 @@ export class GameUI {
   private readonly homeLevelRail: HTMLDivElement;
   private readonly targetScoreValue: HTMLSpanElement;
   private readonly targetDamageValue: HTMLSpanElement;
-  private readonly protectedLimitValue: HTMLSpanElement;
+  private readonly threeStarValue: HTMLSpanElement;
   private readonly bonusGoalValue: HTMLSpanElement;
   private readonly settingsSummaryValue: HTMLSpanElement;
   private readonly antialiasInput: HTMLInputElement;
@@ -84,6 +78,8 @@ export class GameUI {
   private renderedScore: ScoreBreakdown | null = null;
   private activeProjectileId: ProjectileId | null = null;
   private currentState: UIState | null = null;
+  private renderedHomeKey = "";
+  private renderedSettingsKey = "";
 
   constructor(private readonly callbacks: UICallbacks) {
     installStyles();
@@ -97,12 +93,12 @@ export class GameUI {
           <span class="hud__brand-mark">MBL</span>
           <div>
             <strong>Material Blast Lab</strong>
-            <span><span data-role="mode">Arcade</span> / Synthetic containment range</span>
+            <span><span data-role="mode">Arcade</span> / Object destruction range</span>
           </div>
         </div>
         <div class="hud__telemetry">
           <span data-role="fps"></span>
-          <span><strong data-role="bodies"></strong> bodies</span>
+          <span><strong data-role="bodies"></strong> objects</span>
           <button type="button" data-action="menu">Menu</button>
         </div>
       </div>
@@ -115,13 +111,13 @@ export class GameUI {
           </div>
           <strong data-role="chamber"></strong>
           <span data-role="objective"></span>
-          <em data-role="protected"></em>
+          <em data-role="chaos-brief"></em>
         </div>
 
         <div class="hud__goal-grid">
           <div><span>Score route</span><strong data-role="target-score"></strong></div>
-          <div><span>Core damage</span><strong data-role="target-damage"></strong></div>
-          <div><span>Protected cap</span><strong data-role="protected-limit"></strong></div>
+          <div><span>Object damage</span><strong data-role="target-damage"></strong></div>
+          <div><span>3-star route</span><strong data-role="three-star"></strong></div>
           <div><span>Bonus</span><strong data-role="bonus-goal"></strong></div>
         </div>
 
@@ -131,27 +127,10 @@ export class GameUI {
         </div>
         <div class="hud__projectiles" data-role="projectiles"></div>
 
-        <div class="hud__steppers">
-          <div class="hud__stepper">
-            <span>Power</span>
-            <button type="button" data-action="power-down" aria-label="Lower power">-</button>
-            <strong data-role="power"></strong>
-            <button type="button" data-action="power-up" aria-label="Raise power">+</button>
-          </div>
-          <div class="hud__stepper">
-            <span>Size</span>
-            <button type="button" data-action="size-down" aria-label="Lower projectile size">-</button>
-            <strong data-role="size"></strong>
-            <button type="button" data-action="size-up" aria-label="Raise projectile size">+</button>
-          </div>
-        </div>
-
         <button class="hud__fire" type="button">FIRE</button>
 
         <div class="hud__utility">
           <button type="button" data-action="reset">Retry</button>
-          <button type="button" data-action="level">Next</button>
-          <button type="button" data-action="clear">Clear Debris</button>
         </div>
         <div class="hud__status" data-role="status"></div>
       </section>
@@ -161,9 +140,9 @@ export class GameUI {
       <section class="hud__home" aria-label="Material Blast Lab menu">
         <div class="hud__hero">
           <div class="hud__hero-copy">
-            <span class="hud__eyebrow">DESTRUCTIBLE ARCADE LAB</span>
+            <span class="hud__eyebrow">DESTRUCTIBLE OBJECT ARCADE</span>
             <h1>Material Blast Lab</h1>
-            <p>Pick a mission, tune one fictional sci-fi payload, fire once, then chase cleaner stars through readable destruction chains.</p>
+            <p>Pick a destructible city route, choose one fictional sci-fi payload, fire once, then chase maximum mayhem through readable object chains.</p>
             <div class="hud__hero-actions">
               <button type="button" data-action="start-arcade">Arcade</button>
               <button type="button" data-action="start-free">Free Play</button>
@@ -228,9 +207,7 @@ export class GameUI {
     this.projectileValue = this.requireElement("[data-role='projectile']");
     this.chamberValue = this.requireElement("[data-role='chamber']");
     this.objectiveValue = this.requireElement("[data-role='objective']");
-    this.protectedValue = this.requireElement("[data-role='protected']");
-    this.powerValue = this.requireElement("[data-role='power']");
-    this.sizeValue = this.requireElement("[data-role='size']");
+    this.chaosBriefValue = this.requireElement("[data-role='chaos-brief']");
     this.shotsValue = this.requireElement("[data-role='shots']");
     this.bodyValue = this.requireElement("[data-role='bodies']");
     this.fpsValue = this.requireElement("[data-role='fps']");
@@ -240,7 +217,7 @@ export class GameUI {
     this.homeLevelRail = this.requireElement("[data-role='home-levels']");
     this.targetScoreValue = this.requireElement("[data-role='target-score']");
     this.targetDamageValue = this.requireElement("[data-role='target-damage']");
-    this.protectedLimitValue = this.requireElement("[data-role='protected-limit']");
+    this.threeStarValue = this.requireElement("[data-role='three-star']");
     this.bonusGoalValue = this.requireElement("[data-role='bonus-goal']");
     this.settingsSummaryValue = this.requireElement("[data-role='settings-summary']");
     this.antialiasInput = this.requireElement("[data-setting='antialias']");
@@ -267,13 +244,7 @@ export class GameUI {
     }
 
     this.fireButton.addEventListener("click", () => this.callbacks.fire());
-    this.requireElement<HTMLButtonElement>("[data-action='level']").addEventListener("click", () => this.callbacks.nextLevel());
-    this.requireElement<HTMLButtonElement>("[data-action='clear']").addEventListener("click", () => this.callbacks.clearDebris());
     this.requireElement<HTMLButtonElement>("[data-action='reset']").addEventListener("click", () => this.callbacks.reset());
-    this.requireElement<HTMLButtonElement>("[data-action='power-down']").addEventListener("click", () => this.callbacks.adjustPower(-0.08));
-    this.requireElement<HTMLButtonElement>("[data-action='power-up']").addEventListener("click", () => this.callbacks.adjustPower(0.08));
-    this.requireElement<HTMLButtonElement>("[data-action='size-down']").addEventListener("click", () => this.callbacks.adjustSize(-0.08));
-    this.requireElement<HTMLButtonElement>("[data-action='size-up']").addEventListener("click", () => this.callbacks.adjustSize(0.08));
     this.requireElement<HTMLButtonElement>("[data-action='menu']").addEventListener("click", () => this.showScreen("home"));
     this.requireElement<HTMLButtonElement>("[data-action='start-arcade']").addEventListener("click", () => this.startMode("Arcade"));
     this.requireElement<HTMLButtonElement>("[data-action='start-free']").addEventListener("click", () => this.startMode("Free Play"));
@@ -311,19 +282,20 @@ export class GameUI {
     setText(this.chamberValue, state.levelName);
     setTitle(this.chamberValue, state.levelDescription);
     setText(this.objectiveValue, state.objective);
-    setText(this.protectedValue, state.protectedBrief);
-    setText(this.powerValue, `${Math.round(state.powerScale * 100)}%`);
-    setText(this.sizeValue, `${Math.round(state.sizeScale * 100)}%`);
+    setText(this.chaosBriefValue, state.chaosBrief);
     setText(this.shotsValue, state.shotAvailable ? "READY" : "SPENT");
     setText(this.bodyValue, String(state.bodyCount));
-    this.fpsValue.hidden = !state.settings.showFps;
+    const fpsHidden = !state.settings.showFps;
+    if (this.fpsValue.hidden !== fpsHidden) {
+      this.fpsValue.hidden = fpsHidden;
+    }
     if (state.settings.showFps) {
       setText(this.fpsValue, `${state.fps} FPS`);
     }
     setText(this.statusValue, state.status);
     setText(this.targetScoreValue, `${state.mission.scoreThresholds.twoStar}+`);
     setText(this.targetDamageValue, String(state.mission.targetDamageThreshold));
-    setText(this.protectedLimitValue, `< ${state.mission.cleanBlastLimit}`);
+    setText(this.threeStarValue, `${state.mission.scoreThresholds.threeStar}+`);
     setText(this.bonusGoalValue, bonusSummary(state.mission));
 
     const blocked = this.isGameplayBlocked();
@@ -340,8 +312,16 @@ export class GameUI {
       this.activeProjectileId = state.projectileId;
     }
 
-    this.renderHomeLevels(state);
-    this.renderSettings(state.settings);
+    const homeKey = homeRenderKey(state);
+    if (this.renderedHomeKey !== homeKey) {
+      this.renderHomeLevels(state);
+      this.renderedHomeKey = homeKey;
+    }
+    const settingsKey = settingsRenderKey(state.settings);
+    if (this.renderedSettingsKey !== settingsKey) {
+      this.renderSettings(state.settings);
+      this.renderedSettingsKey = settingsKey;
+    }
     this.root.classList.toggle("has-results", Boolean(state.score));
 
     if (state.score) {
@@ -396,12 +376,12 @@ export class GameUI {
       <button type="button" class="hud__level-card is-locked" disabled>
         <span>${String(Math.min(state.levelIndex + 2, state.levelCount)).padStart(2, "0")} / CAMPAIGN</span>
         <strong>${state.levelIndex + 1 < state.levelCount ? "Next unlocked mission" : "Campaign loop"}</strong>
-        <em>${state.levelIndex + 1 < state.levelCount ? "Complete the current run" : "Replay for cleaner stars"}</em>
+        <em>${state.levelIndex + 1 < state.levelCount ? "Complete the current run" : "Replay for louder mayhem"}</em>
       </button>
       <button type="button" class="hud__level-card is-locked" disabled>
         <span>FREE PLAY</span>
-        <strong>Sandbox controls</strong>
-        <em>All current tuning remains available</em>
+        <strong>Payload practice</strong>
+        <em>Replay the current route for cleaner chains</em>
       </button>
     `;
     if (this.homeLevelRail.innerHTML !== html) {
@@ -448,6 +428,30 @@ export class GameUI {
   }
 }
 
+function homeRenderKey(state: UIState): string {
+  const progress = state.levelProgress;
+  return [
+    state.levelIndex,
+    state.levelCount,
+    state.totalStars,
+    state.levelName,
+    progress.stars,
+    progress.bestScore,
+    progress.attempts
+  ].join("|");
+}
+
+function settingsRenderKey(settings: GameSettings): string {
+  return [
+    settings.graphicsQuality,
+    Number(settings.antialias),
+    settings.masterVolume.toFixed(3),
+    settings.cameraShake.toFixed(3),
+    Number(settings.motionEffects),
+    Number(settings.showFps)
+  ].join("|");
+}
+
 function renderScore(state: UIState): string {
   const score = state.score;
   if (!score) {
@@ -455,23 +459,23 @@ function renderScore(state: UIState): string {
   }
   const result = state.arcadeResult;
   const stars = result?.stars ?? 0;
-  const resultLabel = result?.completed ? (stars >= 3 ? "Perfect Run" : "Mission Complete") : "Mission Failed";
+  const resultLabel = result?.completed ? (stars >= 3 ? "Maximum Mayhem" : "Mayhem Complete") : "Mayhem Failed";
   const bonusValue = bonusMetricValue(score, state.mission.bonusThreshold.metric);
   const goals = [
     {
-      label: "Target core",
+      label: "Object damage",
       value: `${score.targetDamage} / ${state.mission.targetDamageThreshold}`,
       passed: score.targetDamage >= state.mission.targetDamageThreshold
-    },
-    {
-      label: "Containment",
-      value: `${score.protectedPenalty} / ${state.mission.protectedDamageLimit}`,
-      passed: score.protectedPenalty <= state.mission.protectedDamageLimit
     },
     {
       label: "Score route",
       value: `${score.totalScore} / ${state.mission.scoreThresholds.twoStar}`,
       passed: score.totalScore >= state.mission.scoreThresholds.twoStar
+    },
+    {
+      label: "3-star route",
+      value: `${score.totalScore} / ${state.mission.scoreThresholds.threeStar}`,
+      passed: score.totalScore >= state.mission.scoreThresholds.threeStar
     },
     {
       label: state.mission.bonusObjective,
@@ -481,9 +485,9 @@ function renderScore(state: UIState): string {
   ];
 
   return `
-    <div class="hud__result-head">
+      <div class="hud__result-head">
       <span>${resultLabel}</span>
-      <strong>${escapeHtml(score.containmentRating)}</strong>
+      <strong>${escapeHtml(score.mayhemRating)}</strong>
     </div>
     <div class="hud__stars" aria-label="${stars} stars">${renderStars(stars)}</div>
     <div class="hud__total">
@@ -506,10 +510,9 @@ function renderScore(state: UIState): string {
     <div class="hud__score-breakdown">
       <div><span>Payload</span><strong>${escapeHtml(score.shotName)}</strong></div>
       <div><span>City Chaos</span><strong>${score.cityChaos}</strong></div>
-      <div><span>Contamination Purge</span><strong>${score.contaminationPurge}</strong></div>
+      <div><span>Chain Bonus</span><strong>${score.chainReactionBonus}</strong></div>
       <div><span>Chain Hits</span><strong>${score.chainReactionCount}${score.maxChainCombo > 1 ? ` / x${score.maxChainCombo}` : ""}</strong></div>
       <div><span>Motion Bonus</span><strong>${score.remainingDebrisMotion}</strong></div>
-      <div><span>Protected Penalty</span><strong class="is-penalty">-${score.protectedPenalty}</strong></div>
     </div>
     <div class="hud__result-actions">
       <button type="button" data-action="result-retry">Retry</button>
@@ -532,8 +535,6 @@ function metricLabel(metric: ArcadeMissionFields["bonusThreshold"]["metric"]): s
       return "target";
     case "cityChaos":
       return "chaos";
-    case "contaminationPurge":
-      return "purge";
     case "chainReactionBonus":
       return "chain";
     case "remainingDebrisMotion":
@@ -605,6 +606,16 @@ function installStyles(): void {
   const style = document.createElement("style");
   style.textContent = `
     :root {
+      --hud-edge: 16px;
+      --hud-edge-mobile: 10px;
+      --hud-safe-top: max(var(--hud-edge), env(safe-area-inset-top));
+      --hud-safe-right: max(var(--hud-edge), env(safe-area-inset-right));
+      --hud-safe-bottom: max(var(--hud-edge), env(safe-area-inset-bottom));
+      --hud-safe-left: max(var(--hud-edge), env(safe-area-inset-left));
+      --hud-safe-top-mobile: max(var(--hud-edge-mobile), env(safe-area-inset-top));
+      --hud-safe-right-mobile: max(var(--hud-edge-mobile), env(safe-area-inset-right));
+      --hud-safe-bottom-mobile: max(var(--hud-edge-mobile), env(safe-area-inset-bottom));
+      --hud-safe-left-mobile: max(var(--hud-edge-mobile), env(safe-area-inset-left));
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #f4f8fb;
       background: #07090d;
@@ -625,10 +636,21 @@ function installStyles(): void {
       height: 100%;
       margin: 0;
       overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    input,
+    textarea,
+    [contenteditable="true"] {
+      -webkit-user-select: text;
+      user-select: text;
     }
 
     button {
       font: inherit;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     canvas {
@@ -678,9 +700,9 @@ function installStyles(): void {
 
     .hud__topbar {
       position: absolute;
-      top: 16px;
-      left: 16px;
-      right: 16px;
+      top: var(--hud-safe-top);
+      left: var(--hud-safe-left);
+      right: var(--hud-safe-right);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -776,8 +798,8 @@ function installStyles(): void {
 
     .hud__command {
       position: absolute;
-      left: 16px;
-      bottom: 16px;
+      left: var(--hud-safe-left);
+      bottom: var(--hud-safe-bottom);
       display: grid;
       gap: 10px;
       width: min(446px, calc(100vw - 32px));
@@ -876,7 +898,7 @@ function installStyles(): void {
 
     .hud__projectiles {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 7px;
       min-width: 0;
     }
@@ -925,44 +947,8 @@ function installStyles(): void {
       outline-offset: 2px;
     }
 
-    .hud__steppers {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      min-width: 0;
-    }
-
-    .hud__stepper {
-      display: grid;
-      grid-template-columns: minmax(42px, 1fr) 36px minmax(44px, auto) 36px;
-      align-items: center;
-      gap: 5px;
-      min-width: 0;
-      padding: 6px;
-      border: 1px solid rgba(183, 232, 255, 0.12);
-      border-radius: 7px;
-      background: rgba(255, 255, 255, 0.055);
-      color: #a9c4d1;
-      font-size: 12px;
-    }
-
-    .hud__stepper span,
-    .hud__stepper strong {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .hud__stepper strong {
-      color: #ffffff;
-      text-align: center;
-      font-variant-numeric: tabular-nums;
-    }
-
     .hud__fire,
     .hud__utility button,
-    .hud__stepper button,
     .hud__hero-actions button,
     .hud__result-actions button,
     .hud__level-card,
@@ -1030,8 +1016,8 @@ function installStyles(): void {
 
     .hud__results {
       position: absolute;
-      right: 16px;
-      bottom: 16px;
+      right: var(--hud-safe-right);
+      bottom: var(--hud-safe-bottom);
       display: none;
       width: min(420px, calc(100vw - 32px));
       max-height: calc(100svh - 104px);
@@ -1175,6 +1161,9 @@ function installStyles(): void {
       align-items: end;
       padding: 94px 24px 28px;
       background: linear-gradient(90deg, rgba(4, 6, 9, 0.88), rgba(4, 6, 9, 0.24) 58%, rgba(4, 6, 9, 0.62));
+      overflow: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
 
     .hud[data-screen="home"] .hud__home,
@@ -1353,9 +1342,9 @@ function installStyles(): void {
 
     @media (max-width: 840px) {
       .hud__topbar {
-        left: 10px;
-        right: 10px;
-        top: 10px;
+        left: var(--hud-safe-left-mobile);
+        right: var(--hud-safe-right-mobile);
+        top: var(--hud-safe-top-mobile);
       }
 
       .hud__telemetry span:nth-child(2) {
@@ -1364,9 +1353,9 @@ function installStyles(): void {
 
       .hud__command,
       .hud__results {
-        left: 10px;
-        right: 10px;
-        bottom: 10px;
+        left: var(--hud-safe-left-mobile);
+        right: var(--hud-safe-right-mobile);
+        bottom: var(--hud-safe-bottom-mobile);
         width: auto;
         max-height: min(50svh, 430px);
       }
@@ -1411,9 +1400,13 @@ function installStyles(): void {
         opacity: 0.48;
       }
 
+      .hud[data-screen="play"]::before {
+        opacity: 0.34;
+      }
+
       .hud__topbar {
-        min-height: 48px;
-        padding: 7px;
+        min-height: 52px;
+        padding: 7px 8px;
       }
 
       .hud__brand {
@@ -1440,23 +1433,24 @@ function installStyles(): void {
 
       .hud__telemetry span,
       .hud__telemetry button {
-        min-height: 28px;
-        padding: 0 7px;
+        min-height: 38px;
+        padding: 0 9px;
         font-size: 10px;
       }
 
       .hud__command {
-        gap: 7px;
-        max-height: min(46svh, 380px);
+        gap: 6px;
+        max-height: none;
         padding: 8px;
+        overflow: visible;
       }
 
       .hud__mission {
-        gap: 3px;
+        gap: 2px;
       }
 
       .hud__mission > strong {
-        font-size: 15px;
+        font-size: 14px;
       }
 
       .hud__mission > span,
@@ -1465,16 +1459,27 @@ function installStyles(): void {
         font-size: 10px;
       }
 
+      .hud__mission > span {
+        display: none;
+      }
+
       .hud__mission > em {
         display: none;
       }
 
       .hud__goal-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        display: none;
+      }
+
+      .hud__goal-grid::-webkit-scrollbar,
+      .hud__projectiles::-webkit-scrollbar {
+        display: none;
       }
 
       .hud__goal-grid div {
+        min-height: 42px;
         padding: 6px;
+        scroll-snap-align: start;
       }
 
       .hud__goal-grid span {
@@ -1482,59 +1487,57 @@ function installStyles(): void {
       }
 
       .hud__projectiles {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 5px;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 4px;
       }
 
       .hud__projectile {
-        min-height: 38px;
-        padding: 4px;
+        min-height: 44px;
+        padding: 2px;
       }
 
       .hud__projectile span {
-        font-size: 10px;
+        font-size: 9px;
+        line-height: 1.05;
       }
 
       .hud__projectile small {
         display: none;
       }
 
-      .hud__steppers {
-        gap: 5px;
-      }
-
-      .hud__stepper {
-        grid-template-columns: minmax(34px, 0.8fr) 30px minmax(40px, 1fr) 30px;
-        gap: 3px;
-        padding: 4px;
-        font-size: 10px;
-      }
-
       .hud__fire {
-        min-height: 42px;
+        min-height: 50px;
         font-size: 14px;
+        order: 20;
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
       }
 
       .hud__utility {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
         gap: 5px;
+        order: 19;
       }
 
       .hud__utility button,
-      .hud__stepper button,
       .hud__hero-actions button,
       .hud__result-actions button {
-        min-height: 32px;
+        min-height: 40px;
         font-size: 10px;
       }
 
+      .hud__loadout-head {
+        display: none;
+      }
+
       .hud__status {
-        min-height: 0;
-        padding: 6px;
+        display: none;
       }
 
       .hud__home {
-        padding: 70px 10px 12px;
+        align-items: end;
+        padding: calc(70px + env(safe-area-inset-top)) var(--hud-safe-right-mobile) var(--hud-safe-bottom-mobile) var(--hud-safe-left-mobile);
       }
 
       .hud__hero-copy {
@@ -1561,22 +1564,18 @@ function installStyles(): void {
         padding: 8px;
       }
 
-      .hud__level-card:nth-child(n + 3) {
-        display: none;
-      }
-
       .hud__results {
-        max-height: min(70svh, 560px);
+        max-height: min(74svh, 560px);
         padding: 10px;
       }
 
       .hud__settings {
-        padding: 64px 10px 12px;
+        padding: calc(64px + env(safe-area-inset-top)) var(--hud-safe-right-mobile) var(--hud-safe-bottom-mobile) var(--hud-safe-left-mobile);
       }
 
       .hud__settings-panel {
         gap: 8px;
-        max-height: calc(100svh - 76px);
+        max-height: calc(100svh - 76px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
         overflow: auto;
         padding: 10px;
       }
@@ -1616,6 +1615,28 @@ function installStyles(): void {
 
       .hud__total strong {
         font-size: 28px;
+      }
+    }
+
+    @media (max-width: 520px) and (max-height: 700px) {
+      .hud__command {
+        max-height: min(334px, calc(100svh - 72px));
+      }
+
+      .hud__goal-grid {
+        display: none;
+      }
+    }
+
+    @media (max-width: 840px) and (max-height: 520px) {
+      .hud__command {
+        left: auto;
+        width: min(390px, calc(52vw - var(--hud-edge-mobile)));
+        max-height: calc(100svh - var(--hud-safe-top-mobile) - var(--hud-safe-bottom-mobile));
+      }
+
+      .hud__home {
+        align-items: start;
       }
     }
   `;

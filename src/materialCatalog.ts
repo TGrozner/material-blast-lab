@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { materialAtlasTile } from "./visualAssets";
 
-export type MaterialId = "wood" | "glass" | "concrete" | "metal" | "rubber" | "foam" | "bioGel";
+export type MaterialId = "wood" | "glass" | "concrete" | "metal" | "rubber" | "foam";
 
 export interface MaterialDefinition {
   id: MaterialId;
@@ -21,7 +21,7 @@ export interface MaterialDefinition {
 }
 
 export class MaterialCatalog {
-  readonly order: MaterialId[] = ["wood", "glass", "concrete", "metal", "rubber", "foam", "bioGel"];
+  readonly order: MaterialId[] = ["wood", "glass", "concrete", "metal", "rubber", "foam"];
   readonly definitions: Record<MaterialId, MaterialDefinition>;
 
   private readonly renderMaterials = new Map<MaterialId, THREE.Material>();
@@ -130,22 +130,6 @@ export class MaterialCatalog {
         angularResponse: 1.55,
         fragmentLife: 14,
         description: "Very light and flies far."
-      },
-      bioGel: {
-        id: "bioGel",
-        name: "Bio-Gel",
-        key: "G",
-        color: new THREE.Color(0xb91d5f),
-        dustColor: new THREE.Color(0xf04f8d),
-        density: 0.62,
-        massFactor: 0.82,
-        friction: 0.68,
-        restitution: 0.28,
-        fractureThreshold: 10,
-        fragmentCount: [12, 24],
-        angularResponse: 1.45,
-        fragmentLife: 18,
-        description: "Fictional arcade gel for synthetic lab dummies."
       }
     };
 
@@ -218,17 +202,6 @@ export class MaterialCatalog {
         roughness: 0.78,
         metalness: 0.0,
         map: materialAtlasTile(7)
-      });
-    }
-
-    if (id === "bioGel") {
-      return new THREE.MeshStandardMaterial({
-        color: def.color,
-        roughness: 0.52,
-        metalness: 0,
-        emissive: new THREE.Color(0x3a0018),
-        emissiveIntensity: 0.22,
-        map: materialAtlasTile(9)
       });
     }
 

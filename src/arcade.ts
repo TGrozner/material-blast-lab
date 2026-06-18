@@ -8,7 +8,6 @@ export type ArcadeStars = 0 | 1 | 2 | 3;
 export type ArcadeBonusMetric =
   | "targetDamage"
   | "cityChaos"
-  | "contaminationPurge"
   | "chainReactionBonus"
   | "remainingDebrisMotion"
   | "chainReactionCount"
@@ -21,11 +20,8 @@ export interface ArcadeBonusThreshold {
 
 export interface ArcadeStarThresholds {
   missionScore: number;
-  missionMaxProtectedPenalty: number;
   twoStarScore: number;
-  twoStarMaxProtectedPenalty: number;
   threeStarScore: number;
-  threeStarMaxProtectedPenalty: number;
   threeStarBonus?: ArcadeBonusThreshold;
 }
 
@@ -40,7 +36,6 @@ export interface ArcadeResult {
   completed: boolean;
   stars: ArcadeStars;
   score: number;
-  protectedPenalty: number;
   bonusCompleted: boolean;
 }
 
@@ -66,11 +61,8 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
     title: "Target Primer",
     thresholds: {
       missionScore: 900,
-      missionMaxProtectedPenalty: 300,
       twoStarScore: 1300,
-      twoStarMaxProtectedPenalty: 160,
       threeStarScore: 1800,
-      threeStarMaxProtectedPenalty: 80,
       threeStarBonus: { metric: "targetDamage", minimum: 700 }
     }
   },
@@ -79,38 +71,29 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
     title: "Cascade Lane",
     thresholds: {
       missionScore: 1100,
-      missionMaxProtectedPenalty: 340,
       twoStarScore: 1650,
-      twoStarMaxProtectedPenalty: 170,
       threeStarScore: 2200,
-      threeStarMaxProtectedPenalty: 90,
       threeStarBonus: { metric: "chainReactionCount", minimum: 3 }
     }
   },
   {
-    id: "clinic-squeeze",
-    title: "Clinic Squeeze",
+    id: "switchback-crush",
+    title: "Switchback Crush",
     thresholds: {
       missionScore: 1200,
-      missionMaxProtectedPenalty: 180,
       twoStarScore: 1600,
-      twoStarMaxProtectedPenalty: 90,
       threeStarScore: 2100,
-      threeStarMaxProtectedPenalty: 35,
       threeStarBonus: { metric: "maxChainCombo", minimum: 2 }
     }
   },
   {
-    id: "purge-shot",
-    title: "Purge Shot",
+    id: "depot-breaker",
+    title: "Depot Breaker",
     thresholds: {
       missionScore: 1350,
-      missionMaxProtectedPenalty: 260,
       twoStarScore: 1850,
-      twoStarMaxProtectedPenalty: 130,
       threeStarScore: 2350,
-      threeStarMaxProtectedPenalty: 70,
-      threeStarBonus: { metric: "contaminationPurge", minimum: 450 }
+      threeStarBonus: { metric: "cityChaos", minimum: 450 }
     }
   },
   {
@@ -118,11 +101,8 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
     title: "High-Score Route",
     thresholds: {
       missionScore: 1500,
-      missionMaxProtectedPenalty: 300,
       twoStarScore: 2100,
-      twoStarMaxProtectedPenalty: 140,
       threeStarScore: 2800,
-      threeStarMaxProtectedPenalty: 75,
       threeStarBonus: { metric: "chainReactionBonus", minimum: 500 }
     }
   }
@@ -133,26 +113,16 @@ export function evaluateArcadeResult(
   score: ScoreBreakdown
 ): ArcadeResult {
   const thresholds = level.thresholds;
-  const completed =
-    score.totalScore >= thresholds.missionScore &&
-    score.protectedPenalty <= thresholds.missionMaxProtectedPenalty;
-  const twoStar =
-    completed &&
-    score.totalScore >= thresholds.twoStarScore &&
-    score.protectedPenalty <= thresholds.twoStarMaxProtectedPenalty;
+  const completed = score.totalScore >= thresholds.missionScore;
+  const twoStar = completed && score.totalScore >= thresholds.twoStarScore;
   const bonusCompleted = evaluateBonus(score, thresholds.threeStarBonus);
-  const threeStar =
-    twoStar &&
-    score.totalScore >= thresholds.threeStarScore &&
-    score.protectedPenalty <= thresholds.threeStarMaxProtectedPenalty &&
-    bonusCompleted;
+  const threeStar = twoStar && score.totalScore >= thresholds.threeStarScore && bonusCompleted;
 
   return {
     levelId: level.id,
     completed,
     stars: threeStar ? 3 : twoStar ? 2 : completed ? 1 : 0,
     score: score.totalScore,
-    protectedPenalty: score.protectedPenalty,
     bonusCompleted
   };
 }

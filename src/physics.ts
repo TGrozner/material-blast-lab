@@ -2,10 +2,27 @@ import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import type { MaterialDefinition, MaterialId } from "./materialCatalog";
 
-export type PhysicsCategory = "structure" | "bio" | "projectile" | "debris";
-export type ScoreRole = "target" | "protected" | "neutral";
+export type PhysicsCategory = "structure" | "projectile" | "debris";
+export type ScoreRole = "target" | "neutral";
 export type PhysicsBodyType = "dynamic" | "fixed";
 export type PhysicsShape = "box" | "sphere";
+export type TrafficAxis = "x" | "z";
+
+export interface TrafficWaypoint {
+  x: number;
+  z: number;
+}
+
+export interface TrafficRoute {
+  axis: TrafficAxis;
+  min: number;
+  max: number;
+  speed: number;
+  direction: -1 | 1;
+  laneOffset?: number;
+  waypoints?: TrafficWaypoint[];
+  segmentIndex?: number;
+}
 
 export interface PhysicsCollisionEvent {
   first: PhysicsObject;
@@ -40,6 +57,13 @@ export interface PhysicsObject {
   bodyType: PhysicsBodyType;
   chainSource: boolean;
   shape: PhysicsShape;
+  trafficRoute?: TrafficRoute;
+}
+
+interface MotionSample {
+  x: number;
+  y: number;
+  z: number;
 }
 
 interface DynamicBoxOptions {
@@ -68,6 +92,8 @@ interface DynamicBoxOptions {
   additionalMass?: number;
   ccd?: boolean;
   bodyType?: PhysicsBodyType;
+  trafficRoute?: TrafficRoute;
+  collisionEvents?: boolean;
 }
 
 interface StaticBoxOptions {
@@ -103,6 +129,7 @@ interface DynamicSphereOptions {
   angularDamping?: number;
   additionalMass?: number;
   ccd?: boolean;
+  collisionEvents?: boolean;
 }
 
 export class PhysicsWorld {
@@ -115,16 +142,19 @@ export class PhysicsWorld {
   private nextId = 1;
   private readonly scene: THREE.Scene;
   private readonly debrisQueue: number[] = [];
+  private debrisQueueHead = 0;
   private readonly maxDebris = 500;
   private readonly eventQueue = new RAPIER.EventQueue(true);
   private readonly colliderOwners = new Map<number, number>();
+  private readonly trafficObjectIds = new Set<number>();
+  private readonly preStepVelocities = new Map<number, MotionSample>();
   private readonly surfaceColliderLabels = new Map<number, string>();
   private readonly pendingCollisionEvents: Array<{ firstId: number; secondId: number; started: boolean }> = [];
   private readonly pendingSurfaceCollisionEvents: Array<{
     objectId: number;
     surfaceLabel: string;
     started: boolean;
-    impactVelocity: THREE.Vector3;
+    impactVelocity: MotionSample;
   }> = [];
 
   constructor(scene: THREE.Scene) {
@@ -138,9 +168,12 @@ export class PhysicsWorld {
     this.pendingSurfaceCollisionEvents.length = 0;
     this.accumulator += Math.min(deltaSeconds, 0.12);
     while (this.accumulator >= this.fixedTimestep) {
-      const preStepVelocities = this.capturePreStepVelocities();
+      this.capturePreStepVelocities();
       this.world.step(this.eventQueue);
       this.eventQueue.drainCollisionEvents((handle1, handle2, started) => {
+        if (!started) {
+          return;
+        }
         const firstId = this.colliderOwners.get(handle1);
         const secondId = this.colliderOwners.get(handle2);
         if (firstId !== undefined && secondId !== undefined) {
@@ -152,12 +185,16 @@ export class PhysicsWorld {
         const surfaceLabel = this.surfaceColliderLabels.get(surfaceHandle);
         if (objectId !== undefined && surfaceLabel) {
           const object = this.objects.get(objectId);
-          const fallbackVelocity = object ? vectorFromRapier(object.body.linvel()) : new THREE.Vector3();
+          const fallbackVelocity = object ? object.body.linvel() : { x: 0, y: 0, z: 0 };
           this.pendingSurfaceCollisionEvents.push({
             objectId,
             surfaceLabel,
             started,
-            impactVelocity: preStepVelocities.get(objectId)?.clone() ?? fallbackVelocity
+            impactVelocity: this.preStepVelocities.get(objectId) ?? {
+              x: fallbackVelocity.x,
+              y: fallbackVelocity.y,
+              z: fallbackVelocity.z
+            }
           });
         }
       });
@@ -227,14 +264,13 @@ export class PhysicsWorld {
     )
       .setDensity(options.density ?? options.material.density)
       .setFriction(options.friction ?? options.material.friction)
-      .setRestitution(options.restitution ?? options.material.restitution)
-      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+      .setRestitution(options.restitution ?? options.material.restitution);
+    if (shouldEnableBoxCollisionEvents(options, bodyType)) {
+      colliderDesc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    }
     const collider = this.world.createCollider(colliderDesc, body);
 
-    const mesh = new THREE.Mesh(
-      options.isDebris ? new THREE.BoxGeometry(options.size.x, options.size.y, options.size.z) : sharedBoxGeometry(options.size),
-      options.renderMaterial
-    );
+    const mesh = new THREE.Mesh(sharedBoxGeometry(options.size), options.renderMaterial);
     mesh.name = options.label ?? options.material.name;
     mesh.castShadow = !options.isDebris;
     mesh.receiveShadow = true;
@@ -262,11 +298,15 @@ export class PhysicsWorld {
       radius: options.size.length() * 0.5,
       bodyType,
       chainSource: options.chainSource ?? false,
-      shape: "box"
+      shape: "box",
+      trafficRoute: options.trafficRoute ? { ...options.trafficRoute } : undefined
     };
 
     this.objects.set(object.id, object);
     this.colliderOwners.set(collider.handle, object.id);
+    if (object.trafficRoute) {
+      this.trafficObjectIds.add(object.id);
+    }
     if (object.isDebris) {
       this.debrisQueue.push(object.id);
       this.enforceDebrisCap();
@@ -299,12 +339,14 @@ export class PhysicsWorld {
     const colliderDesc = RAPIER.ColliderDesc.ball(options.radius)
       .setDensity(options.density ?? options.material.density)
       .setFriction(options.friction ?? options.material.friction)
-      .setRestitution(options.restitution ?? options.material.restitution)
-      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+      .setRestitution(options.restitution ?? options.material.restitution);
+    if (shouldEnableSphereCollisionEvents(options)) {
+      colliderDesc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    }
     const collider = this.world.createCollider(colliderDesc, body);
 
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(options.radius, options.segments ?? 24, Math.max(12, Math.floor((options.segments ?? 24) * 0.6))),
+      sharedSphereGeometry(options.radius, options.segments ?? 24),
       options.renderMaterial
     );
     mesh.name = options.label ?? options.material.name;
@@ -355,6 +397,24 @@ export class PhysicsWorld {
     return this.objects.size;
   }
 
+  getBlastCandidates(origin: THREE.Vector3, radius: number): PhysicsObject[] {
+    return this.collectObjectsInAabb(origin, radius, (object) => object.category !== "projectile" && object.zoneId !== "surface");
+  }
+
+  getSegmentCandidates(previous: THREE.Vector3, current: THREE.Vector3, padding: number): PhysicsObject[] {
+    const center = new THREE.Vector3(
+      (previous.x + current.x) * 0.5,
+      (previous.y + current.y) * 0.5,
+      (previous.z + current.z) * 0.5
+    );
+    const halfExtents = new THREE.Vector3(
+      Math.abs(current.x - previous.x) * 0.5 + padding,
+      Math.abs(current.y - previous.y) * 0.5 + padding,
+      Math.abs(current.z - previous.z) * 0.5 + padding
+    );
+    return this.collectObjectsInAabb(center, halfExtents, () => true);
+  }
+
   getObject(id: number): PhysicsObject | undefined {
     return this.objects.get(id);
   }
@@ -381,12 +441,48 @@ export class PhysicsWorld {
           object,
           surfaceLabel: event.surfaceLabel,
           started: event.started,
-          impactVelocity: event.impactVelocity.clone()
+          impactVelocity: new THREE.Vector3(event.impactVelocity.x, event.impactVelocity.y, event.impactVelocity.z)
         });
       }
     }
     this.pendingSurfaceCollisionEvents.length = 0;
     return events;
+  }
+
+  advanceTrafficRoutes(deltaSeconds: number): void {
+    if (deltaSeconds <= 0) {
+      return;
+    }
+    for (const id of this.trafficObjectIds) {
+      const object = this.objects.get(id);
+      const route = object?.trafficRoute;
+      if (!object || !route || object.bodyType !== "dynamic" || object.isDebris || object.category === "projectile") {
+        continue;
+      }
+
+      const current = vectorFromRapier(object.body.translation());
+      if (route.waypoints && route.waypoints.length > 1) {
+        advanceWaypointTraffic(current, route, deltaSeconds);
+        applyTrafficBodyTransform(object, current, route);
+        continue;
+      }
+
+      const min = Math.min(route.min, route.max);
+      const max = Math.max(route.min, route.max);
+      setTrafficLaneCoordinate(current, route);
+      let next = routeCoordinate(current, route.axis) + route.speed * route.direction * deltaSeconds;
+      if (next > max) {
+        next = max - (next - max);
+        route.direction = -1;
+      } else if (next < min) {
+        next = min + (min - next);
+        route.direction = 1;
+      }
+      next = THREE.MathUtils.clamp(next, min, max);
+
+      setRouteCoordinate(current, route.axis, next);
+      applyTrafficBodyTransform(object, current, route);
+    }
   }
 
   removeObject(id: number): void {
@@ -397,6 +493,8 @@ export class PhysicsWorld {
     this.scene.remove(object.mesh);
     disposeMeshTree(object.mesh);
     this.colliderOwners.delete(object.collider.handle);
+    this.trafficObjectIds.delete(object.id);
+    this.preStepVelocities.delete(object.id);
     this.world.removeRigidBody(object.body);
     this.objects.delete(id);
   }
@@ -406,6 +504,7 @@ export class PhysicsWorld {
       this.removeObject(object.id);
     }
     this.debrisQueue.length = 0;
+    this.debrisQueueHead = 0;
   }
 
   clearDebris(): void {
@@ -457,7 +556,12 @@ export class PhysicsWorld {
     const maxY = origin.y + Math.max(2.4, source.dimensions.y * 6.4);
     let destabilized = 0;
 
-    for (const object of this.objects.values()) {
+    const candidates = this.collectObjectsInAabb(
+      new THREE.Vector3(origin.x, (minY + maxY) * 0.5, origin.z),
+      new THREE.Vector3(sameStackRadius, Math.max(0.1, (maxY - minY) * 0.5), sameStackRadius),
+      (object) => canDestabilizeStructure(source, object)
+    );
+    for (const object of candidates) {
       if (!canDestabilizeStructure(source, object)) {
         continue;
       }
@@ -478,6 +582,7 @@ export class PhysicsWorld {
       if (object.bodyType === "fixed") {
         object.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
         object.bodyType = "dynamic";
+        object.collider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
         object.body.setLinearDamping(0.68);
         object.body.setAngularDamping(1.24);
         object.body.setAdditionalMass(object.dimensions.x * object.dimensions.y * object.dimensions.z * 3.4, true);
@@ -496,36 +601,189 @@ export class PhysicsWorld {
   }
 
   private enforceDebrisCap(): void {
-    this.compactDebrisQueue();
-    while (this.debrisQueue.length > this.maxDebris) {
-      const id = this.debrisQueue.shift();
+    while (this.debrisQueue.length - this.debrisQueueHead > this.maxDebris) {
+      const id = this.debrisQueue[this.debrisQueueHead];
+      this.debrisQueueHead += 1;
       if (id !== undefined) {
         this.removeObject(id);
       }
     }
+    if (this.debrisQueueHead > 96 && this.debrisQueueHead * 2 > this.debrisQueue.length) {
+      this.compactDebrisQueue();
+    }
   }
 
   private compactDebrisQueue(): void {
-    for (let i = this.debrisQueue.length - 1; i >= 0; i -= 1) {
-      if (!this.objects.has(this.debrisQueue[i])) {
-        this.debrisQueue.splice(i, 1);
+    let write = 0;
+    for (let i = this.debrisQueueHead; i < this.debrisQueue.length; i += 1) {
+      const id = this.debrisQueue[i];
+      if (this.objects.has(id)) {
+        this.debrisQueue[write] = id;
+        write += 1;
+      }
+    }
+    this.debrisQueue.length = write;
+    this.debrisQueueHead = 0;
+  }
+
+  private capturePreStepVelocities(): void {
+    this.preStepVelocities.clear();
+    for (const [id, object] of this.objects) {
+      if (
+        object.bodyType === "dynamic" &&
+        object.category !== "projectile" &&
+        object.destructible &&
+        object.canFracture &&
+        !object.body.isSleeping()
+      ) {
+        const velocity = object.body.linvel();
+        this.preStepVelocities.set(id, { x: velocity.x, y: velocity.y, z: velocity.z });
       }
     }
   }
 
-  private capturePreStepVelocities(): Map<number, THREE.Vector3> {
-    const velocities = new Map<number, THREE.Vector3>();
-    for (const [id, object] of this.objects) {
-      if (object.bodyType === "dynamic" && !object.body.isSleeping()) {
-        velocities.set(id, vectorFromRapier(object.body.linvel()));
+  private collectObjectsInAabb(
+    center: THREE.Vector3,
+    halfExtentsOrRadius: THREE.Vector3 | number,
+    include: (object: PhysicsObject) => boolean
+  ): PhysicsObject[] {
+    const results: PhysicsObject[] = [];
+    const seen = new Set<number>();
+    const halfExtents =
+      typeof halfExtentsOrRadius === "number"
+        ? { x: halfExtentsOrRadius, y: halfExtentsOrRadius, z: halfExtentsOrRadius }
+        : halfExtentsOrRadius;
+    this.world.collidersWithAabbIntersectingAabb(center, halfExtents, (collider) => {
+      const id = this.colliderOwners.get(collider.handle);
+      if (id === undefined || seen.has(id)) {
+        return true;
       }
-    }
-    return velocities;
+      const object = this.objects.get(id);
+      if (object && include(object)) {
+        seen.add(id);
+        results.push(object);
+      }
+      return true;
+    });
+    return results;
   }
 }
 
 function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
   return new THREE.Vector3(v.x, v.y, v.z);
+}
+
+function advanceWaypointTraffic(position: THREE.Vector3, route: TrafficRoute, deltaSeconds: number): void {
+  const waypoints = route.waypoints;
+  if (!waypoints || waypoints.length < 2) {
+    return;
+  }
+
+  let remaining = route.speed * deltaSeconds;
+  let segmentIndex = normalizeSegmentIndex(route.segmentIndex ?? 0, waypoints.length);
+  let guard = 0;
+  while (remaining > 0 && guard < waypoints.length + 2) {
+    const target = waypoints[(segmentIndex + 1) % waypoints.length];
+    const dx = target.x - position.x;
+    const dz = target.z - position.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance <= 0.001) {
+      segmentIndex = (segmentIndex + 1) % waypoints.length;
+      route.segmentIndex = segmentIndex;
+      guard += 1;
+      continue;
+    }
+    if (remaining >= distance) {
+      position.x = target.x;
+      position.z = target.z;
+      remaining -= distance;
+      segmentIndex = (segmentIndex + 1) % waypoints.length;
+      route.segmentIndex = segmentIndex;
+      guard += 1;
+      continue;
+    }
+    const step = remaining / distance;
+    position.x += dx * step;
+    position.z += dz * step;
+    remaining = 0;
+  }
+  route.segmentIndex = segmentIndex;
+}
+
+function applyTrafficBodyTransform(object: PhysicsObject, position: THREE.Vector3, route: TrafficRoute): void {
+  const velocity = trafficVelocity(route);
+  const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, trafficYaw(route), 0));
+  object.body.wakeUp();
+  object.body.setTranslation({ x: position.x, y: position.y, z: position.z }, true);
+  object.body.setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w }, true);
+  object.body.setLinvel({ x: velocity.x, y: 0, z: velocity.z }, true);
+  object.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  object.mesh.position.copy(position);
+  object.mesh.quaternion.copy(rotation);
+}
+
+function routeCoordinate(position: THREE.Vector3, axis: TrafficAxis): number {
+  return axis === "x" ? position.x : position.z;
+}
+
+function setRouteCoordinate(position: THREE.Vector3, axis: TrafficAxis, value: number): void {
+  if (axis === "x") {
+    position.x = value;
+  } else {
+    position.z = value;
+  }
+}
+
+function setTrafficLaneCoordinate(position: THREE.Vector3, route: TrafficRoute): void {
+  const laneOffset = route.laneOffset ?? 0;
+  if (route.axis === "x") {
+    position.z = laneOffset;
+  } else {
+    position.x = laneOffset;
+  }
+}
+
+function trafficVelocity(route: TrafficRoute): THREE.Vector3 {
+  const waypointDirection = trafficWaypointDirection(route);
+  if (waypointDirection) {
+    return new THREE.Vector3(waypointDirection.x * route.speed, 0, waypointDirection.z * route.speed);
+  }
+  if (route.axis === "x") {
+    return new THREE.Vector3(route.speed * route.direction, 0, 0);
+  }
+  return new THREE.Vector3(0, 0, route.speed * route.direction);
+}
+
+function trafficYaw(route: TrafficRoute): number {
+  const waypointDirection = trafficWaypointDirection(route);
+  if (waypointDirection) {
+    return Math.atan2(waypointDirection.x, waypointDirection.z);
+  }
+  if (route.axis === "x") {
+    return route.direction > 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
+  }
+  return route.direction > 0 ? 0 : Math.PI;
+}
+
+function trafficWaypointDirection(route: TrafficRoute): { x: number; z: number } | null {
+  const waypoints = route.waypoints;
+  if (!waypoints || waypoints.length < 2) {
+    return null;
+  }
+  const fromIndex = normalizeSegmentIndex(route.segmentIndex ?? 0, waypoints.length);
+  const from = waypoints[fromIndex];
+  const to = waypoints[(fromIndex + 1) % waypoints.length];
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const length = Math.hypot(dx, dz);
+  if (length <= 0.001) {
+    return null;
+  }
+  return { x: dx / length, z: dz / length };
+}
+
+function normalizeSegmentIndex(index: number, length: number): number {
+  return ((Math.trunc(index) % length) + length) % length;
 }
 
 function scoreValueForSize(size: THREE.Vector3): number {
@@ -542,6 +800,29 @@ function defaultScoreRole(category?: PhysicsCategory, isDebris?: boolean): Score
   return "target";
 }
 
+function shouldEnableBoxCollisionEvents(options: DynamicBoxOptions, bodyType: PhysicsBodyType): boolean {
+  if (options.collisionEvents !== undefined) {
+    return options.collisionEvents;
+  }
+  if (options.category === "projectile") {
+    return true;
+  }
+  if (bodyType !== "dynamic") {
+    return false;
+  }
+  return Boolean(options.chainSource || options.isDebris || options.destructible !== false || options.canFracture !== false);
+}
+
+function shouldEnableSphereCollisionEvents(options: DynamicSphereOptions): boolean {
+  if (options.collisionEvents !== undefined) {
+    return options.collisionEvents;
+  }
+  if (options.category === "projectile") {
+    return true;
+  }
+  return Boolean(options.chainSource || options.isDebris || options.destructible !== false || options.canFracture !== false);
+}
+
 function canDestabilizeStructure(source: PhysicsObject, candidate: PhysicsObject): boolean {
   if (
     candidate.id === source.id ||
@@ -552,9 +833,6 @@ function canDestabilizeStructure(source: PhysicsObject, candidate: PhysicsObject
     candidate.zoneId === "surface"
   ) {
     return false;
-  }
-  if (candidate.scoreRole === "protected") {
-    return source.scoreRole === "protected" && candidate.zoneId === source.zoneId;
   }
   return true;
 }
@@ -577,6 +855,7 @@ function disposeMeshTree(root: THREE.Mesh): void {
 }
 
 const boxGeometryCache = new Map<string, THREE.BoxGeometry>();
+const sphereGeometryCache = new Map<string, THREE.SphereGeometry>();
 
 function sharedBoxGeometry(size: THREE.Vector3): THREE.BoxGeometry {
   const key = `${size.x.toFixed(3)}:${size.y.toFixed(3)}:${size.z.toFixed(3)}`;
@@ -587,5 +866,18 @@ function sharedBoxGeometry(size: THREE.Vector3): THREE.BoxGeometry {
   const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
   geometry.userData.sharedGeometry = true;
   boxGeometryCache.set(key, geometry);
+  return geometry;
+}
+
+function sharedSphereGeometry(radius: number, segments: number): THREE.SphereGeometry {
+  const heightSegments = Math.max(12, Math.floor(segments * 0.6));
+  const key = `${radius.toFixed(3)}:${segments}:${heightSegments}`;
+  const existing = sphereGeometryCache.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.SphereGeometry(radius, segments, heightSegments);
+  geometry.userData.sharedGeometry = true;
+  sphereGeometryCache.set(key, geometry);
   return geometry;
 }

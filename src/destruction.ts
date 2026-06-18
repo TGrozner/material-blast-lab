@@ -26,8 +26,6 @@ export interface ExplosionResult {
   affectedObjects: ExplosionAffectedObject[];
   structureDamage: number;
   materialChaos: number;
-  bioGelSplash: number;
-  protectedPenalty: number;
 }
 
 interface FragmentPlan {
@@ -68,7 +66,7 @@ export class DestructionSystem {
   ) {}
 
   explode(origin: THREE.Vector3, blastStrength: number, blastRadius: number): ExplosionResult {
-    const snapshot = this.physics.getDynamicObjects();
+    const snapshot = this.physics.getBlastCandidates(origin, blastRadius);
     const records: BlastRecord[] = [];
     const fractureCandidates: Array<{ object: PhysicsObject; energy: number }> = [];
     const dustColors: THREE.Color[] = [];
@@ -76,8 +74,6 @@ export class DestructionSystem {
     let affectedBodies = 0;
     let structureDamage = 0;
     let materialChaos = 0;
-    let bioGelSplash = 0;
-    let protectedPenalty = 0;
 
     for (const object of snapshot) {
       if (object.category === "projectile") {
@@ -93,7 +89,7 @@ export class DestructionSystem {
       const volume = Math.max(0.08, object.dimensions.x * object.dimensions.y * object.dimensions.z);
       const energy = (blastStrength * falloff * 2.05) / Math.max(0.5, material.massFactor) + volume * 0.45;
       records.push({ object, material, sample, falloff, energy });
-      const thresholdScale = object.scoreRole === "protected" ? 1.05 : object.scoreRole === "target" ? 0.86 : 0.92;
+      const thresholdScale = object.scoreRole === "target" ? 0.86 : 0.92;
       if (object.destructible && object.canFracture && energy > material.fractureThreshold * thresholdScale) {
         fractureCandidates.push({ object, energy });
       }
@@ -126,11 +122,7 @@ export class DestructionSystem {
         dustColors.push(material.dustColor);
       }
       const weightedDamage = Math.round(object.scoreValue * Math.min(1.8, energy / Math.max(1, material.fractureThreshold)));
-      if (object.scoreRole === "protected") {
-        protectedPenalty += Math.round(weightedDamage * (fractured ? 1.65 : 0.9));
-      } else if (object.category === "bio" || object.materialId === "bioGel") {
-        bioGelSplash += Math.round(weightedDamage * (fractured ? 1.25 : 0.55));
-      } else if (object.scoreRole === "target") {
+      if (object.scoreRole === "target") {
         structureDamage += Math.round(weightedDamage * 1.1);
       } else if (object.category === "structure") {
         materialChaos += Math.round(weightedDamage * 0.4);
@@ -162,9 +154,7 @@ export class DestructionSystem {
       dustColors,
       affectedObjects,
       structureDamage,
-      materialChaos,
-      bioGelSplash,
-      protectedPenalty
+      materialChaos
     };
   }
 
@@ -175,7 +165,7 @@ export class DestructionSystem {
     const chainBoost = source.chainSource ? (source.isDebris ? 1.32 : 1.08) : 1;
     const impactMass = Math.max(0.35, sourceVolume * sourceMaterial.density * 7.8 * chainBoost);
     const energy = (relativeSpeed * impactMass * Math.max(0.65, sourceMaterial.massFactor)) / Math.max(0.55, targetMaterial.massFactor);
-    const thresholdScale = target.scoreRole === "protected" ? 1.12 : target.scoreRole === "target" ? 0.82 : 0.88;
+    const thresholdScale = target.scoreRole === "target" ? 0.82 : 0.88;
     const energeticFracture = target.destructible && target.canFracture && energy > targetMaterial.fractureThreshold * thresholdScale;
     const dominoFracture =
       !energeticFracture && this.shouldDominoFracture(source, target, sourceMaterial, targetMaterial, relativeSpeed, energy);
@@ -207,13 +197,7 @@ export class DestructionSystem {
     const weightedDamage = Math.round(target.scoreValue * Math.min(1.6, energy / Math.max(1, targetMaterial.fractureThreshold)));
     let structureDamage = 0;
     let materialChaos = 0;
-    let bioGelSplash = 0;
-    let protectedPenalty = 0;
-    if (target.scoreRole === "protected") {
-      protectedPenalty = Math.round(weightedDamage * (fractured ? 1.65 : 0.9));
-    } else if (target.category === "bio" || target.materialId === "bioGel") {
-      bioGelSplash = Math.round(weightedDamage * (fractured ? 1.25 : 0.55));
-    } else if (target.scoreRole === "target") {
+    if (target.scoreRole === "target") {
       structureDamage = Math.round(weightedDamage * 1.1);
     } else if (target.category === "structure") {
       materialChaos = Math.round(weightedDamage * 0.45);
@@ -266,9 +250,7 @@ export class DestructionSystem {
       ),
       affectedObjects,
       structureDamage,
-      materialChaos,
-      bioGelSplash,
-      protectedPenalty
+      materialChaos
     };
   }
 
@@ -276,7 +258,7 @@ export class DestructionSystem {
     const material = this.materials.get(source.materialId);
     const sourceVolume = Math.max(0.02, source.dimensions.x * source.dimensions.y * source.dimensions.z);
     const energy = impactSpeed * sourceVolume * material.density * Math.max(0.55, material.massFactor) * (source.isDebris ? 4.8 : 3.9);
-    const thresholdScale = source.scoreRole === "protected" ? 1.2 : source.isDebris ? 0.74 : 0.92;
+    const thresholdScale = source.isDebris ? 0.74 : 0.92;
     const canFracture = source.destructible && source.canFracture && source.category !== "projectile";
     const energyRatio = energy / Math.max(1, material.fractureThreshold * thresholdScale);
     const breakChance = clamp(
@@ -290,13 +272,7 @@ export class DestructionSystem {
 
     let structureDamage = 0;
     let materialChaos = Math.round(energy * (source.isDebris ? 0.42 : 0.58));
-    let bioGelSplash = 0;
-    let protectedPenalty = 0;
-    if (source.scoreRole === "protected") {
-      protectedPenalty = Math.round(weightedDamage * (fractured ? 1.45 : 0.62));
-    } else if (source.category === "bio" || source.materialId === "bioGel") {
-      bioGelSplash = Math.round(weightedDamage * (fractured ? 1.05 : 0.42));
-    } else if (source.scoreRole === "target") {
+    if (source.scoreRole === "target") {
       structureDamage = Math.round(weightedDamage * (fractured ? 0.82 : 0.34));
     }
 
@@ -325,9 +301,7 @@ export class DestructionSystem {
       dustColors: fractured ? [material.dustColor] : [],
       affectedObjects: [affectedObject],
       structureDamage,
-      materialChaos,
-      bioGelSplash,
-      protectedPenalty
+      materialChaos
     };
   }
 
@@ -395,8 +369,8 @@ export class DestructionSystem {
         canFracture: breakableFragment,
         isDebris: true,
         chainSource: true,
-        category: object.category === "bio" || object.materialId === "bioGel" ? "bio" : "debris",
-        scoreRole: object.scoreRole === "protected" ? "protected" : "neutral",
+        category: "debris",
+        scoreRole: "neutral",
         zoneId: object.zoneId,
         scoreValue: Math.max(1, Math.round(object.scoreValue / plans.length)),
         linearVelocity: inheritedVelocity.clone().multiplyScalar(0.22),
@@ -464,9 +438,6 @@ export class DestructionSystem {
     if (materialId === "foam") {
       return new THREE.Vector3(base * randomRange(this.rng, 0.5, 1.0), base * randomRange(this.rng, 0.45, 0.9), base * randomRange(this.rng, 0.5, 1.0));
     }
-    if (materialId === "bioGel") {
-      return new THREE.Vector3(base * randomRange(this.rng, 0.42, 1.1), base * randomRange(this.rng, 0.35, 0.95), base * randomRange(this.rng, 0.42, 1.1));
-    }
     return new THREE.Vector3(base * randomRange(this.rng, 0.55, 1.15), base * randomRange(this.rng, 0.55, 1.15), base * randomRange(this.rng, 0.55, 1.15));
   }
 
@@ -504,7 +475,7 @@ export class DestructionSystem {
     relativeSpeed: number,
     impactEnergy: number
   ): boolean {
-    if (source.category === "projectile" || !source.destructible || !source.canFracture || source.scoreRole === "protected") {
+    if (source.category === "projectile" || !source.destructible || !source.canFracture) {
       return false;
     }
     const volume = source.dimensions.x * source.dimensions.y * source.dimensions.z;
@@ -524,7 +495,7 @@ export class DestructionSystem {
     relativeSpeed: number,
     impactEnergy: number
   ): boolean {
-    if (!source.chainSource || !target.destructible || !target.canFracture || target.scoreRole === "protected") {
+    if (!source.chainSource || !target.destructible || !target.canFracture) {
       return false;
     }
     if (relativeSpeed < 1.9) {
@@ -607,7 +578,6 @@ function maxFragmentsFor(materialId: MaterialId): number {
   switch (materialId) {
     case "glass":
       return 22;
-    case "bioGel":
     case "foam":
       return 16;
     case "wood":
@@ -631,13 +601,10 @@ function maxWholeBodyImpulse(object: PhysicsObject): number {
 }
 
 function groundFractureMinSpeed(object: PhysicsObject): number {
-  if (object.scoreRole === "protected") {
-    return 5.6;
-  }
   if (object.isDebris) {
     return object.materialId === "glass" || object.materialId === "foam" ? 3.2 : 3.8;
   }
-  if (object.materialId === "glass" || object.materialId === "foam" || object.materialId === "bioGel") {
+  if (object.materialId === "glass" || object.materialId === "foam") {
     return 4.0;
   }
   if (object.materialId === "wood") {
@@ -667,7 +634,6 @@ function maxInitialFragmentSpeed(materialId: MaterialId): number {
   switch (materialId) {
     case "glass":
     case "foam":
-    case "bioGel":
       return 6.6;
     case "wood":
       return 5.8;
@@ -684,7 +650,6 @@ function materialDominoFragility(materialId: MaterialId): number {
     case "glass":
       return 1.0;
     case "foam":
-    case "bioGel":
       return 0.86;
     case "wood":
       return 0.62;
@@ -709,7 +674,6 @@ function materialDominoBite(materialId: MaterialId): number {
       return 0.62;
     case "rubber":
     case "foam":
-    case "bioGel":
       return 0.42;
     default:
       return 0.5;
@@ -729,7 +693,6 @@ function canFragmentShatterAgain(materialId: MaterialId, size: THREE.Vector3): b
     case "wood":
       return longestAxis >= 0.46 && volume >= 0.018;
     case "foam":
-    case "bioGel":
       return longestAxis >= 0.5 && volume >= 0.022;
     default:
       return false;

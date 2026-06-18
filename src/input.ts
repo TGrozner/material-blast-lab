@@ -6,8 +6,6 @@ interface InputCallbacks {
   fire(): void;
   reset(): void;
   clearDebris(): void;
-  adjustPower(delta: number): void;
-  adjustSize(delta: number): void;
   selectProjectile(id: ProjectileId): void;
   nextLevel(): void;
 }
@@ -68,29 +66,14 @@ export class InputController {
       this.callbacks.nextLevel();
       return;
     }
-    if (event.key === "+" || event.key === "=") {
-      this.callbacks.adjustPower(0.08);
-      return;
-    }
-    if (event.key === "-" || event.key === "_") {
-      this.callbacks.adjustPower(-0.08);
-      return;
-    }
-    if (event.key === "]") {
-      this.callbacks.adjustSize(0.08);
-      return;
-    }
-    if (event.key === "[") {
-      this.callbacks.adjustSize(-0.08);
-      return;
-    }
 
     const projectileByKey: Record<string, ProjectileId> = {
       "1": "slug",
       "2": "scatter",
       "3": "pulse",
       "4": "gel",
-      "5": "gravity"
+      "5": "gravity",
+      "6": "ignite"
     };
     const projectile = projectileByKey[event.key];
     if (projectile) {

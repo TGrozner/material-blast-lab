@@ -5,16 +5,14 @@ export type GraphicAssetId =
   | "arenaWall"
   | "cannonDeck"
   | "decalAtlas"
-  | "materialAtlas"
-  | "skylineBackdrop";
+  | "materialAtlas";
 
 const GRAPHIC_ASSET_PATHS: Record<GraphicAssetId, string> = {
   arenaFloor: "assets/graphics/arena-floor.png",
   arenaWall: "assets/graphics/arena-wall.png",
   cannonDeck: "assets/graphics/cannon-deck.png",
   decalAtlas: "assets/graphics/premium-decal-atlas.png",
-  materialAtlas: "assets/graphics/premium-material-atlas.png",
-  skylineBackdrop: "assets/graphics/skyline-backdrop.png"
+  materialAtlas: "assets/graphics/premium-material-atlas.png"
 };
 
 const textureLoader = new THREE.TextureLoader();

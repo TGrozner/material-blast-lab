@@ -6,26 +6,22 @@ import { PROJECTILES } from "../../src/projectile";
 import { ShotScoreTracker } from "../../src/scoring";
 
 describe("ShotScoreTracker", () => {
-  test("deduplicates target and protected object damage while emitting high-value events", () => {
+  test("deduplicates mayhem damage while emitting high-value chaos events", () => {
     const tracker = new ShotScoreTracker();
     tracker.beginShot(PROJECTILES.slug);
 
     const events = tracker.addExplosion(
       result({
         materialChaos: 96,
-        bioGelSplash: 40,
         affectedObjects: [
           affectedObject({ id: 1, scoreRole: "target", weightedDamage: 100, fractured: true }),
-          affectedObject({ id: 2, scoreRole: "protected", weightedDamage: 40, fractured: false })
+          affectedObject({ id: 2, scoreRole: "neutral", weightedDamage: 40, fractured: false })
         ]
-      }),
-      7
+      })
     );
 
     expect(events.map((event) => [event.kind, event.label, event.points])).toEqual([
-      ["target", "TARGET", 110],
-      ["protected", "PROTECTED", -40],
-      ["purge", "PURGE", 47],
+      ["target", "MAYHEM", 110],
       ["chaos", "CHAOS", 96]
     ]);
 
@@ -66,16 +62,21 @@ describe("ShotScoreTracker", () => {
       points: 184,
       combo: 3
     });
+    expect(tracker.addChainReaction(100, new THREE.Vector3(0, 0, 0))[0]).toMatchObject({
+      label: "MAYHEM x4",
+      points: 226,
+      combo: 4
+    });
 
     expect(tracker.finalize(fakePhysics([]))).toMatchObject({
-      chainReactionBonus: 447,
-      chainReactionCount: 3,
-      maxChainCombo: 3,
-      totalScore: 447
+      chainReactionBonus: 685,
+      chainReactionCount: 4,
+      maxChainCombo: 4,
+      totalScore: 685
     });
   });
 
-  test("scores remaining motion only for non-protected, non-projectile bodies", () => {
+  test("scores remaining motion only for non-projectile bodies", () => {
     const tracker = new ShotScoreTracker();
     tracker.beginShot(PROJECTILES.slug);
 
@@ -85,12 +86,12 @@ describe("ShotScoreTracker", () => {
           { category: "debris", scoreRole: "neutral", isDebris: true, velocity: { x: 10, y: 0, z: 0 } },
           { category: "structure", scoreRole: "target", isDebris: false, velocity: { x: 20, y: 0, z: 0 } },
           { category: "projectile", scoreRole: "neutral", isDebris: false, velocity: { x: 100, y: 0, z: 0 } },
-          { category: "structure", scoreRole: "protected", isDebris: false, velocity: { x: 100, y: 0, z: 0 } }
+          { category: "structure", scoreRole: "neutral", isDebris: false, velocity: { x: 100, y: 0, z: 0 } }
         ])
       )
     ).toMatchObject({
-      remainingDebrisMotion: 112,
-      totalScore: 112
+      remainingDebrisMotion: 196,
+      totalScore: 196
     });
   });
 });
@@ -104,8 +105,6 @@ function result(overrides: Partial<ExplosionResult> = {}): ExplosionResult {
     affectedObjects: [],
     structureDamage: 0,
     materialChaos: 0,
-    bioGelSplash: 0,
-    protectedPenalty: 0,
     ...overrides
   };
 }
