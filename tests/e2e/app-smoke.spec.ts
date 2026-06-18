@@ -54,6 +54,9 @@ declare global {
   interface Window {
     __DOWNTOWN_MAYHEM_DEBUG__?: {
       getRenderStats(): RenderStats;
+      getPerfReport(): unknown;
+      setPerfEnabled(enabled: boolean): void;
+      clearPerfReport(): void;
       freezeForCapture(): RenderStats;
       resume(): void;
     };

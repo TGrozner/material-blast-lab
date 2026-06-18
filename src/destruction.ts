@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { decorateFragment } from "./cityVisuals";
 import { MaterialCatalog, type MaterialDefinition, type MaterialId } from "./materialCatalog";
+import { perfMonitor } from "./perf";
 import { PhysicsWorld, type PhysicsCategory, type PhysicsObject, type ScoreRole } from "./physics";
 import { type RandomSource, randomInt, randomRange, randomUnitVector } from "./random";
 
@@ -49,6 +50,19 @@ interface BlastRecord {
   energy: number;
 }
 
+interface FractureJob {
+  objectId: number;
+  origin: THREE.Vector3;
+  blastStrength: number;
+  blastRadius: number;
+  energy: number;
+}
+
+export interface QueuedFractureStats {
+  processed: number;
+  remaining: number;
+}
+
 const MAX_FRACTURES_PER_EXPLOSION = 26;
 
 function fractureThresholdFor(material: MaterialDefinition, object: PhysicsObject, scale = 1): number {
@@ -62,6 +76,8 @@ export class DestructibleObject {
 export class DestructionSystem {
   private readonly scratchDirection = new THREE.Vector3();
   private readonly upwardBias = new THREE.Vector3(0, 0.58, 0);
+  private readonly fractureJobs: FractureJob[] = [];
+  private readonly queuedFractureIds = new Set<number>();
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -70,6 +86,7 @@ export class DestructionSystem {
   ) {}
 
   explode(origin: THREE.Vector3, blastStrength: number, blastRadius: number): ExplosionResult {
+    const startedAt = perfMonitor.timeStart();
     const snapshot = this.physics.getBlastCandidates(origin, blastRadius);
     const records: BlastRecord[] = [];
     const fractureCandidates: Array<{ object: PhysicsObject; energy: number }> = [];
@@ -94,7 +111,12 @@ export class DestructionSystem {
       const energy = (blastStrength * falloff * 2.05) / Math.max(0.5, material.massFactor) + volume * 0.45;
       records.push({ object, material, sample, falloff, energy });
       const thresholdScale = object.scoreRole === "target" ? 1.12 : 1.2;
-      if (object.destructible && object.canFracture && energy > fractureThresholdFor(material, object, thresholdScale)) {
+      if (
+        object.destructible &&
+        object.canFracture &&
+        !this.queuedFractureIds.has(object.id) &&
+        energy > fractureThresholdFor(material, object, thresholdScale)
+      ) {
         fractureCandidates.push({ object, energy });
       }
     }
@@ -148,8 +170,12 @@ export class DestructionSystem {
     }
 
     for (const fracture of fractureQueue) {
-      this.fracture(fracture.object, origin, blastStrength, blastRadius, fracture.energy);
+      this.queueFracture(fracture.object, origin, blastStrength, blastRadius, fracture.energy);
     }
+    perfMonitor.addCount("destruction.blastCandidates", snapshot.length);
+    perfMonitor.addCount("destruction.blastAffected", affectedBodies);
+    perfMonitor.addCount("destruction.fracturesQueued", fractureQueue.length);
+    perfMonitor.addTiming("destruction.explode", startedAt);
 
     return {
       origin: origin.clone(),
@@ -170,11 +196,14 @@ export class DestructionSystem {
     const impactMass = Math.max(0.35, sourceVolume * sourceMaterial.density * 7.8 * chainBoost);
     const energy = (relativeSpeed * impactMass * Math.max(0.65, sourceMaterial.massFactor)) / Math.max(0.55, targetMaterial.massFactor);
     const thresholdScale = target.scoreRole === "target" ? 1.08 : 1.16;
-    const energeticFracture = target.destructible && target.canFracture && energy > fractureThresholdFor(targetMaterial, target, thresholdScale);
+    const targetAlreadyQueued = this.queuedFractureIds.has(target.id);
+    const sourceAlreadyQueued = this.queuedFractureIds.has(source.id);
+    const energeticFracture =
+      !targetAlreadyQueued && target.destructible && target.canFracture && energy > fractureThresholdFor(targetMaterial, target, thresholdScale);
     const dominoFracture =
-      !energeticFracture && this.shouldDominoFracture(source, target, sourceMaterial, targetMaterial, relativeSpeed, energy);
+      !targetAlreadyQueued && !energeticFracture && this.shouldDominoFracture(source, target, sourceMaterial, targetMaterial, relativeSpeed, energy);
     const fractured = energeticFracture || dominoFracture;
-    const sourceShattered = this.shouldShatterImpactSource(source, sourceMaterial, relativeSpeed, energy);
+    const sourceShattered = !sourceAlreadyQueued && this.shouldShatterImpactSource(source, sourceMaterial, relativeSpeed, energy);
     const sourcePosition = vectorFromRapier(source.body.translation());
     const targetPosition = vectorFromRapier(target.body.translation());
     const direction = targetPosition.clone().sub(sourcePosition).normalize();
@@ -225,7 +254,7 @@ export class DestructionSystem {
     affectedObjects.push(affectedObject);
 
     if (fractured && this.physics.getObject(target.id)) {
-      this.fracture(target, origin, Math.max(dominoFracture ? 5.5 : 8, energy * (dominoFracture ? 0.34 : 0.52)), 1.35, energy);
+      this.queueFracture(target, origin, Math.max(dominoFracture ? 5.5 : 8, energy * (dominoFracture ? 0.34 : 0.52)), 1.35, energy);
     }
     if (sourceShattered && this.physics.getObject(source.id)) {
       const sourceWeightedDamage = Math.round(source.scoreValue * Math.min(1.2, energy / Math.max(1, fractureThresholdFor(sourceMaterial, source, 1.6))));
@@ -242,7 +271,7 @@ export class DestructionSystem {
         scoreValue: source.scoreValue,
         fractured: true
       });
-      this.fracture(source, origin, Math.max(7, energy * 0.18), 1.05, energy * 0.48);
+      this.queueFracture(source, origin, Math.max(7, energy * 0.18), 1.05, energy * 0.48);
     }
 
     return {
@@ -263,7 +292,8 @@ export class DestructionSystem {
     const sourceVolume = Math.max(0.02, source.dimensions.x * source.dimensions.y * source.dimensions.z);
     const energy = impactSpeed * sourceVolume * material.density * Math.max(0.55, material.massFactor) * (source.isDebris ? 4.8 : 3.9);
     const thresholdScale = source.isDebris ? 1.06 : 1.32;
-    const canFracture = source.destructible && source.canFracture && source.category !== "projectile";
+    const canFracture =
+      source.destructible && source.canFracture && source.category !== "projectile" && !this.queuedFractureIds.has(source.id);
     const energyRatio = energy / Math.max(1, fractureThresholdFor(material, source, thresholdScale));
     const breakChance = clamp(
       -0.26 + energyRatio * 0.26 + Math.max(0, impactSpeed - groundFractureMinSpeed(source)) * 0.04 + materialDominoFragility(material.id) * 0.05,
@@ -295,7 +325,7 @@ export class DestructionSystem {
     };
 
     if (fractured && this.physics.getObject(source.id)) {
-      this.fracture(source, origin, Math.max(4.8, energy * 0.18), 0.95, energy * 0.62);
+      this.queueFracture(source, origin, Math.max(4.8, energy * 0.18), 0.95, energy * 0.62);
     }
 
     return {
@@ -342,6 +372,66 @@ export class DestructionSystem {
     }
   }
 
+  processQueuedFractures(maxFractures: number, timeBudgetMs: number): QueuedFractureStats {
+    const startedAt = perfMonitor.timeStart();
+    const deadline = performance.now() + Math.max(0.2, timeBudgetMs);
+    let processed = 0;
+    while (this.fractureJobs.length > 0 && processed < maxFractures) {
+      if (processed > 0 && performance.now() >= deadline) {
+        break;
+      }
+      const job = this.fractureJobs.shift();
+      if (!job) {
+        break;
+      }
+      this.queuedFractureIds.delete(job.objectId);
+      const object = this.physics.getObject(job.objectId);
+      if (!object || !object.destructible || !object.canFracture) {
+        continue;
+      }
+      this.fracture(object, job.origin, job.blastStrength, job.blastRadius, job.energy);
+      processed += 1;
+    }
+    if (processed > 0 || this.fractureJobs.length > 0) {
+      perfMonitor.addCount("destruction.fracturesProcessed", processed);
+      perfMonitor.addCount("destruction.fracturesBacklog", this.fractureJobs.length);
+      perfMonitor.addTiming("destruction.processQueuedFractures", startedAt);
+    }
+    return {
+      processed,
+      remaining: this.fractureJobs.length
+    };
+  }
+
+  clearQueuedFractures(): void {
+    this.fractureJobs.length = 0;
+    this.queuedFractureIds.clear();
+  }
+
+  getQueuedFractureCount(): number {
+    return this.fractureJobs.length;
+  }
+
+  private queueFracture(
+    object: PhysicsObject,
+    origin: THREE.Vector3,
+    blastStrength: number,
+    blastRadius: number,
+    energy: number
+  ): void {
+    if (this.queuedFractureIds.has(object.id)) {
+      return;
+    }
+    this.queuedFractureIds.add(object.id);
+    this.fractureJobs.push({
+      objectId: object.id,
+      origin: origin.clone(),
+      blastStrength,
+      blastRadius,
+      energy
+    });
+  }
+
   private fracture(
     object: PhysicsObject,
     origin: THREE.Vector3,
@@ -349,6 +439,7 @@ export class DestructionSystem {
     blastRadius: number,
     energy: number
   ): void {
+    const startedAt = perfMonitor.timeStart();
     const material = this.materials.get(object.materialId);
     const parentPosition = vectorFromRapier(object.body.translation());
     const parentRotation = quaternionFromRapier(object.body.rotation());
@@ -385,6 +476,8 @@ export class DestructionSystem {
       this.kickFragment(fragment, origin, blastStrength, blastRadius);
       limitFragmentMotion(fragment, material.id, object.isDebris);
     }
+    perfMonitor.addCount("destruction.fragmentsCreated", plans.length);
+    perfMonitor.addTiming("destruction.fracture", startedAt);
   }
 
   private createFragmentPlans(size: THREE.Vector3, material: MaterialDefinition, energy: number): FragmentPlan[] {

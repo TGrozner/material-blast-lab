@@ -31,6 +31,8 @@ export class Cannon {
   private charge = 0;
   private trajectoryDirty = true;
   private trajectoryKey = "";
+  private readonly trajectoryAimPoint = new THREE.Vector3();
+  private trajectoryAimPointActive = false;
 
   constructor(private readonly scene: THREE.Scene) {
     this.group.position.copy(this.basePosition);
@@ -95,6 +97,7 @@ export class Cannon {
     this.yaw = THREE.MathUtils.clamp(pointer.x * 0.52, -0.72, 0.72);
     this.pitch = THREE.MathUtils.clamp(-0.18 + pointer.y * 0.24, -0.38, 0.42);
     this.updateTransforms();
+    this.trajectoryAimPointActive = false;
     this.trajectoryDirty = true;
   }
 
@@ -106,6 +109,8 @@ export class Cannon {
     }
     this.yaw = THREE.MathUtils.clamp(Math.atan2(direction.x, -direction.z), -0.72, 0.72);
     this.pitch = THREE.MathUtils.clamp(this.solveBallisticPitch(direction, muzzleSpeed), -0.38, 0.42);
+    this.trajectoryAimPoint.copy(point);
+    this.trajectoryAimPointActive = true;
     this.updateTransforms();
     this.trajectoryDirty = true;
   }
@@ -201,6 +206,11 @@ export class Cannon {
     const origin = this.getLaunchPosition(projectile.baseRadius * sizeScale);
     const velocity = this.getDirection().multiplyScalar(projectile.speed * powerScale);
     const gravity = new THREE.Vector3(0, -9.81, 0);
+    const endpoint = this.trajectoryAimPointActive ? this.trajectoryAimPoint : null;
+    const endpointOffset = endpoint?.clone().sub(origin);
+    const endpointHorizontalDistance = endpointOffset ? Math.hypot(endpointOffset.x, endpointOffset.z) : 0;
+    const endpointDirectionX = endpointOffset && endpointHorizontalDistance > 0.001 ? endpointOffset.x / endpointHorizontalDistance : 0;
+    const endpointDirectionZ = endpointOffset && endpointHorizontalDistance > 0.001 ? endpointOffset.z / endpointHorizontalDistance : 0;
     let impactPoint: THREE.Vector3 | null = null;
     for (let i = 0; i < 48; i += 1) {
       const t = i * 0.105;
@@ -212,6 +222,14 @@ export class Cannon {
           .clone()
           .add(velocity.clone().multiplyScalar(t))
           .add(gravity.clone().multiplyScalar(0.5 * t * t));
+      }
+      if (!impactPoint && endpoint && endpointHorizontalDistance > 0.001) {
+        const pointOffset = point.clone().sub(origin);
+        const horizontalProgress = pointOffset.x * endpointDirectionX + pointOffset.z * endpointDirectionZ;
+        if (horizontalProgress >= endpointHorizontalDistance) {
+          point.copy(endpoint);
+          impactPoint = endpoint.clone();
+        }
       }
       if (!impactPoint && point.y <= 0.035) {
         point.y = 0.035;

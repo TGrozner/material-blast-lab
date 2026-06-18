@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { ExplosionResult } from "./destruction";
 import type { MaterialId } from "./materialCatalog";
+import { perfMonitor } from "./perf";
 import type { ProjectileId } from "./projectile";
 import type { GraphicsQuality } from "./settings";
 
@@ -101,6 +102,9 @@ export class ParticleSystem {
   private flashScale = 1;
 
   constructor(private readonly scene: THREE.Scene) {
+    radialTexture(CORE_TEXTURE);
+    radialTexture(SMOKE_TEXTURE);
+    radialTexture(SHOCK_TEXTURE);
     this.flashLight = new THREE.PointLight(0xbdf7ff, 0, 12, 2.3);
     this.scene.add(this.flashLight);
 
@@ -123,6 +127,7 @@ export class ParticleSystem {
   }
 
   explode(origin: THREE.Vector3, radius: number, dustColors: THREE.Color[], context: ExplosionFxContext = {}): void {
+    const startedAt = perfMonitor.timeStart();
     const profile = explosionProfile(context.projectileId, context.hitMaterialId);
     const impactScale = this.explosionScale(context);
     const visualRadius = radius * THREE.MathUtils.clamp(0.95 + impactScale * 0.08 + profile.shockBias * 0.08, 0.9, 1.28);
@@ -157,6 +162,7 @@ export class ParticleSystem {
     }
     this.spawnProjectileSignature(origin, coreOrigin, visualRadius, profile, context, impactScale);
     this.spawnMaterialResponse(origin, visualRadius, context, profile, dustColor, impactScale);
+    perfMonitor.addTiming("vfx.explode", startedAt);
   }
 
   cityDebrisSpray(origin: THREE.Vector3, dustColors: THREE.Color[], intensity = 1): void {
@@ -339,6 +345,7 @@ export class ParticleSystem {
       velocity: velocity?.clone() ?? new THREE.Vector3(),
       rotationSpeed: THREE.MathUtils.randFloat(-1.8, 1.8)
     });
+    perfMonitor.addCount("vfx.spritesSpawned");
     this.trimSprites();
   }
 
@@ -488,6 +495,8 @@ export class ParticleSystem {
     lines.renderOrder = 7;
     this.scene.add(lines);
     this.streaks.push({ lines, material, life: 0, maxLife, expansion: THREE.MathUtils.randFloat(0.18, 0.45) });
+    perfMonitor.addCount("vfx.streaksSpawned");
+    perfMonitor.addCount("vfx.streakVertices", count * 2);
     this.trimStreaks();
   }
 
@@ -615,6 +624,8 @@ export class ParticleSystem {
     lines.renderOrder = 7;
     this.scene.add(lines);
     this.streaks.push({ lines, material, life: 0, maxLife, expansion: THREE.MathUtils.randFloat(0.08, 0.28) });
+    perfMonitor.addCount("vfx.streaksSpawned");
+    perfMonitor.addCount("vfx.streakVertices", scaledCount * 2);
     this.trimStreaks();
   }
 
@@ -653,6 +664,8 @@ export class ParticleSystem {
     lines.renderOrder = 7;
     this.scene.add(lines);
     this.streaks.push({ lines, material, life: 0, maxLife, expansion: THREE.MathUtils.randFloat(0.12, 0.32) });
+    perfMonitor.addCount("vfx.streaksSpawned");
+    perfMonitor.addCount("vfx.streakVertices", scaledCount * 2);
     this.trimStreaks();
   }
 
@@ -720,6 +733,8 @@ export class ParticleSystem {
     points.frustumCulled = false;
     this.scene.add(points);
     this.bursts.push({ points, material, positions, velocities, life: 0, maxLife, gravity, drag });
+    perfMonitor.addCount("vfx.burstsSpawned");
+    perfMonitor.addCount("vfx.particlesSpawned", scaledCount);
     this.trimBursts();
   }
 
@@ -782,6 +797,8 @@ export class ParticleSystem {
     points.frustumCulled = false;
     this.scene.add(points);
     this.bursts.push({ points, material, positions, velocities, life: 0, maxLife, gravity, drag });
+    perfMonitor.addCount("vfx.burstsSpawned");
+    perfMonitor.addCount("vfx.particlesSpawned", scaledCount);
     this.trimBursts();
   }
 

@@ -15,6 +15,7 @@ import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult }
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
 import { MaterialCatalog } from "./materialCatalog";
+import { perfMonitor, type PerfReport } from "./perf";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
 import { PROJECTILES, ProjectileSystem, type ActiveProjectile, type ProjectileId } from "./projectile";
 import { SeededRandom, createRunSeed, randomRange } from "./random";
@@ -38,12 +39,20 @@ const DEFAULT_AIM_POINT = new THREE.Vector3(0, 0.16, -3.4);
 const CHAIN_DEBRIS_MIN_SPEED = 1.85;
 const CHAIN_IMPACT_COOLDOWN_MS = 220;
 const CHAIN_IMPACT_MAX_PER_FRAME = 14;
+const CHAIN_COLLISION_DRAIN_MAX_PER_FRAME = 192;
 const CRANE_CRUSH_MAX_PER_FRAME = 8;
+const SURFACE_IMPACT_MAX_PER_FRAME = 6;
+const SURFACE_COLLISION_MAX_PER_FRAME = 160;
+const FRACTURE_PROCESS_MAX_PER_FRAME = 2;
+const FRACTURE_PROCESS_TIME_BUDGET_MS = 3.2;
 const CHAIN_IMPACT_SWEEP_MS = 160;
 const SCORE_SETTLED_SPEED = 1.55;
+const AIM_FALLBACK_SURFACE_Y = 0.055;
+const AIM_MARKER_SURFACE_OFFSET = 0.095;
 const FIRE_MIN_DELAY_MS = 760;
 const FIRE_MAX_DELAY_MS = 1850;
 const MAX_BURNING_HAZARDS = 18;
+const HAZARD_EXPLOSIONS_MAX_PER_FRAME = 1;
 const VOLATILE_TRIGGER_LIMIT_BY_DEPTH = [3, 1, 0] as const;
 const CAMERA_FOCUS_MIN_SCORE = 155;
 const CAMERA_FOCUS_LOCK_MS = 1100;
@@ -68,6 +77,7 @@ const IMPACT_BOUNDS = {
   minZ: -21.8,
   maxZ: 35.8
 };
+const AIM_SURFACE_NORMAL = new THREE.Vector3(0, 1, 0);
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
 
 interface BurningHazard {
@@ -109,6 +119,9 @@ interface DowntownMayhemRenderStats {
 
 interface DowntownMayhemDebugApi {
   getRenderStats(): DowntownMayhemRenderStats;
+  getPerfReport(): PerfReport;
+  setPerfEnabled(enabled: boolean): void;
+  clearPerfReport(): void;
   freezeForCapture(): DowntownMayhemRenderStats;
   resume(): void;
 }
@@ -245,10 +258,16 @@ class Game {
   private readonly aimRaycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly aimPoint = DEFAULT_AIM_POINT.clone();
+  private readonly aimMarkerPoint = DEFAULT_AIM_POINT.clone();
+  private readonly aimSurfaceNormal = AIM_SURFACE_NORMAL.clone();
+  private readonly aimSurfaceTargets: THREE.Object3D[] = [];
+  private readonly aimSurfaceHits: THREE.Intersection<THREE.Object3D>[] = [];
   private readonly aimMarkerMaterial = new THREE.MeshBasicMaterial({
     color: 0x8ff7ff,
     transparent: true,
     opacity: 0.84,
+    side: THREE.DoubleSide,
+    depthTest: false,
     depthWrite: false
   });
   private readonly aimMarker = createAimMarker(this.aimMarkerMaterial);
@@ -435,63 +454,91 @@ class Game {
     this.timer.update();
     const frameDelta = this.timer.getDelta();
     const delta = Math.min(frameDelta, 0.05);
-    this.updateFps(frameDelta);
-    const motionEffectsActive = this.settings.motionEffects;
-    const hitStopped = motionEffectsActive && this.hitStopTimer > 0;
-    const slowMotionActive = motionEffectsActive && this.slowMotionTimer > 0;
-    const timeScale = hitStopped ? 0 : slowMotionActive ? 0.32 : 1;
-    const visualScale = hitStopped ? 0 : slowMotionActive ? 0.55 : 1;
-    if (this.hitStopTimer > 0) {
-      this.hitStopTimer = Math.max(0, this.hitStopTimer - delta);
-    }
-    if (this.slowMotionTimer > 0) {
-      this.slowMotionTimer = Math.max(0, this.slowMotionTimer - delta);
-    }
+    perfMonitor.beginFrame(frameDelta * 1000, this.physics.getDynamicBodyCount());
+    try {
+      this.updateFps(frameDelta);
+      const motionEffectsActive = this.settings.motionEffects;
+      const hitStopped = motionEffectsActive && this.hitStopTimer > 0;
+      const slowMotionActive = motionEffectsActive && this.slowMotionTimer > 0;
+      const timeScale = hitStopped ? 0 : slowMotionActive ? 0.32 : 1;
+      const visualScale = hitStopped ? 0 : slowMotionActive ? 0.55 : 1;
+      if (this.hitStopTimer > 0) {
+        this.hitStopTimer = Math.max(0, this.hitStopTimer - delta);
+      }
+      if (this.slowMotionTimer > 0) {
+        this.slowMotionTimer = Math.max(0, this.slowMotionTimer - delta);
+      }
 
-    this.cannon.update(delta, PROJECTILES[this.selectedProjectile], this.powerScale, this.sizeScale);
-    if (this.runState.phase === "aim") {
-      this.physics.advanceTrafficRoutes(delta);
+      let startedAt = perfMonitor.timeStart();
+      this.cannon.update(delta, PROJECTILES[this.selectedProjectile], this.powerScale, this.sizeScale);
+      perfMonitor.addTiming("game.cannon", startedAt);
+
+      if (this.runState.phase === "aim") {
+        startedAt = perfMonitor.timeStart();
+        this.physics.advanceTrafficRoutes(delta);
+        perfMonitor.addTiming("physics.traffic", startedAt);
+      }
+      if (this.runState.phase !== "aim") {
+        startedAt = perfMonitor.timeStart();
+        this.physics.step(delta * timeScale);
+        perfMonitor.addTiming("physics.step", startedAt);
+        startedAt = perfMonitor.timeStart();
+        this.projectiles.update(delta * timeScale);
+        perfMonitor.addTiming("game.projectiles", startedAt);
+      }
+      startedAt = perfMonitor.timeStart();
+      const chainEvents = this.processDebrisImpacts();
+      perfMonitor.addTiming("game.processDebrisImpacts", startedAt);
+      if (chainEvents.length > 0) {
+        this.scorePopups.push(chainEvents);
+      }
+      startedAt = perfMonitor.timeStart();
+      const fireEvents = this.updateBurningHazards();
+      perfMonitor.addTiming("game.updateBurningHazards", startedAt);
+      if (fireEvents.length > 0) {
+        this.scorePopups.push(fireEvents);
+      }
+      startedAt = perfMonitor.timeStart();
+      this.updatePhase();
+      perfMonitor.addTiming("game.updatePhase", startedAt);
+      this.destruction.processQueuedFractures(FRACTURE_PROCESS_MAX_PER_FRAME, FRACTURE_PROCESS_TIME_BUDGET_MS);
+
+      startedAt = perfMonitor.timeStart();
+      this.particles.update(delta * visualScale);
+      perfMonitor.addTiming("vfx.update", startedAt);
+      this.cameraRig.update(delta * visualScale);
+      this.updateAimMarker();
+      this.scorePopups.update(delta * visualScale, this.cameraRig.camera);
+      startedAt = perfMonitor.timeStart();
+      this.ui.update({
+        projectileId: this.selectedProjectile,
+        projectile: PROJECTILES[this.selectedProjectile],
+        shotAvailable: this.runState.shotAvailable,
+        canFinishRun: this.runState.phase === "spectacle" && !this.runState.score,
+        bodyCount: this.physics.getDynamicBodyCount(),
+        levelName: this.currentLevel().name,
+        levelDescription: this.currentLevel().description,
+        objective: this.currentLevel().objective,
+        chaosBrief: this.currentLevel().chaosBrief,
+        mission: this.currentLevel().mission,
+        levelIndex: this.levelIndex,
+        levelCount: TEST_CHAMBERS.length,
+        levels: this.levelOptions(),
+        levelProgress: this.currentLevelProgress(),
+        totalStars: this.arcadeProgress.totalStars,
+        arcadeResult: this.arcadeResult,
+        settings: this.settings,
+        status: this.status,
+        fps: this.displayedFps,
+        score: this.runState.score
+      });
+      perfMonitor.addTiming("game.ui", startedAt);
+      startedAt = perfMonitor.timeStart();
+      this.renderer.render(this.scene, this.cameraRig.camera);
+      perfMonitor.addTiming("renderer.render", startedAt);
+    } finally {
+      perfMonitor.endFrame();
     }
-    if (this.runState.phase !== "aim") {
-      this.physics.step(delta * timeScale);
-      this.projectiles.update(delta * timeScale);
-    }
-    const chainEvents = this.processDebrisImpacts();
-    if (chainEvents.length > 0) {
-      this.scorePopups.push(chainEvents);
-    }
-    const fireEvents = this.updateBurningHazards();
-    if (fireEvents.length > 0) {
-      this.scorePopups.push(fireEvents);
-    }
-    this.updatePhase();
-    this.particles.update(delta * visualScale);
-    this.cameraRig.update(delta * visualScale);
-    this.updateAimMarker();
-    this.scorePopups.update(delta * visualScale, this.cameraRig.camera);
-    this.ui.update({
-      projectileId: this.selectedProjectile,
-      projectile: PROJECTILES[this.selectedProjectile],
-      shotAvailable: this.runState.shotAvailable,
-      canFinishRun: this.runState.phase === "spectacle" && !this.runState.score,
-      bodyCount: this.physics.getDynamicBodyCount(),
-      levelName: this.currentLevel().name,
-      levelDescription: this.currentLevel().description,
-      objective: this.currentLevel().objective,
-      chaosBrief: this.currentLevel().chaosBrief,
-      mission: this.currentLevel().mission,
-      levelIndex: this.levelIndex,
-      levelCount: TEST_CHAMBERS.length,
-      levels: this.levelOptions(),
-      levelProgress: this.currentLevelProgress(),
-      totalStars: this.arcadeProgress.totalStars,
-      arcadeResult: this.arcadeResult,
-      settings: this.settings,
-      status: this.status,
-      fps: this.displayedFps,
-      score: this.runState.score
-    });
-    this.renderer.render(this.scene, this.cameraRig.camera);
   }
 
   private captureRenderStats(): DowntownMayhemRenderStats {
@@ -682,6 +729,7 @@ class Game {
     this.physics.clearDynamic();
     this.clearLevelDecorations();
     this.projectiles.clearActive();
+    this.destruction.clearQueuedFractures();
     this.chainImpactCooldowns.clear();
     this.surfaceImpactCooldowns.clear();
     this.triggeredHazards.clear();
@@ -704,6 +752,8 @@ class Game {
     this.cannon.setBasePosition(level.cannonPosition);
     this.positionCannonBattery(level.cannonPosition);
     this.aimPoint.copy(level.defaultAimPoint ?? DEFAULT_AIM_POINT);
+    this.aimMarkerPoint.set(this.aimPoint.x, AIM_FALLBACK_SURFACE_Y, this.aimPoint.z);
+    this.aimSurfaceNormal.copy(AIM_SURFACE_NORMAL);
     level.setup({
       physics: this.physics,
       materials: this.materials,
@@ -720,13 +770,55 @@ class Game {
     }
     if (this.runState.phase === "aim") {
       this.aimRaycaster.setFromCamera(pointer, this.cameraRig.camera);
-      if (this.aimRaycaster.ray.intersectPlane(this.groundPlane, this.aimPoint)) {
+      if (this.pickAimSurface()) {
+        this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
+      } else if (this.aimRaycaster.ray.intersectPlane(this.groundPlane, this.aimPoint)) {
         this.aimPoint.y = 0.16;
+        this.aimMarkerPoint.set(this.aimPoint.x, AIM_FALLBACK_SURFACE_Y, this.aimPoint.z);
+        this.aimSurfaceNormal.copy(AIM_SURFACE_NORMAL);
         this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
       } else {
+        this.aimSurfaceNormal.copy(AIM_SURFACE_NORMAL);
         this.cannon.aim(pointer);
       }
     }
+  }
+
+  private pickAimSurface(): boolean {
+    this.aimSurfaceTargets.length = 0;
+    for (const object of this.physics.getDynamicObjects()) {
+      if (object.category === "projectile" || object.isDebris || object.zoneId === "surface" || !object.mesh.visible) {
+        continue;
+      }
+      this.aimSurfaceTargets.push(object.mesh);
+    }
+    for (const mesh of this.physics.staticMeshes) {
+      if (mesh.visible) {
+        this.aimSurfaceTargets.push(mesh);
+      }
+    }
+    if (this.aimSurfaceTargets.length === 0) {
+      return false;
+    }
+
+    this.aimSurfaceHits.length = 0;
+    this.aimRaycaster.intersectObjects(this.aimSurfaceTargets, false, this.aimSurfaceHits);
+    const hit = this.aimSurfaceHits[0];
+    if (!hit) {
+      return false;
+    }
+
+    this.aimPoint.copy(hit.point);
+    this.aimMarkerPoint.copy(hit.point);
+    if (hit.face) {
+      this.aimSurfaceNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld).normalize();
+      if (this.aimSurfaceNormal.dot(this.aimRaycaster.ray.direction) > 0) {
+        this.aimSurfaceNormal.negate();
+      }
+    } else {
+      this.aimSurfaceNormal.copy(AIM_SURFACE_NORMAL);
+    }
+    return true;
   }
 
   private fire(): void {
@@ -1164,6 +1256,7 @@ class Game {
       return events;
     }
     const now = performance.now();
+    let detonationsThisFrame = 0;
     for (const hazard of this.burningHazards.values()) {
       const sourceObject = this.physics.getObject(hazard.id);
       if (!sourceObject) {
@@ -1182,6 +1275,11 @@ class Game {
       if (now < hazard.explodeAt) {
         continue;
       }
+      if (detonationsThisFrame >= HAZARD_EXPLOSIONS_MAX_PER_FRAME) {
+        perfMonitor.addCount("hazard.explosionBacklog");
+        continue;
+      }
+      detonationsThisFrame += 1;
       this.burningHazards.delete(hazard.id);
       const result = this.destruction.explode(hazard.origin, hazard.strength, hazard.radius);
       this.focusSpectacleOn(hazard.origin, result, 145);
@@ -1228,7 +1326,9 @@ class Game {
     }
 
     let impactsThisFrame = 0;
-    for (const collision of this.physics.drainCollisionEvents()) {
+    const collisions = this.physics.drainCollisionEvents(CHAIN_COLLISION_DRAIN_MAX_PER_FRAME);
+    perfMonitor.addCount("collision.chainDrained", collisions.length);
+    for (const collision of collisions) {
       if (impactsThisFrame >= CHAIN_IMPACT_MAX_PER_FRAME) {
         break;
       }
@@ -1372,7 +1472,15 @@ class Game {
   private processSurfaceImpacts(now: number): ScoreEvent[] {
     const events: ScoreEvent[] = [];
     const processedObjectIds = new Set<number>();
-    for (const surfaceImpact of this.physics.drainSurfaceCollisionEvents()) {
+    let surfaceCollisionsChecked = 0;
+    let impactsThisFrame = 0;
+    const surfaceImpacts = this.physics.drainSurfaceCollisionEvents(SURFACE_COLLISION_MAX_PER_FRAME);
+    perfMonitor.addCount("collision.surfaceDrained", surfaceImpacts.length);
+    for (const surfaceImpact of surfaceImpacts) {
+      if (surfaceCollisionsChecked >= SURFACE_COLLISION_MAX_PER_FRAME || impactsThisFrame >= SURFACE_IMPACT_MAX_PER_FRAME) {
+        break;
+      }
+      surfaceCollisionsChecked += 1;
       if (!surfaceImpact.started || !isGroundSurface(surfaceImpact.surfaceLabel)) {
         continue;
       }
@@ -1416,11 +1524,15 @@ class Game {
       if (result.dustColors.length > 0) {
         this.particles.cityDebrisSpray(origin, result.dustColors, 0.22 + result.fracturedBodies * 0.045);
       }
+      impactsThisFrame += 1;
     }
     return events;
   }
 
   private isSceneSettled(): boolean {
+    if (this.destruction.getQueuedFractureCount() > 0) {
+      return false;
+    }
     if (this.burningHazards.size > 0) {
       return false;
     }
@@ -1610,7 +1722,8 @@ class Game {
 
   private updateAimMarker(): void {
     this.aimMarker.visible = this.runState.phase === "aim";
-    this.aimMarker.position.set(this.aimPoint.x, 0.055, this.aimPoint.z);
+    this.aimMarker.position.copy(this.aimMarkerPoint).addScaledVector(this.aimSurfaceNormal, AIM_MARKER_SURFACE_OFFSET);
+    this.aimMarker.quaternion.setFromUnitVectors(AIM_SURFACE_NORMAL, this.aimSurfaceNormal);
     this.aimMarkerMaterial.color.copy(PROJECTILES[this.selectedProjectile].color);
   }
 
@@ -1631,22 +1744,33 @@ class Game {
 function createAimMarker(material: THREE.MeshBasicMaterial): THREE.Group {
   const group = new THREE.Group();
   group.name = "aim impact reticle";
+  group.renderOrder = 100;
 
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.38, 42), material);
   ring.rotation.x = -Math.PI * 0.5;
-  ring.renderOrder = 5;
+  ring.renderOrder = 100;
 
-  const barGeometry = new THREE.PlaneGeometry(0.92, 0.045);
-  const horizontal = new THREE.Mesh(barGeometry, material);
-  horizontal.rotation.x = -Math.PI * 0.5;
-  horizontal.renderOrder = 5;
+  const dot = new THREE.Mesh(new THREE.CircleGeometry(0.035, 18), material);
+  dot.rotation.x = -Math.PI * 0.5;
+  dot.renderOrder = 100;
 
-  const vertical = new THREE.Mesh(barGeometry.clone(), material);
-  vertical.rotation.x = -Math.PI * 0.5;
-  vertical.rotation.z = Math.PI * 0.5;
-  vertical.renderOrder = 5;
+  const horizontalTickGeometry = new THREE.PlaneGeometry(0.17, 0.036);
+  const verticalTickGeometry = new THREE.PlaneGeometry(0.036, 0.17);
+  const ticks = [
+    { geometry: horizontalTickGeometry, position: new THREE.Vector3(-0.5, 0, 0) },
+    { geometry: horizontalTickGeometry.clone(), position: new THREE.Vector3(0.5, 0, 0) },
+    { geometry: verticalTickGeometry, position: new THREE.Vector3(0, 0, -0.5) },
+    { geometry: verticalTickGeometry.clone(), position: new THREE.Vector3(0, 0, 0.5) }
+  ];
+  const tickMeshes = ticks.map(({ geometry, position }) => {
+    const tick = new THREE.Mesh(geometry, material);
+    tick.position.copy(position);
+    tick.rotation.x = -Math.PI * 0.5;
+    tick.renderOrder = 100;
+    return tick;
+  });
 
-  group.add(ring, horizontal, vertical);
+  group.add(ring, dot, ...tickMeshes);
   return group;
 }
 
@@ -1661,6 +1785,9 @@ async function boot(): Promise<void> {
   activeGame = game;
   window.__DOWNTOWN_MAYHEM_DEBUG__ = {
     getRenderStats: () => game.getRenderStats(),
+    getPerfReport: () => perfMonitor.report(),
+    setPerfEnabled: (enabled) => perfMonitor.setEnabled(enabled),
+    clearPerfReport: () => perfMonitor.clear(),
     freezeForCapture: () => game.freezeForCapture(),
     resume: () => game.resume()
   };

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import type { MaterialDefinition, MaterialId } from "./materialCatalog";
+import { perfMonitor } from "./perf";
 
 const MAX_ACTIVE_DEBRIS = 260;
 const SETTLED_ACTIVE_DEBRIS_TARGET = 150;
@@ -203,13 +204,16 @@ export class PhysicsWorld {
   private readonly trafficWaitTicks = new Map<number, number>();
   private readonly preStepVelocities = new Map<number, MotionSample>();
   private readonly surfaceColliderLabels = new Map<number, string>();
+  private readonly releasedSupportGroups = new Set<string>();
   private readonly pendingCollisionEvents: Array<{ firstId: number; secondId: number; started: boolean }> = [];
+  private pendingCollisionEventHead = 0;
   private readonly pendingSurfaceCollisionEvents: Array<{
     objectId: number;
     surfaceLabel: string;
     started: boolean;
     impactVelocity: MotionSample;
   }> = [];
+  private pendingSurfaceCollisionEventHead = 0;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -218,12 +222,17 @@ export class PhysicsWorld {
   }
 
   step(deltaSeconds: number): void {
-    this.pendingCollisionEvents.length = 0;
-    this.pendingSurfaceCollisionEvents.length = 0;
+    this.compactPendingEventQueues();
     this.accumulator += Math.min(deltaSeconds, 0.12);
+    let substeps = 0;
     while (this.accumulator >= this.fixedTimestep) {
+      let startedAt = perfMonitor.timeStart();
       this.capturePreStepVelocities();
+      perfMonitor.addTiming("physics.capturePreStepVelocities", startedAt);
+      startedAt = perfMonitor.timeStart();
       this.world.step(this.eventQueue);
+      perfMonitor.addTiming("physics.rapierStep", startedAt);
+      startedAt = perfMonitor.timeStart();
       this.eventQueue.drainCollisionEvents((handle1, handle2, started) => {
         if (!started) {
           return;
@@ -250,8 +259,13 @@ export class PhysicsWorld {
           });
         }
       });
+      perfMonitor.addTiming("physics.drainRapierEvents", startedAt);
       this.accumulator -= this.fixedTimestep;
+      substeps += 1;
     }
+    perfMonitor.addCount("physics.substeps", substeps);
+    perfMonitor.addCount("collision.pendingBacklog", this.pendingCollisionEvents.length - this.pendingCollisionEventHead);
+    perfMonitor.addCount("collision.surfacePendingBacklog", this.pendingSurfaceCollisionEvents.length - this.pendingSurfaceCollisionEventHead);
     this.syncMeshes();
     this.rubbleFreezeElapsed += deltaSeconds;
     if (this.rubbleFreezeElapsed >= RUBBLE_FREEZE_INTERVAL_SECONDS) {
@@ -287,6 +301,7 @@ export class PhysicsWorld {
   }
 
   addDynamicBox(options: DynamicBoxOptions): PhysicsObject {
+    const startedAt = perfMonitor.timeStart();
     const rotation = options.rotation ?? new THREE.Quaternion();
     const bodyType = options.bodyType ?? "dynamic";
     const bodyDesc = (bodyType === "fixed" ? RAPIER.RigidBodyDesc.fixed() : RAPIER.RigidBodyDesc.dynamic())
@@ -407,10 +422,16 @@ export class PhysicsWorld {
       this.enforceDebrisCap();
     }
     this.nextId += 1;
+    perfMonitor.addCount("physics.dynamicBoxesAdded");
+    if (object.isDebris) {
+      perfMonitor.addCount("physics.debrisAdded");
+    }
+    perfMonitor.addTiming("physics.addDynamicBox", startedAt);
     return object;
   }
 
   addDynamicSphere(options: DynamicSphereOptions): PhysicsObject {
+    const startedAt = perfMonitor.timeStart();
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(options.position.x, options.position.y, options.position.z)
       .setCanSleep(true)
@@ -483,6 +504,11 @@ export class PhysicsWorld {
       this.enforceDebrisCap();
     }
     this.nextId += 1;
+    perfMonitor.addCount("physics.dynamicSpheresAdded");
+    if (object.isDebris) {
+      perfMonitor.addCount("physics.debrisAdded");
+    }
+    perfMonitor.addTiming("physics.addDynamicSphere", startedAt);
     return object;
   }
 
@@ -516,22 +542,32 @@ export class PhysicsWorld {
     return this.objects.get(id);
   }
 
-  drainCollisionEvents(): PhysicsCollisionEvent[] {
+  drainCollisionEvents(maxEvents = Number.POSITIVE_INFINITY): PhysicsCollisionEvent[] {
     const events: PhysicsCollisionEvent[] = [];
-    for (const event of this.pendingCollisionEvents) {
+    if (maxEvents <= 0) {
+      return events;
+    }
+    while (this.pendingCollisionEventHead < this.pendingCollisionEvents.length && events.length < maxEvents) {
+      const event = this.pendingCollisionEvents[this.pendingCollisionEventHead];
+      this.pendingCollisionEventHead += 1;
       const first = this.objects.get(event.firstId);
       const second = this.objects.get(event.secondId);
       if (first && second) {
         events.push({ first, second, started: event.started });
       }
     }
-    this.pendingCollisionEvents.length = 0;
+    this.compactPendingCollisionEvents();
     return events;
   }
 
-  drainSurfaceCollisionEvents(): PhysicsSurfaceCollisionEvent[] {
+  drainSurfaceCollisionEvents(maxEvents = Number.POSITIVE_INFINITY): PhysicsSurfaceCollisionEvent[] {
     const events: PhysicsSurfaceCollisionEvent[] = [];
-    for (const event of this.pendingSurfaceCollisionEvents) {
+    if (maxEvents <= 0) {
+      return events;
+    }
+    while (this.pendingSurfaceCollisionEventHead < this.pendingSurfaceCollisionEvents.length && events.length < maxEvents) {
+      const event = this.pendingSurfaceCollisionEvents[this.pendingSurfaceCollisionEventHead];
+      this.pendingSurfaceCollisionEventHead += 1;
       const object = this.objects.get(event.objectId);
       if (object) {
         events.push({
@@ -542,7 +578,7 @@ export class PhysicsWorld {
         });
       }
     }
-    this.pendingSurfaceCollisionEvents.length = 0;
+    this.compactPendingSurfaceCollisionEvents();
     return events;
   }
 
@@ -687,6 +723,8 @@ export class PhysicsWorld {
     }
     this.debrisQueue.length = 0;
     this.debrisQueueHead = 0;
+    this.releasedSupportGroups.clear();
+    this.clearPendingEvents();
     this.clearFrozenDebris();
   }
 
@@ -734,6 +772,9 @@ export class PhysicsWorld {
     }
 
     const supportRelease = supportReleaseConfig(source);
+    if (supportRelease && this.releasedSupportGroups.has(supportRelease.groupId)) {
+      return 0;
+    }
     const horizontalRadius = supportRelease?.radius ?? Math.max(1.05, Math.min(2.35, Math.max(source.dimensions.x, source.dimensions.z) * 2.8));
     const sameStackRadius = supportRelease?.radius ?? horizontalRadius * 1.2;
     const neighborRadius = supportRelease ? 0 : horizontalRadius * 0.72;
@@ -797,10 +838,17 @@ export class PhysicsWorld {
       destabilized += 1;
     }
 
+    if (supportRelease && destabilized > 0) {
+      this.releasedSupportGroups.add(supportRelease.groupId);
+    }
+    perfMonitor.addCount("physics.supportDestabilized", destabilized);
     return destabilized;
   }
 
   private enforceDebrisCap(): void {
+    const startedAt = perfMonitor.timeStart();
+    let frozen = 0;
+    let removed = 0;
     while (this.activeDebrisCount() > this.maxDebris) {
       const id = this.debrisQueue[this.debrisQueueHead];
       this.debrisQueueHead += 1;
@@ -808,8 +856,10 @@ export class PhysicsWorld {
         const object = this.objects.get(id);
         if (object && this.shouldFreezeDebrisAsRubble(object, true)) {
           this.freezeDebrisObject(object);
+          frozen += 1;
         } else if (object) {
           this.removeObject(object.id);
+          removed += 1;
         }
       }
     }
@@ -817,6 +867,9 @@ export class PhysicsWorld {
       this.compactDebrisQueue();
     }
     this.trimFrozenDebris();
+    perfMonitor.addCount("physics.debrisFrozenForced", frozen);
+    perfMonitor.addCount("physics.debrisRemovedByCap", removed);
+    perfMonitor.addTiming("physics.enforceDebrisCap", startedAt);
   }
 
   private compactDebrisQueue(): void {
@@ -943,6 +996,48 @@ export class PhysicsWorld {
         const velocity = object.body.linvel();
         this.preStepVelocities.set(id, { x: velocity.x, y: velocity.y, z: velocity.z });
       }
+    }
+  }
+
+  private compactPendingEventQueues(): void {
+    this.compactPendingCollisionEvents();
+    this.compactPendingSurfaceCollisionEvents();
+  }
+
+  private clearPendingEvents(): void {
+    this.pendingCollisionEvents.length = 0;
+    this.pendingCollisionEventHead = 0;
+    this.pendingSurfaceCollisionEvents.length = 0;
+    this.pendingSurfaceCollisionEventHead = 0;
+  }
+
+  private compactPendingCollisionEvents(): void {
+    if (this.pendingCollisionEventHead === 0) {
+      return;
+    }
+    if (this.pendingCollisionEventHead >= this.pendingCollisionEvents.length) {
+      this.pendingCollisionEvents.length = 0;
+      this.pendingCollisionEventHead = 0;
+      return;
+    }
+    if (this.pendingCollisionEventHead > 256 && this.pendingCollisionEventHead * 2 > this.pendingCollisionEvents.length) {
+      this.pendingCollisionEvents.splice(0, this.pendingCollisionEventHead);
+      this.pendingCollisionEventHead = 0;
+    }
+  }
+
+  private compactPendingSurfaceCollisionEvents(): void {
+    if (this.pendingSurfaceCollisionEventHead === 0) {
+      return;
+    }
+    if (this.pendingSurfaceCollisionEventHead >= this.pendingSurfaceCollisionEvents.length) {
+      this.pendingSurfaceCollisionEvents.length = 0;
+      this.pendingSurfaceCollisionEventHead = 0;
+      return;
+    }
+    if (this.pendingSurfaceCollisionEventHead > 256 && this.pendingSurfaceCollisionEventHead * 2 > this.pendingSurfaceCollisionEvents.length) {
+      this.pendingSurfaceCollisionEvents.splice(0, this.pendingSurfaceCollisionEventHead);
+      this.pendingSurfaceCollisionEventHead = 0;
     }
   }
 
