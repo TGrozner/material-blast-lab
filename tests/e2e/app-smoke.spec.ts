@@ -151,7 +151,13 @@ async function bootTrial(page: Page, viewport: { width: number; height: number }
 
 async function clickUi(locator: Locator): Promise<void> {
   await expect(locator).toBeVisible({ timeout: UI_READY_TIMEOUT_MS });
-  await locator.click({ timeout: UI_READY_TIMEOUT_MS, force: true });
+  await locator.evaluate(
+    (element) => {
+      (element as HTMLElement).click();
+    },
+    undefined,
+    { timeout: UI_READY_TIMEOUT_MS }
+  );
 }
 
 async function openSettings(page: Page): Promise<void> {
