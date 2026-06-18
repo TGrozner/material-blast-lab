@@ -14,6 +14,8 @@ export interface PerfReport {
   maxFrameMs: number;
   maxFrame: PerfFrameSnapshot | null;
   recentSlowFrames: PerfFrameSnapshot[];
+  counterTotals: Record<string, number>;
+  counterMax: Record<string, number>;
 }
 
 const SLOW_FRAME_MS = 24;
@@ -27,6 +29,8 @@ class PerfMonitor {
   private currentFrame: PerfFrameSnapshot | null = null;
   private frameStartedAt = 0;
   private readonly slowFrames: PerfFrameSnapshot[] = [];
+  private readonly counterTotals: Record<string, number> = {};
+  private readonly counterMax: Record<string, number> = {};
 
   isEnabled(): boolean {
     return this.enabled;
@@ -70,7 +74,10 @@ class PerfMonitor {
     if (!this.enabled || !this.currentFrame) {
       return;
     }
-    this.currentFrame.counters[name] = (this.currentFrame.counters[name] ?? 0) + value;
+    const frameValue = (this.currentFrame.counters[name] ?? 0) + value;
+    this.currentFrame.counters[name] = frameValue;
+    this.counterTotals[name] = (this.counterTotals[name] ?? 0) + value;
+    this.counterMax[name] = Math.max(this.counterMax[name] ?? 0, frameValue);
   }
 
   endFrame(): void {
@@ -99,7 +106,9 @@ class PerfMonitor {
       slowFrameCount: this.slowFrameCount,
       maxFrameMs: this.maxFrame?.totalMs ?? 0,
       maxFrame: this.maxFrame ? cloneFrame(this.maxFrame) : null,
-      recentSlowFrames: this.slowFrames.map(cloneFrame)
+      recentSlowFrames: this.slowFrames.map(cloneFrame),
+      counterTotals: { ...this.counterTotals },
+      counterMax: { ...this.counterMax }
     };
   }
 
@@ -109,6 +118,8 @@ class PerfMonitor {
     this.maxFrame = null;
     this.currentFrame = null;
     this.slowFrames.length = 0;
+    clearRecord(this.counterTotals);
+    clearRecord(this.counterMax);
   }
 }
 
@@ -143,4 +154,10 @@ function roundRecord(record: Record<string, number>): Record<string, number> {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function clearRecord(record: Record<string, number>): void {
+  for (const key of Object.keys(record)) {
+    delete record[key];
+  }
 }

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { MaterialId } from "./materialCatalog";
+import { perfMonitor } from "./perf";
 import type { ScoreRole } from "./physics";
 import { decalAtlasTile, materialAtlasTile } from "./visualAssets";
 
@@ -17,9 +18,16 @@ interface BuildingCellVisualOptions {
   columns: number;
 }
 
-interface FragmentVisualOptions {
+export interface FragmentVisualOptions {
   size: THREE.Vector3;
   materialId: MaterialId;
+}
+
+export interface FragmentVisualPart {
+  size: THREE.Vector3;
+  offset: THREE.Vector3;
+  rotation: THREE.Euler;
+  material: THREE.Material;
 }
 
 interface VehicleVisualOptions {
@@ -55,6 +63,11 @@ const sharedMaterials = new Map<string, THREE.Material>();
 const childBoxGeometryCache = new Map<string, THREE.BoxGeometry>();
 const childCylinderGeometryCache = new Map<string, THREE.CylinderGeometry>();
 const childSphereGeometryCache = new Map<string, THREE.SphereGeometry>();
+
+interface DetailRootUserData {
+  unscaledDetailRoot?: THREE.Object3D;
+  fragmentVisualParts?: THREE.Mesh[];
+}
 
 export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisualOptions): void {
   const palette = paletteFor(options.style, options.scoreRole);
@@ -99,51 +112,85 @@ function decorateNeutralBuildingCell(
   }
 }
 
-export function decorateFragment(mesh: THREE.Mesh, options: FragmentVisualOptions): void {
+export function fragmentDecorationParts(options: FragmentVisualOptions): FragmentVisualPart[] {
   if (options.materialId === "glass") {
-    addChildBox(mesh, options.size.x * 0.88, Math.max(0.012, options.size.y * 0.24), options.size.z * 1.08, "glass_shard", {
-      y: options.size.y * 0.18,
-      z: options.size.z * 0.08
-    });
-    return;
+    return [
+      {
+        size: new THREE.Vector3(options.size.x * 0.88, Math.max(0.012, options.size.y * 0.24), options.size.z * 1.08),
+        offset: new THREE.Vector3(0, options.size.y * 0.18, options.size.z * 0.08),
+        rotation: new THREE.Euler(),
+        material: material("glass_shard")
+      }
+    ];
   }
 
   if (options.materialId === "metal") {
-    addChildBox(mesh, options.size.x * 0.38, options.size.y * 0.38, options.size.z * 1.22, "scraped_metal", {
-      x: options.size.x * 0.12,
-      y: options.size.y * 0.08,
-      rotationZ: Math.PI * 0.08
-    });
-    return;
+    return [
+      {
+        size: new THREE.Vector3(options.size.x * 0.38, options.size.y * 0.38, options.size.z * 1.22),
+        offset: new THREE.Vector3(options.size.x * 0.12, options.size.y * 0.08, 0),
+        rotation: new THREE.Euler(0, 0, Math.PI * 0.08),
+        material: material("scraped_metal")
+      }
+    ];
   }
 
   if (options.materialId === "concrete") {
-    addChildBox(mesh, options.size.x * 0.44, options.size.y * 0.18, Math.max(0.05, options.size.z * 0.28), "rubble_dark", {
-      x: -options.size.x * 0.12,
-      y: options.size.y * 0.28,
-      z: options.size.z * 0.46
-    });
-    addChildBox(mesh, Math.max(0.04, options.size.x * 0.18), options.size.y * 0.34, Math.max(0.04, options.size.z * 0.18), "rubble_light", {
-      x: options.size.x * 0.3,
-      y: -options.size.y * 0.18,
-      z: -options.size.z * 0.38
-    });
-    return;
+    return [
+      {
+        size: new THREE.Vector3(options.size.x * 0.44, options.size.y * 0.18, Math.max(0.05, options.size.z * 0.28)),
+        offset: new THREE.Vector3(-options.size.x * 0.12, options.size.y * 0.28, options.size.z * 0.46),
+        rotation: new THREE.Euler(),
+        material: material("rubble_dark")
+      },
+      {
+        size: new THREE.Vector3(Math.max(0.04, options.size.x * 0.18), options.size.y * 0.34, Math.max(0.04, options.size.z * 0.18)),
+        offset: new THREE.Vector3(options.size.x * 0.3, -options.size.y * 0.18, -options.size.z * 0.38),
+        rotation: new THREE.Euler(),
+        material: material("rubble_light")
+      }
+    ];
   }
 
   if (options.materialId === "wood") {
-    addChildBox(mesh, options.size.x * 0.22, options.size.y * 1.06, options.size.z * 0.92, "wood_end", {
-      x: options.size.x * 0.4,
-      rotationY: Math.PI * 0.04
-    });
-    return;
+    return [
+      {
+        size: new THREE.Vector3(options.size.x * 0.22, options.size.y * 1.06, options.size.z * 0.92),
+        offset: new THREE.Vector3(options.size.x * 0.4, 0, 0),
+        rotation: new THREE.Euler(0, Math.PI * 0.04, 0),
+        material: material("wood_end")
+      }
+    ];
   }
 
   if (options.materialId === "foam") {
-    addChildBox(mesh, options.size.x * 0.7, options.size.y * 0.16, options.size.z * 0.7, "painted_plastic", {
-      y: options.size.y * 0.42
+    return [
+      {
+        size: new THREE.Vector3(options.size.x * 0.7, options.size.y * 0.16, options.size.z * 0.7),
+        offset: new THREE.Vector3(0, options.size.y * 0.42, 0),
+        rotation: new THREE.Euler(),
+        material: material("painted_plastic")
+      }
+    ];
+  }
+
+  return [];
+}
+
+export function decorateFragment(mesh: THREE.Mesh, options: FragmentVisualOptions): void {
+  const parts = fragmentDecorationParts(options);
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    setFragmentChildBox(mesh, index, part.size.x, part.size.y, part.size.z, part.material, {
+      x: part.offset.x,
+      y: part.offset.y,
+      z: part.offset.z,
+      rotationX: part.rotation.x,
+      rotationY: part.rotation.y,
+      rotationZ: part.rotation.z
     });
   }
+  hideUnusedFragmentChildBoxes(mesh, parts.length);
 }
 
 export function decorateCityVehicle(mesh: THREE.Mesh, options: VehicleVisualOptions): void {
@@ -877,12 +924,62 @@ function addChildBox(
   if (!hasPositiveDimensions(width, height, depth)) {
     return;
   }
-  const mesh = new THREE.Mesh(sharedChildBoxGeometry(width, height, depth), typeof materialRef === "string" ? material(materialRef) : materialRef);
+  const mesh = new THREE.Mesh(sharedChildBoxGeometry(), typeof materialRef === "string" ? material(materialRef) : materialRef);
   mesh.position.set(transform.x ?? 0, transform.y ?? 0, transform.z ?? 0);
   mesh.rotation.set(transform.rotationX ?? 0, transform.rotationY ?? 0, transform.rotationZ ?? 0);
+  mesh.scale.set(width, height, depth);
   mesh.castShadow = false;
   mesh.receiveShadow = false;
-  parent.add(mesh);
+  decorativeChildHost(parent, true).add(mesh);
+}
+
+function setFragmentChildBox(
+  parent: THREE.Mesh,
+  index: number,
+  width: number,
+  height: number,
+  depth: number,
+  materialRef: THREE.Material | string,
+  transform: {
+    x?: number;
+    y?: number;
+    z?: number;
+    rotationX?: number;
+    rotationY?: number;
+    rotationZ?: number;
+  } = {}
+): void {
+  const userData = parent.userData as DetailRootUserData;
+  const parts = userData.fragmentVisualParts ?? [];
+  userData.fragmentVisualParts = parts;
+  const host = decorativeChildHost(parent, true);
+  const materialValue = typeof materialRef === "string" ? material(materialRef) : materialRef;
+  let mesh = parts[index];
+  if (!mesh) {
+    mesh = new THREE.Mesh(sharedChildBoxGeometry(), materialValue);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    parts[index] = mesh;
+  } else {
+    mesh.material = materialValue;
+  }
+  if (mesh.parent !== host) {
+    host.add(mesh);
+  }
+  mesh.visible = hasPositiveDimensions(width, height, depth);
+  mesh.position.set(transform.x ?? 0, transform.y ?? 0, transform.z ?? 0);
+  mesh.rotation.set(transform.rotationX ?? 0, transform.rotationY ?? 0, transform.rotationZ ?? 0);
+  mesh.scale.set(Math.max(0.0001, width), Math.max(0.0001, height), Math.max(0.0001, depth));
+}
+
+function hideUnusedFragmentChildBoxes(parent: THREE.Mesh, usedCount: number): void {
+  const parts = (parent.userData as DetailRootUserData).fragmentVisualParts;
+  if (!parts) {
+    return;
+  }
+  for (let index = usedCount; index < parts.length; index += 1) {
+    parts[index].visible = false;
+  }
 }
 
 function addChildCylinder(
@@ -903,15 +1000,17 @@ function addChildCylinder(
   if (!hasPositiveDimensions(radiusTop, radiusBottom, height)) {
     return;
   }
+  const radiusScale = Math.max(radiusTop, radiusBottom);
   const mesh = new THREE.Mesh(
-    sharedChildCylinderGeometry(radiusTop, radiusBottom, height),
+    sharedChildCylinderGeometry(radiusTop / radiusScale, radiusBottom / radiusScale),
     typeof materialRef === "string" ? material(materialRef) : materialRef
   );
   mesh.position.set(transform.x ?? 0, transform.y ?? 0, transform.z ?? 0);
   mesh.rotation.set(transform.rotationX ?? 0, transform.rotationY ?? 0, transform.rotationZ ?? 0);
+  mesh.scale.set(radiusScale, height, radiusScale);
   mesh.castShadow = false;
   mesh.receiveShadow = false;
-  parent.add(mesh);
+  decorativeChildHost(parent, true).add(mesh);
 }
 
 function addChildSphere(
@@ -927,16 +1026,18 @@ function addChildSphere(
   if (!Number.isFinite(radius) || radius <= 0) {
     return;
   }
-  const mesh = new THREE.Mesh(sharedChildSphereGeometry(radius), typeof materialRef === "string" ? material(materialRef) : materialRef);
+  const mesh = new THREE.Mesh(sharedChildSphereGeometry(), typeof materialRef === "string" ? material(materialRef) : materialRef);
   mesh.position.set(transform.x ?? 0, transform.y ?? 0, transform.z ?? 0);
+  mesh.scale.setScalar(radius);
   mesh.castShadow = false;
   mesh.receiveShadow = false;
-  parent.add(mesh);
+  decorativeChildHost(parent, true).add(mesh);
 }
 
 function mergeOpaqueDecorativeChildrenByMaterial(parent: THREE.Mesh): void {
+  const target = decorativeChildHost(parent, false);
   const groups = new Map<THREE.Material, THREE.Mesh[]>();
-  for (const child of parent.children) {
+  for (const child of target.children) {
     if (
       !(child instanceof THREE.Mesh) ||
       Array.isArray(child.material) ||
@@ -970,14 +1071,14 @@ function mergeOpaqueDecorativeChildrenByMaterial(parent: THREE.Mesh): void {
     }
 
     for (const mesh of meshes) {
-      parent.remove(mesh);
+      target.remove(mesh);
     }
 
     const mergedMesh = new THREE.Mesh(mergedGeometry, materialRef);
     mergedMesh.name = `${parent.name} batched detail`;
     mergedMesh.castShadow = false;
     mergedMesh.receiveShadow = false;
-    parent.add(mergedMesh);
+    target.add(mergedMesh);
   }
 }
 
@@ -1194,15 +1295,43 @@ function createMaterial(key: string): THREE.Material {
   }
 }
 
-function sharedChildBoxGeometry(width: number, height: number, depth: number): THREE.BoxGeometry {
-  const key = `${width.toFixed(3)}:${height.toFixed(3)}:${depth.toFixed(3)}`;
+function decorativeChildHost(parent: THREE.Mesh, create: boolean): THREE.Object3D {
+  if (isUnitScale(parent.scale)) {
+    return parent;
+  }
+  const userData = parent.userData as DetailRootUserData;
+  let root = userData.unscaledDetailRoot;
+  if (!root && create) {
+    root = new THREE.Object3D();
+    root.name = `${parent.name || "mesh"} unscaled details`;
+    userData.unscaledDetailRoot = root;
+    parent.add(root);
+  }
+  if (!root) {
+    return parent;
+  }
+  root.scale.set(safeInverseScale(parent.scale.x), safeInverseScale(parent.scale.y), safeInverseScale(parent.scale.z));
+  return root;
+}
+
+function isUnitScale(scale: THREE.Vector3): boolean {
+  return Math.abs(scale.x - 1) < 0.000001 && Math.abs(scale.y - 1) < 0.000001 && Math.abs(scale.z - 1) < 0.000001;
+}
+
+function safeInverseScale(value: number): number {
+  return Math.abs(value) > 0.000001 ? 1 / value : 1;
+}
+
+function sharedChildBoxGeometry(): THREE.BoxGeometry {
+  const key = "unit";
   const existing = childBoxGeometryCache.get(key);
   if (existing) {
     return existing;
   }
-  const geometry = new THREE.BoxGeometry(width, height, depth);
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
   geometry.userData.sharedGeometry = true;
   childBoxGeometryCache.set(key, geometry);
+  perfMonitor.addCount("render.childBoxGeometryCacheMiss");
   return geometry;
 }
 
@@ -1210,26 +1339,28 @@ function hasPositiveDimensions(...values: number[]): boolean {
   return values.every((value) => Number.isFinite(value) && value > 0);
 }
 
-function sharedChildCylinderGeometry(radiusTop: number, radiusBottom: number, height: number): THREE.CylinderGeometry {
-  const key = `${radiusTop.toFixed(3)}:${radiusBottom.toFixed(3)}:${height.toFixed(3)}`;
+function sharedChildCylinderGeometry(radiusTopRatio: number, radiusBottomRatio: number): THREE.CylinderGeometry {
+  const key = `${radiusTopRatio.toFixed(3)}:${radiusBottomRatio.toFixed(3)}`;
   const existing = childCylinderGeometryCache.get(key);
   if (existing) {
     return existing;
   }
-  const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 12);
+  const geometry = new THREE.CylinderGeometry(radiusTopRatio, radiusBottomRatio, 1, 12);
   geometry.userData.sharedGeometry = true;
   childCylinderGeometryCache.set(key, geometry);
+  perfMonitor.addCount("render.childCylinderGeometryCacheMiss");
   return geometry;
 }
 
-function sharedChildSphereGeometry(radius: number): THREE.SphereGeometry {
-  const key = radius.toFixed(3);
+function sharedChildSphereGeometry(): THREE.SphereGeometry {
+  const key = "unit";
   const existing = childSphereGeometryCache.get(key);
   if (existing) {
     return existing;
   }
-  const geometry = new THREE.SphereGeometry(radius, 24, 14);
+  const geometry = new THREE.SphereGeometry(1, 24, 14);
   geometry.userData.sharedGeometry = true;
   childSphereGeometryCache.set(key, geometry);
+  perfMonitor.addCount("render.childSphereGeometryCacheMiss");
   return geometry;
 }

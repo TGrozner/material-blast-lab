@@ -10,6 +10,11 @@ const RUBBLE_FREEZE_INTERVAL_SECONDS = 0.18;
 const SETTLED_RUBBLE_MIN_AGE_MS = 680;
 const FORCED_RUBBLE_MIN_AGE_MS = 280;
 const MAX_RUBBLE_FREEZE_CENTER_Y = 0.78;
+const MAX_PHYSICS_SUBSTEPS_PER_FRAME = 2;
+const FROZEN_RUBBLE_BUCKET_CAPACITY = 512;
+const STATIC_DETAIL_BUCKET_CAPACITY = 1024;
+const STAGED_VISUAL_ACTIVATIONS_PER_FRAME = 32;
+const STAGED_VISUAL_ACTIVATION_MAX_MS = 0.7;
 const TRAFFIC_AVOIDANCE_PADDING = 0.38;
 const TRAFFIC_AVOIDANCE_MIN_DISTANCE = 1.05;
 
@@ -48,6 +53,17 @@ export interface PhysicsSurfaceCollisionEvent {
   impactVelocity: THREE.Vector3;
 }
 
+export interface FrozenVisualHandle {
+  dispose(): void;
+}
+
+export interface DynamicVisualProxy {
+  setVisible(visible: boolean): void;
+  sync(position: THREE.Vector3, rotation: THREE.Quaternion): void;
+  freeze(position: THREE.Vector3, rotation: THREE.Quaternion): FrozenVisualHandle | null;
+  dispose(): void;
+}
+
 export interface PhysicsObject {
   id: number;
   label: string;
@@ -78,7 +94,11 @@ export interface PhysicsObject {
   shape: PhysicsShape;
   trafficRoute?: TrafficRoute;
   colliderHandles: number[];
+  releaseMesh?: MeshReleaseCallback;
+  visualProxy?: DynamicVisualProxy;
 }
+
+type MeshReleaseCallback = (mesh: THREE.Mesh) => void;
 
 interface MotionSample {
   x: number;
@@ -96,6 +116,64 @@ interface TrafficAdvancePlan {
   blocked: boolean;
 }
 
+interface FrozenRubblePart {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+  matrix: THREE.Matrix4;
+  renderOrder: number;
+  castShadow: boolean;
+  receiveShadow: boolean;
+}
+
+interface FrozenRubbleRecord {
+  mesh?: THREE.Mesh;
+  releaseMesh?: MeshReleaseCallback;
+  visual?: FrozenVisualHandle;
+  instances: FrozenRubbleInstance[];
+}
+
+interface FrozenRubbleInstance {
+  bucket: FrozenRubbleBucket;
+  index: number;
+}
+
+interface FrozenRubbleRef {
+  record: FrozenRubbleRecord;
+  instanceIndex: number;
+}
+
+interface FrozenRubbleBucket {
+  key: string;
+  mesh: THREE.InstancedMesh;
+  capacity: number;
+  count: number;
+  refs: Array<FrozenRubbleRef | undefined>;
+}
+
+interface StaticDetailRecord {
+  objectId: number;
+  children: THREE.Mesh[];
+  instances: StaticDetailInstance[];
+}
+
+interface StaticDetailInstance {
+  bucket: StaticDetailBucket;
+  index: number;
+}
+
+interface StaticDetailRef {
+  record: StaticDetailRecord;
+  instanceIndex: number;
+}
+
+interface StaticDetailBucket {
+  key: string;
+  mesh: THREE.InstancedMesh;
+  capacity: number;
+  count: number;
+  refs: Array<StaticDetailRef | undefined>;
+}
+
 interface CompoundBoxColliderOptions {
   size: THREE.Vector3;
   offset: THREE.Vector3;
@@ -110,6 +188,9 @@ interface DynamicBoxOptions {
   label?: string;
   material: MaterialDefinition;
   renderMaterial: THREE.Material;
+  renderMesh?: THREE.Mesh;
+  releaseMesh?: MeshReleaseCallback;
+  visualProxy?: DynamicVisualProxy;
   position: THREE.Vector3;
   size: THREE.Vector3;
   rotation?: THREE.Quaternion;
@@ -143,6 +224,7 @@ interface DynamicBoxOptions {
   bodyType?: PhysicsBodyType;
   trafficRoute?: TrafficRoute;
   collisionEvents?: boolean;
+  stageVisualActivation?: boolean;
 }
 
 interface StaticBoxOptions {
@@ -196,7 +278,15 @@ export class PhysicsWorld {
   private readonly maxDebris = MAX_ACTIVE_DEBRIS;
   private readonly settledDebrisTarget = SETTLED_ACTIVE_DEBRIS_TARGET;
   private readonly maxFrozenDebris = MAX_FROZEN_RUBBLE;
-  private readonly frozenDebrisMeshes: THREE.Mesh[] = [];
+  private readonly frozenDebrisRecords: FrozenRubbleRecord[] = [];
+  private readonly frozenRubbleBuckets = new Map<string, FrozenRubbleBucket[]>();
+  private readonly frozenRubbleWarmupBuckets = new Set<FrozenRubbleBucket>();
+  private readonly frozenRubbleScratchMatrix = new THREE.Matrix4();
+  private readonly staticDetailRecords = new Map<number, StaticDetailRecord>();
+  private readonly staticDetailBuckets = new Map<string, StaticDetailBucket[]>();
+  private readonly staticDetailScratchMatrix = new THREE.Matrix4();
+  private readonly stagedVisualActivationQueue: number[] = [];
+  private stagedVisualActivationQueueHead = 0;
   private rubbleFreezeElapsed = 0;
   private readonly eventQueue = new RAPIER.EventQueue(true);
   private readonly colliderOwners = new Map<number, number>();
@@ -225,7 +315,7 @@ export class PhysicsWorld {
     this.compactPendingEventQueues();
     this.accumulator += Math.min(deltaSeconds, 0.12);
     let substeps = 0;
-    while (this.accumulator >= this.fixedTimestep) {
+    while (this.accumulator >= this.fixedTimestep && substeps < MAX_PHYSICS_SUBSTEPS_PER_FRAME) {
       let startedAt = perfMonitor.timeStart();
       this.capturePreStepVelocities();
       perfMonitor.addTiming("physics.capturePreStepVelocities", startedAt);
@@ -263,6 +353,10 @@ export class PhysicsWorld {
       this.accumulator -= this.fixedTimestep;
       substeps += 1;
     }
+    if (this.accumulator >= this.fixedTimestep) {
+      perfMonitor.addCount("physics.substepsDropped", Math.floor(this.accumulator / this.fixedTimestep));
+      this.accumulator = Math.min(this.accumulator, this.fixedTimestep);
+    }
     perfMonitor.addCount("physics.substeps", substeps);
     perfMonitor.addCount("collision.pendingBacklog", this.pendingCollisionEvents.length - this.pendingCollisionEventHead);
     perfMonitor.addCount("collision.surfacePendingBacklog", this.pendingSurfaceCollisionEvents.length - this.pendingSurfaceCollisionEventHead);
@@ -289,9 +383,10 @@ export class PhysicsWorld {
     const collider = this.world.createCollider(colliderDesc, body);
     this.surfaceColliderLabels.set(collider.handle, options.label);
 
-    const mesh = new THREE.Mesh(sharedBoxGeometry(options.size), options.material);
+    const mesh = new THREE.Mesh(sharedBoxGeometry(), options.material);
     mesh.name = options.label;
     mesh.position.copy(options.position);
+    mesh.scale.copy(options.size);
     mesh.receiveShadow = true;
     mesh.castShadow = false;
     mesh.visible = options.visible ?? true;
@@ -369,14 +464,29 @@ export class PhysicsWorld {
       colliderHandles.push(compoundCollider.handle);
     }
 
-    const mesh = new THREE.Mesh(sharedBoxGeometry(options.size), options.renderMaterial);
+    const mesh = options.renderMesh ?? new THREE.Mesh(sharedBoxGeometry(), options.renderMaterial);
+    mesh.material = options.renderMaterial;
     mesh.name = options.label ?? options.material.name;
     mesh.castShadow = !options.isDebris;
     mesh.receiveShadow = true;
     mesh.position.copy(options.position);
     mesh.quaternion.copy(rotation);
+    mesh.scale.copy(options.size);
+    mesh.traverse((child) => {
+      child.matrixAutoUpdate = true;
+    });
     mesh.userData.physicsId = this.nextId;
-    this.scene.add(mesh);
+    delete mesh.userData.frozenDebris;
+    if (options.stageVisualActivation) {
+      mesh.visible = false;
+      options.visualProxy?.setVisible(false);
+    } else {
+      mesh.visible = true;
+      options.visualProxy?.setVisible(true);
+    }
+    if (!options.visualProxy) {
+      this.scene.add(mesh);
+    }
 
     const object: PhysicsObject = {
       id: this.nextId,
@@ -407,7 +517,9 @@ export class PhysicsWorld {
       chainSource: options.chainSource ?? false,
       shape: "box",
       trafficRoute: options.trafficRoute ? { ...options.trafficRoute } : undefined,
-      colliderHandles
+      colliderHandles,
+      releaseMesh: options.releaseMesh,
+      visualProxy: options.visualProxy
     };
 
     this.objects.set(object.id, object);
@@ -420,6 +532,10 @@ export class PhysicsWorld {
     if (object.isDebris) {
       this.debrisQueue.push(object.id);
       this.enforceDebrisCap();
+    }
+    if (options.stageVisualActivation) {
+      this.stagedVisualActivationQueue.push(object.id);
+      perfMonitor.addCount("render.stagedVisualActivationsQueued");
     }
     this.nextId += 1;
     perfMonitor.addCount("physics.dynamicBoxesAdded");
@@ -462,13 +578,14 @@ export class PhysicsWorld {
     const collider = this.world.createCollider(colliderDesc, body);
 
     const mesh = new THREE.Mesh(
-      sharedSphereGeometry(options.radius, options.segments ?? 24),
+      sharedSphereGeometry(options.segments ?? 24),
       options.renderMaterial
     );
     mesh.name = options.label ?? options.material.name;
     mesh.castShadow = !options.isDebris;
     mesh.receiveShadow = true;
     mesh.position.copy(options.position);
+    mesh.scale.setScalar(options.radius);
     mesh.userData.physicsId = this.nextId;
     this.scene.add(mesh);
 
@@ -518,6 +635,141 @@ export class PhysicsWorld {
 
   getDynamicBodyCount(): number {
     return this.objects.size;
+  }
+
+  batchStaticDetails(): void {
+    const startedAt = perfMonitor.timeStart();
+    let batchedObjects = 0;
+    let batchedParts = 0;
+    for (const object of this.objects.values()) {
+      if (object.bodyType !== "fixed" || object.isDebris || object.category === "projectile" || this.staticDetailRecords.has(object.id)) {
+        continue;
+      }
+      const record = this.createStaticDetailRecord(object);
+      if (!record) {
+        continue;
+      }
+      this.staticDetailRecords.set(object.id, record);
+      batchedObjects += 1;
+      batchedParts += record.instances.length;
+    }
+    if (batchedObjects > 0) {
+      this.finalizeStaticDetailBuckets();
+      perfMonitor.addCount("physics.staticDetailBatchedObjects", batchedObjects);
+      perfMonitor.addCount("physics.staticDetailBatchedParts", batchedParts);
+      perfMonitor.addTiming("physics.batchStaticDetails", startedAt);
+    }
+  }
+
+  createSphereGeometryWarmupObjects(segments: readonly number[], material: THREE.Material): THREE.Object3D[] {
+    const objects: THREE.Object3D[] = [];
+    for (const segmentCount of new Set(segments)) {
+      const mesh = new THREE.Mesh(sharedSphereGeometry(segmentCount), material);
+      mesh.name = `runtime sphere geometry warmup ${segmentCount}`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      mesh.scale.setScalar(0.16);
+      objects.push(mesh);
+    }
+    return objects;
+  }
+
+  createBoxGeometryWarmupObjects(materials: readonly THREE.Material[]): THREE.Mesh[] {
+    const objects: THREE.Mesh[] = [];
+    const uniqueMaterials = new Set(materials);
+    let index = 0;
+    for (const material of uniqueMaterials) {
+      const mesh = new THREE.Mesh(sharedBoxGeometry(), material);
+      mesh.name = `runtime box geometry warmup ${index}`;
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      mesh.scale.set(0.42, 0.34, 0.38);
+      objects.push(mesh);
+      index += 1;
+    }
+    return objects;
+  }
+
+  createStaticDetailWarmupObjects(): THREE.Object3D[] {
+    const objects: THREE.Object3D[] = [];
+    for (const buckets of this.staticDetailBuckets.values()) {
+      const bucket = buckets[0];
+      if (!bucket) {
+        continue;
+      }
+      const mesh = new THREE.Mesh(bucket.mesh.geometry, bucket.mesh.material);
+      mesh.name = `static detail warmup ${bucket.key}`;
+      mesh.castShadow = bucket.mesh.castShadow;
+      mesh.receiveShadow = bucket.mesh.receiveShadow;
+      mesh.renderOrder = bucket.mesh.renderOrder;
+      mesh.frustumCulled = false;
+      objects.push(mesh);
+    }
+    return objects;
+  }
+
+  createSupportReleaseWarmupObjects(): THREE.Object3D[] {
+    const objects: THREE.Object3D[] = [];
+    for (const object of this.objects.values()) {
+      if (!object.supportGroupId) {
+        continue;
+      }
+      const clone = object.mesh.clone(true);
+      clone.name = `${object.label} support release warmup`;
+      clone.visible = true;
+      clone.matrixAutoUpdate = true;
+      clone.traverse((child) => {
+        child.visible = true;
+        child.frustumCulled = false;
+        child.matrixAutoUpdate = true;
+        delete child.userData.physicsId;
+      });
+      objects.push(clone);
+    }
+    return objects;
+  }
+
+  createFrozenRubbleWarmupObjects(sources: readonly THREE.Mesh[]): THREE.Object3D[] {
+    const objects = new Set<THREE.Object3D>();
+    for (const source of sources) {
+      source.updateMatrixWorld(true);
+      const parts = collectFrozenRubbleParts(source);
+      if (!parts) {
+        continue;
+      }
+      for (const part of parts) {
+        const bucket = this.getFrozenRubbleBucket(part);
+        if (bucket.count > 0) {
+          objects.add(bucket.mesh);
+          continue;
+        }
+        const warmupMatrix = part.matrix.clone();
+        warmupMatrix.setPosition(0, -10000, 0);
+        bucket.mesh.setMatrixAt(0, warmupMatrix);
+        bucket.refs[0] = undefined;
+        bucket.count = 1;
+        bucket.mesh.count = 1;
+        bucket.mesh.visible = true;
+        bucket.mesh.instanceMatrix.needsUpdate = true;
+        this.frozenRubbleWarmupBuckets.add(bucket);
+        objects.add(bucket.mesh);
+      }
+    }
+    return [...objects];
+  }
+
+  clearFrozenRubbleWarmupObjects(): void {
+    for (const bucket of this.frozenRubbleWarmupBuckets) {
+      if (bucket.count === 1 && bucket.refs[0] === undefined) {
+        bucket.count = 0;
+        bucket.mesh.count = 0;
+        bucket.mesh.visible = false;
+        bucket.mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+    this.frozenRubbleWarmupBuckets.clear();
   }
 
   getBlastCandidates(origin: THREE.Vector3, radius: number): PhysicsObject[] {
@@ -701,9 +953,20 @@ export class PhysicsWorld {
     if (!object) {
       return;
     }
-    this.scene.remove(object.mesh);
-    disposeMeshTree(object.mesh);
+    this.restoreStaticDetailBatch(object);
+    this.releaseObjectMesh(object);
     this.detachObjectPhysics(object);
+  }
+
+  detachObjectForRenderWarmup(id: number): THREE.Mesh | null {
+    const object = this.objects.get(id);
+    if (!object) {
+      return null;
+    }
+    this.restoreStaticDetailBatch(object);
+    delete object.mesh.userData.physicsId;
+    this.detachObjectPhysics(object);
+    return object.mesh;
   }
 
   private detachObjectPhysics(object: PhysicsObject): void {
@@ -717,15 +980,32 @@ export class PhysicsWorld {
     this.objects.delete(object.id);
   }
 
+  private releaseObjectMesh(object: PhysicsObject): void {
+    this.scene.remove(object.mesh);
+    delete object.mesh.userData.physicsId;
+    if (object.visualProxy) {
+      object.visualProxy.dispose();
+      disposeMeshTree(object.mesh);
+      return;
+    }
+    if (object.releaseMesh) {
+      object.releaseMesh(object.mesh);
+      return;
+    }
+    disposeMeshTree(object.mesh);
+  }
+
   clearDynamic(): void {
     for (const object of this.getDynamicObjects()) {
       this.removeObject(object.id);
     }
     this.debrisQueue.length = 0;
     this.debrisQueueHead = 0;
+    this.clearStagedVisualActivationQueue();
     this.releasedSupportGroups.clear();
     this.clearPendingEvents();
     this.clearFrozenDebris();
+    this.disposeStaticDetailBuckets();
   }
 
   clearDebris(): void {
@@ -735,6 +1015,7 @@ export class PhysicsWorld {
       }
     }
     this.compactDebrisQueue();
+    this.clearStagedVisualActivationQueue();
     this.clearFrozenDebris();
   }
 
@@ -755,9 +1036,45 @@ export class PhysicsWorld {
       }
       const translation = object.body.translation();
       const rotation = object.body.rotation();
+      if (object.visualProxy) {
+        object.visualProxy.sync(
+          new THREE.Vector3(translation.x, translation.y, translation.z),
+          new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+        );
+        continue;
+      }
       object.mesh.position.set(translation.x, translation.y, translation.z);
       object.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
     }
+  }
+
+  flushStagedVisualActivations(
+    maxActivations = STAGED_VISUAL_ACTIVATIONS_PER_FRAME,
+    maxMilliseconds = STAGED_VISUAL_ACTIVATION_MAX_MS
+  ): number {
+    const startedAt = perfMonitor.timeStart();
+    const deadline = maxMilliseconds > 0 ? performance.now() + maxMilliseconds : Number.POSITIVE_INFINITY;
+    let activated = 0;
+    while (this.stagedVisualActivationQueueHead < this.stagedVisualActivationQueue.length && activated < maxActivations) {
+      if (activated > 0 && performance.now() >= deadline) {
+        break;
+      }
+      const id = this.stagedVisualActivationQueue[this.stagedVisualActivationQueueHead];
+      this.stagedVisualActivationQueueHead += 1;
+      const object = this.objects.get(id);
+      if (!object || object.mesh.visible) {
+        continue;
+      }
+      object.mesh.visible = true;
+      object.visualProxy?.setVisible(true);
+      activated += 1;
+    }
+    this.compactStagedVisualActivationQueue();
+    const backlog = this.stagedVisualActivationQueue.length - this.stagedVisualActivationQueueHead;
+    perfMonitor.addCount("render.stagedVisualActivationsActivated", activated);
+    perfMonitor.addCount("render.stagedVisualActivationBacklog", backlog);
+    perfMonitor.addTiming("render.stagedVisualActivations", startedAt);
+    return activated;
   }
 
   wakeAll(): void {
@@ -808,6 +1125,7 @@ export class PhysicsWorld {
       }
 
       if (object.bodyType === "fixed") {
+        this.restoreStaticDetailBatch(object);
         object.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
         object.bodyType = "dynamic";
         for (const handle of object.colliderHandles) {
@@ -890,7 +1208,7 @@ export class PhysicsWorld {
   }
 
   private freezeSettledDebris(): void {
-    if (this.activeDebrisCount() <= this.settledDebrisTarget || this.frozenDebrisMeshes.length >= this.maxFrozenDebris) {
+    if (this.activeDebrisCount() <= this.settledDebrisTarget || this.frozenDebrisRecords.length >= this.maxFrozenDebris) {
       return;
     }
 
@@ -898,7 +1216,7 @@ export class PhysicsWorld {
     let activeCount = this.activeDebrisCount();
     for (
       let i = this.debrisQueueHead;
-      i < this.debrisQueue.length && activeCount > this.settledDebrisTarget && this.frozenDebrisMeshes.length < this.maxFrozenDebris;
+      i < this.debrisQueue.length && activeCount > this.settledDebrisTarget && this.frozenDebrisRecords.length < this.maxFrozenDebris;
       i += 1
     ) {
       const id = this.debrisQueue[i];
@@ -915,6 +1233,19 @@ export class PhysicsWorld {
   private freezeDebrisObject(object: PhysicsObject): void {
     const translation = object.body.translation();
     const rotation = object.body.rotation();
+    if (object.visualProxy) {
+      const position = new THREE.Vector3(translation.x, translation.y, translation.z);
+      const quaternion = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w);
+      const frozenVisual = object.visualProxy.freeze(position, quaternion);
+      delete object.mesh.userData.physicsId;
+      disposeMeshTree(object.mesh);
+      this.detachObjectPhysics(object);
+      if (frozenVisual) {
+        this.frozenDebrisRecords.push({ visual: frozenVisual, instances: [] });
+      }
+      return;
+    }
+    object.mesh.visible = true;
     object.mesh.position.set(translation.x, translation.y, translation.z);
     object.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
     object.mesh.castShadow = false;
@@ -926,7 +1257,281 @@ export class PhysicsWorld {
       child.matrixAutoUpdate = false;
     });
     this.detachObjectPhysics(object);
-    this.frozenDebrisMeshes.push(object.mesh);
+    this.freezeRubbleVisual(object.mesh, object.releaseMesh);
+  }
+
+  private compactStagedVisualActivationQueue(): void {
+    if (this.stagedVisualActivationQueueHead === 0) {
+      return;
+    }
+    if (this.stagedVisualActivationQueueHead >= this.stagedVisualActivationQueue.length) {
+      this.stagedVisualActivationQueue.length = 0;
+      this.stagedVisualActivationQueueHead = 0;
+      return;
+    }
+    if (this.stagedVisualActivationQueueHead > 128 && this.stagedVisualActivationQueueHead * 2 > this.stagedVisualActivationQueue.length) {
+      this.stagedVisualActivationQueue.splice(0, this.stagedVisualActivationQueueHead);
+      this.stagedVisualActivationQueueHead = 0;
+    }
+  }
+
+  private clearStagedVisualActivationQueue(): void {
+    this.stagedVisualActivationQueue.length = 0;
+    this.stagedVisualActivationQueueHead = 0;
+  }
+
+  private freezeRubbleVisual(mesh: THREE.Mesh, releaseMesh?: MeshReleaseCallback): void {
+    const parts = collectFrozenRubbleParts(mesh);
+    if (!parts) {
+      this.frozenDebrisRecords.push({ mesh, releaseMesh, instances: [] });
+      perfMonitor.addCount("physics.frozenRubbleMeshFallback");
+      return;
+    }
+
+    const record: FrozenRubbleRecord = { instances: [] };
+    for (const part of parts) {
+      this.addFrozenRubbleInstance(record, part);
+    }
+    this.scene.remove(mesh);
+    if (releaseMesh) {
+      releaseMesh(mesh);
+    } else {
+      disposeMeshTree(mesh);
+    }
+    this.frozenDebrisRecords.push(record);
+    perfMonitor.addCount("physics.frozenRubbleBatched");
+    perfMonitor.addCount("physics.frozenRubbleBatchedParts", parts.length);
+  }
+
+  private addFrozenRubbleInstance(record: FrozenRubbleRecord, part: FrozenRubblePart): void {
+    const bucket = this.getFrozenRubbleBucket(part);
+    const index = bucket.count;
+    const instanceIndex = record.instances.length;
+    bucket.mesh.setMatrixAt(index, part.matrix);
+    bucket.refs[index] = { record, instanceIndex };
+    bucket.count += 1;
+    bucket.mesh.count = bucket.count;
+    bucket.mesh.visible = true;
+    bucket.mesh.instanceMatrix.needsUpdate = true;
+    record.instances.push({ bucket, index });
+  }
+
+  private getFrozenRubbleBucket(part: FrozenRubblePart): FrozenRubbleBucket {
+    const key = frozenRubbleBucketKey(part);
+    let buckets = this.frozenRubbleBuckets.get(key);
+    if (!buckets) {
+      buckets = [];
+      this.frozenRubbleBuckets.set(key, buckets);
+    }
+    const available = buckets.find((bucket) => bucket.count < bucket.capacity);
+    if (available) {
+      return available;
+    }
+
+    const mesh = new THREE.InstancedMesh(part.geometry, part.material, FROZEN_RUBBLE_BUCKET_CAPACITY);
+    mesh.count = 0;
+    mesh.castShadow = part.castShadow;
+    mesh.receiveShadow = part.receiveShadow;
+    mesh.renderOrder = part.renderOrder;
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(mesh);
+    const bucket: FrozenRubbleBucket = {
+      key,
+      mesh,
+      capacity: FROZEN_RUBBLE_BUCKET_CAPACITY,
+      count: 0,
+      refs: new Array(FROZEN_RUBBLE_BUCKET_CAPACITY)
+    };
+    buckets.push(bucket);
+    perfMonitor.addCount("physics.frozenRubbleBucketsCreated");
+    return bucket;
+  }
+
+  private removeFrozenRubbleInstance(instance: FrozenRubbleInstance): void {
+    const bucket = instance.bucket;
+    const lastIndex = bucket.count - 1;
+    if (lastIndex < 0) {
+      return;
+    }
+
+    if (instance.index !== lastIndex) {
+      bucket.mesh.getMatrixAt(lastIndex, this.frozenRubbleScratchMatrix);
+      bucket.mesh.setMatrixAt(instance.index, this.frozenRubbleScratchMatrix);
+      const movedRef = bucket.refs[lastIndex];
+      bucket.refs[instance.index] = movedRef;
+      if (movedRef) {
+        const movedInstance = movedRef.record.instances[movedRef.instanceIndex];
+        if (movedInstance) {
+          movedInstance.index = instance.index;
+        }
+      }
+    }
+
+    bucket.refs[lastIndex] = undefined;
+    bucket.count -= 1;
+    bucket.mesh.count = bucket.count;
+    bucket.mesh.visible = bucket.count > 0;
+    bucket.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private disposeFrozenRubbleBuckets(): void {
+    this.frozenRubbleWarmupBuckets.clear();
+    for (const buckets of this.frozenRubbleBuckets.values()) {
+      for (const bucket of buckets) {
+        this.scene.remove(bucket.mesh);
+        bucket.count = 0;
+        bucket.refs.length = 0;
+      }
+    }
+    this.frozenRubbleBuckets.clear();
+  }
+
+  private createStaticDetailRecord(object: PhysicsObject): StaticDetailRecord | null {
+    object.mesh.updateMatrixWorld(true);
+    const record: StaticDetailRecord = { objectId: object.id, children: [], instances: [] };
+    const parts: Array<{ child: THREE.Mesh; part: FrozenRubblePart }> = [];
+    object.mesh.traverse((child) => {
+      if (child === object.mesh || !(child instanceof THREE.Mesh) || !child.visible || child.children.length > 0) {
+        return;
+      }
+      if (!isStaticDetailMeshBatchable(child)) {
+        return;
+      }
+      parts.push({
+        child,
+        part: {
+          geometry: child.geometry,
+          material: child.material,
+          matrix: child.matrixWorld.clone(),
+          renderOrder: child.renderOrder,
+          castShadow: child.castShadow,
+          receiveShadow: child.receiveShadow
+        }
+      });
+    });
+    if (parts.length === 0) {
+      return null;
+    }
+
+    for (const { child, part } of parts) {
+      this.addStaticDetailInstance(record, part);
+      child.visible = false;
+      record.children.push(child);
+    }
+    return record;
+  }
+
+  private addStaticDetailInstance(record: StaticDetailRecord, part: FrozenRubblePart): void {
+    const bucket = this.getStaticDetailBucket(part);
+    const index = bucket.count;
+    const instanceIndex = record.instances.length;
+    bucket.mesh.setMatrixAt(index, part.matrix);
+    bucket.refs[index] = { record, instanceIndex };
+    bucket.count += 1;
+    bucket.mesh.count = bucket.count;
+    bucket.mesh.visible = true;
+    bucket.mesh.instanceMatrix.needsUpdate = true;
+    record.instances.push({ bucket, index });
+  }
+
+  private getStaticDetailBucket(part: FrozenRubblePart): StaticDetailBucket {
+    const key = frozenRubbleBucketKey(part);
+    let buckets = this.staticDetailBuckets.get(key);
+    if (!buckets) {
+      buckets = [];
+      this.staticDetailBuckets.set(key, buckets);
+    }
+    const available = buckets.find((bucket) => bucket.count < bucket.capacity);
+    if (available) {
+      return available;
+    }
+
+    const mesh = new THREE.InstancedMesh(part.geometry, part.material, STATIC_DETAIL_BUCKET_CAPACITY);
+    mesh.count = 0;
+    mesh.castShadow = part.castShadow;
+    mesh.receiveShadow = part.receiveShadow;
+    mesh.renderOrder = part.renderOrder;
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(mesh);
+    const bucket: StaticDetailBucket = {
+      key,
+      mesh,
+      capacity: STATIC_DETAIL_BUCKET_CAPACITY,
+      count: 0,
+      refs: new Array(STATIC_DETAIL_BUCKET_CAPACITY)
+    };
+    buckets.push(bucket);
+    perfMonitor.addCount("physics.staticDetailBucketsCreated");
+    return bucket;
+  }
+
+  private finalizeStaticDetailBuckets(): void {
+    for (const buckets of this.staticDetailBuckets.values()) {
+      for (const bucket of buckets) {
+        if (bucket.count <= 0) {
+          continue;
+        }
+        bucket.mesh.computeBoundingSphere();
+        bucket.mesh.frustumCulled = true;
+      }
+    }
+  }
+
+  private restoreStaticDetailBatch(object: PhysicsObject): void {
+    const record = this.staticDetailRecords.get(object.id);
+    if (!record) {
+      return;
+    }
+    for (const child of record.children) {
+      child.visible = true;
+    }
+    while (record.instances.length > 0) {
+      const instance = record.instances.pop();
+      if (instance) {
+        this.removeStaticDetailInstance(instance);
+      }
+    }
+    this.staticDetailRecords.delete(object.id);
+  }
+
+  private removeStaticDetailInstance(instance: StaticDetailInstance): void {
+    const bucket = instance.bucket;
+    const lastIndex = bucket.count - 1;
+    if (lastIndex < 0) {
+      return;
+    }
+
+    if (instance.index !== lastIndex) {
+      bucket.mesh.getMatrixAt(lastIndex, this.staticDetailScratchMatrix);
+      bucket.mesh.setMatrixAt(instance.index, this.staticDetailScratchMatrix);
+      const movedRef = bucket.refs[lastIndex];
+      bucket.refs[instance.index] = movedRef;
+      if (movedRef) {
+        const movedInstance = movedRef.record.instances[movedRef.instanceIndex];
+        if (movedInstance) {
+          movedInstance.index = instance.index;
+        }
+      }
+    }
+
+    bucket.refs[lastIndex] = undefined;
+    bucket.count -= 1;
+    bucket.mesh.count = bucket.count;
+    bucket.mesh.visible = bucket.count > 0;
+    bucket.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private disposeStaticDetailBuckets(): void {
+    for (const buckets of this.staticDetailBuckets.values()) {
+      for (const bucket of buckets) {
+        this.scene.remove(bucket.mesh);
+        bucket.count = 0;
+        bucket.refs.length = 0;
+      }
+    }
+    this.staticDetailBuckets.clear();
   }
 
   private shouldFreezeDebrisAsRubble(object: PhysicsObject, forced: boolean): boolean {
@@ -963,24 +1568,38 @@ export class PhysicsWorld {
   }
 
   private trimFrozenDebris(): void {
-    while (this.frozenDebrisMeshes.length > this.maxFrozenDebris) {
-      const mesh = this.frozenDebrisMeshes.shift();
-      if (mesh) {
-        this.removeFrozenDebrisMesh(mesh);
+    while (this.frozenDebrisRecords.length > this.maxFrozenDebris) {
+      const record = this.frozenDebrisRecords.shift();
+      if (record) {
+        this.removeFrozenDebrisRecord(record);
       }
     }
   }
 
   private clearFrozenDebris(): void {
-    for (const mesh of this.frozenDebrisMeshes) {
-      this.removeFrozenDebrisMesh(mesh);
+    for (const record of this.frozenDebrisRecords) {
+      this.removeFrozenDebrisRecord(record);
     }
-    this.frozenDebrisMeshes.length = 0;
+    this.frozenDebrisRecords.length = 0;
+    this.disposeFrozenRubbleBuckets();
   }
 
-  private removeFrozenDebrisMesh(mesh: THREE.Mesh): void {
-    this.scene.remove(mesh);
-    disposeMeshTree(mesh);
+  private removeFrozenDebrisRecord(record: FrozenRubbleRecord): void {
+    record.visual?.dispose();
+    if (record.mesh) {
+      this.scene.remove(record.mesh);
+      if (record.releaseMesh) {
+        record.releaseMesh(record.mesh);
+      } else {
+        disposeMeshTree(record.mesh);
+      }
+    }
+    while (record.instances.length > 0) {
+      const instance = record.instances.pop();
+      if (instance) {
+        this.removeFrozenRubbleInstance(instance);
+      }
+    }
   }
 
   private capturePreStepVelocities(): void {
@@ -1066,6 +1685,65 @@ export class PhysicsWorld {
     });
     return results;
   }
+}
+
+function collectFrozenRubbleParts(root: THREE.Mesh): FrozenRubblePart[] | null {
+  root.updateMatrixWorld(true);
+  const parts: FrozenRubblePart[] = [];
+  let batchable = true;
+  root.traverse((child) => {
+    if (!batchable || !(child instanceof THREE.Mesh) || !child.visible) {
+      return;
+    }
+    if (!isFrozenRubbleMeshBatchable(child)) {
+      batchable = false;
+      return;
+    }
+    parts.push({
+      geometry: child.geometry,
+      material: child.material,
+      matrix: child.matrixWorld.clone(),
+      renderOrder: child.renderOrder,
+      castShadow: child.castShadow,
+      receiveShadow: child.receiveShadow
+    });
+  });
+  return batchable && parts.length > 0 ? parts : null;
+}
+
+function isFrozenRubbleMeshBatchable(mesh: THREE.Mesh): mesh is THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
+  if (Array.isArray(mesh.material) || mesh.children.some((child) => child instanceof THREE.SkinnedMesh)) {
+    return false;
+  }
+  if (mesh.geometry.userData.sharedGeometry !== true || mesh.userData.disposeMaterial === true) {
+    return false;
+  }
+  if (mesh.material.transparent && mesh.material.depthWrite === false) {
+    return false;
+  }
+  return true;
+}
+
+function isStaticDetailMeshBatchable(mesh: THREE.Mesh): mesh is THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
+  if (Array.isArray(mesh.material) || mesh.children.length > 0) {
+    return false;
+  }
+  if (mesh.geometry.userData.sharedGeometry !== true || mesh.userData.disposeMaterial === true) {
+    return false;
+  }
+  if (mesh.material.transparent || mesh.material instanceof THREE.MeshBasicMaterial || isEmissiveMaterial(mesh.material)) {
+    return false;
+  }
+  return true;
+}
+
+function isEmissiveMaterial(material: THREE.Material): boolean {
+  const maybeEmissive = material as THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number };
+  return Boolean(maybeEmissive.emissive && maybeEmissive.emissive.getHex() !== 0 && (maybeEmissive.emissiveIntensity ?? 1) > 0);
+}
+
+function frozenRubbleBucketKey(part: FrozenRubblePart): string {
+  return `${part.geometry.uuid}:${part.material.uuid}:${part.renderOrder}:${part.castShadow ? 1 : 0}:${part.receiveShadow ? 1 : 0}`;
 }
 
 function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
@@ -1428,27 +2106,29 @@ function disposeMeshTree(root: THREE.Mesh): void {
 const boxGeometryCache = new Map<string, THREE.BoxGeometry>();
 const sphereGeometryCache = new Map<string, THREE.SphereGeometry>();
 
-function sharedBoxGeometry(size: THREE.Vector3): THREE.BoxGeometry {
-  const key = `${size.x.toFixed(3)}:${size.y.toFixed(3)}:${size.z.toFixed(3)}`;
+function sharedBoxGeometry(): THREE.BoxGeometry {
+  const key = "unit";
   const existing = boxGeometryCache.get(key);
   if (existing) {
     return existing;
   }
-  const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
   geometry.userData.sharedGeometry = true;
   boxGeometryCache.set(key, geometry);
+  perfMonitor.addCount("render.boxGeometryCacheMiss");
   return geometry;
 }
 
-function sharedSphereGeometry(radius: number, segments: number): THREE.SphereGeometry {
+function sharedSphereGeometry(segments: number): THREE.SphereGeometry {
   const heightSegments = Math.max(12, Math.floor(segments * 0.6));
-  const key = `${radius.toFixed(3)}:${segments}:${heightSegments}`;
+  const key = `${segments}:${heightSegments}`;
   const existing = sphereGeometryCache.get(key);
   if (existing) {
     return existing;
   }
-  const geometry = new THREE.SphereGeometry(radius, segments, heightSegments);
+  const geometry = new THREE.SphereGeometry(1, segments, heightSegments);
   geometry.userData.sharedGeometry = true;
   sphereGeometryCache.set(key, geometry);
+  perfMonitor.addCount("render.sphereGeometryCacheMiss");
   return geometry;
 }

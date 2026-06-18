@@ -48,6 +48,7 @@ interface UICallbacks {
   reset(): void;
   clearDebris(): void;
   finishRun(): void;
+  openMainMenu(): void;
   selectProjectile(id: ProjectileId): void;
   selectLevel(index: number): boolean;
   nextLevel(): void;
@@ -271,7 +272,7 @@ export class GameUI {
     this.fireButton.addEventListener("click", () => this.callbacks.fire());
     this.finishButton.addEventListener("click", () => this.callbacks.finishRun());
     this.requireElement<HTMLButtonElement>("[data-action='reset']").addEventListener("click", () => this.callbacks.reset());
-    this.requireElement<HTMLButtonElement>("[data-action='menu']").addEventListener("click", () => this.showScreen("home"));
+    this.requireElement<HTMLButtonElement>("[data-action='menu']").addEventListener("click", () => this.callbacks.openMainMenu());
     this.requireElement<HTMLButtonElement>("[data-action='settings']").addEventListener("click", () => this.showScreen("settings"));
     this.requireElement<HTMLButtonElement>("[data-action='settings-back']").addEventListener("click", () => this.showScreen("home"));
     this.requireElement<HTMLButtonElement>("[data-action='settings-defaults']").addEventListener("click", () => this.callbacks.resetSettings());
@@ -390,6 +391,10 @@ export class GameUI {
 
   showPlayScreen(): void {
     this.showScreen("play");
+  }
+
+  showHomeScreen(): void {
+    this.showScreen("home");
   }
 
   dispose(): void {

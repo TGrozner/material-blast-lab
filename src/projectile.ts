@@ -133,6 +133,22 @@ export class ProjectileSystem {
     return this.active;
   }
 
+  createWarmupObjects(): THREE.Object3D[] {
+    const geometry = new THREE.SphereGeometry(1, 28, 16);
+    geometry.userData.renderWarmupOwned = true;
+    return (Object.keys(PROJECTILES) as ProjectileId[]).map((id, index) => {
+      const definition = PROJECTILES[id];
+      const mesh = new THREE.Mesh(geometry, this.getRenderMaterial(id));
+      mesh.name = `${definition.name} warmup`;
+      mesh.scale.setScalar(definition.baseRadius);
+      mesh.position.set(index * 0.35, 0, 0);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      return mesh;
+    });
+  }
+
   clearActive(): void {
     if (this.active) {
       this.physics.removeObject(this.active.object.id);
@@ -205,7 +221,7 @@ export class ProjectileSystem {
     return active;
   }
 
-  private getRenderMaterial(id: ProjectileId): THREE.Material {
+  getRenderMaterial(id: ProjectileId): THREE.Material {
     const existing = this.materialsByProjectile.get(id);
     if (existing) {
       return existing;

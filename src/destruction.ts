@@ -1,9 +1,18 @@
 import * as THREE from "three";
-import { decorateFragment } from "./cityVisuals";
+import { fragmentDecorationParts } from "./cityVisuals";
 import { MaterialCatalog, type MaterialDefinition, type MaterialId } from "./materialCatalog";
 import { perfMonitor } from "./perf";
-import { PhysicsWorld, type PhysicsCategory, type PhysicsObject, type ScoreRole } from "./physics";
+import { PhysicsWorld, type DynamicVisualProxy, type FrozenVisualHandle, type PhysicsCategory, type PhysicsObject, type ScoreRole } from "./physics";
 import { type RandomSource, randomInt, randomRange, randomUnitVector } from "./random";
+
+const IMMEDIATE_PRIMARY_FRAGMENT_VISUALS = 6;
+const IMMEDIATE_DEBRIS_FRAGMENT_VISUALS = 3;
+const FRAGMENT_INSTANCE_CAPACITY_PER_MATERIAL = 2048;
+const FRAGMENT_POOL_PARK_Y = -10000;
+const FRAGMENT_INSTANCE_WARMUP_PREVIEW_COUNT = 192;
+const RUNTIME_FRAGMENT_PIPELINE_WARMUP_PER_MATERIAL = 28;
+
+const FRAGMENT_POOL_BOX_GEOMETRY = createFragmentPoolBoxGeometry();
 
 export interface ExplosionAffectedObject {
   id: number;
@@ -34,6 +43,27 @@ interface FragmentPlan {
   offset: THREE.Vector3;
   rotation: THREE.Quaternion;
   material: MaterialDefinition;
+}
+
+interface FragmentInstanceSlot {
+  bucketKey: string;
+  index: number;
+  renderer: FragmentInstanceRenderer;
+  visible: boolean;
+}
+
+interface FragmentDetailInstance {
+  slot: FragmentInstanceSlot;
+  localMatrix: THREE.Matrix4;
+}
+
+interface FragmentInstanceBucket {
+  key: string;
+  mesh: THREE.InstancedMesh;
+  capacity: number;
+  freeSlots: number[];
+  occupied: boolean[];
+  highWater: number;
 }
 
 interface BlastSample {
@@ -69,8 +99,330 @@ function fractureThresholdFor(material: MaterialDefinition, object: PhysicsObjec
   return material.fractureThreshold * Math.max(0.1, object.fractureResistance ?? 1) * scale;
 }
 
+function createFragmentPoolBoxGeometry(): THREE.BoxGeometry {
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  geometry.userData.sharedGeometry = true;
+  return geometry;
+}
+
+function fragmentInstanceWarmupSize(materialId: MaterialId): THREE.Vector3 {
+  switch (materialId) {
+    case "glass":
+      return new THREE.Vector3(0.42, 0.04, 0.88);
+    case "metal":
+      return new THREE.Vector3(0.22, 0.24, 1.05);
+    case "concrete":
+      return new THREE.Vector3(0.62, 0.46, 0.58);
+    case "wood":
+      return new THREE.Vector3(0.24, 0.7, 0.48);
+    case "foam":
+      return new THREE.Vector3(0.5, 0.34, 0.46);
+    case "rubber":
+      return new THREE.Vector3(0.36, 0.32, 0.42);
+  }
+}
+
 export class DestructibleObject {
   constructor(readonly object: PhysicsObject) {}
+}
+
+class FragmentInstanceRenderer {
+  private readonly buckets = new Map<string, FragmentInstanceBucket>();
+  private readonly hiddenMatrix = new THREE.Matrix4().compose(
+    new THREE.Vector3(0, FRAGMENT_POOL_PARK_Y, 0),
+    new THREE.Quaternion(),
+    new THREE.Vector3(0.001, 0.001, 0.001)
+  );
+  private readonly scratchParentMatrix = new THREE.Matrix4();
+  private readonly scratchRigidMatrix = new THREE.Matrix4();
+  private readonly scratchWorldMatrix = new THREE.Matrix4();
+  private readonly unitScale = new THREE.Vector3(1, 1, 1);
+  private readonly warmupQuaternion = new THREE.Quaternion();
+
+  constructor(private readonly materials: MaterialCatalog) {}
+
+  warmupObjects(): THREE.Object3D[] {
+    const objects: THREE.Object3D[] = [];
+    for (const materialId of this.materials.order) {
+      const bucket = this.mainBucketFor(materialId);
+      this.parkWarmupSlot(bucket);
+      objects.push(bucket.mesh);
+      for (const part of fragmentDecorationParts({ materialId, size: fragmentInstanceWarmupSize(materialId) })) {
+        const detailBucket = this.detailBucketFor(part.material);
+        this.parkWarmupSlot(detailBucket);
+        if (!objects.includes(detailBucket.mesh)) {
+          objects.push(detailBucket.mesh);
+        }
+      }
+    }
+    this.showWarmupPreview();
+    return objects;
+  }
+
+  showWarmupPreview(): void {
+    this.materials.order.forEach((materialId, materialIndex) => {
+      const baseSize = fragmentInstanceWarmupSize(materialId);
+      for (let instanceIndex = 0; instanceIndex < FRAGMENT_INSTANCE_WARMUP_PREVIEW_COUNT; instanceIndex += 1) {
+        const column = instanceIndex % 16;
+        const row = Math.floor(instanceIndex / 16);
+        const shapeScale = 0.68 + ((instanceIndex * 17) % 9) * 0.09;
+        const size = baseSize.clone().multiplyScalar(shapeScale);
+        const position = new THREE.Vector3(
+          (materialIndex - (this.materials.order.length - 1) * 0.5) * 0.62 + (column - 7.5) * 0.045,
+          0.28 + row * 0.08,
+          -0.42 + ((instanceIndex * 5) % 11) * 0.026
+        );
+        this.warmupQuaternion.setFromEuler(
+          new THREE.Euler(
+            materialIndex * 0.18 + instanceIndex * 0.031,
+            materialIndex * 0.27 + instanceIndex * 0.047,
+            materialIndex * 0.11 + instanceIndex * 0.023
+          )
+        );
+        this.scratchParentMatrix.compose(position, this.warmupQuaternion, size);
+        this.writeWarmupSlot(this.mainBucketFor(materialId), instanceIndex, this.scratchParentMatrix);
+        this.scratchRigidMatrix.compose(position, this.warmupQuaternion, this.unitScale);
+        for (const part of fragmentDecorationParts({ materialId, size })) {
+          const localRotation = new THREE.Quaternion().setFromEuler(part.rotation);
+          const localMatrix = new THREE.Matrix4().compose(part.offset, localRotation, part.size);
+          this.scratchWorldMatrix.multiplyMatrices(this.scratchRigidMatrix, localMatrix);
+          this.writeWarmupSlot(this.detailBucketFor(part.material), instanceIndex, this.scratchWorldMatrix);
+        }
+      }
+    });
+  }
+
+  parkWarmupPreview(): void {
+    for (const bucket of this.buckets.values()) {
+      const warmupCount = Math.min(bucket.mesh.count, FRAGMENT_INSTANCE_WARMUP_PREVIEW_COUNT);
+      for (let index = 0; index < warmupCount; index += 1) {
+        bucket.mesh.setMatrixAt(index, this.hiddenMatrix);
+      }
+      bucket.mesh.count = Math.max(bucket.highWater, FRAGMENT_INSTANCE_WARMUP_PREVIEW_COUNT);
+      bucket.mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  acquire(materialId: MaterialId, size: THREE.Vector3): DynamicVisualProxy {
+    const mainSlot = this.acquireSlot(this.mainBucketFor(materialId), "render.fragmentInstanceSlotMiss", "render.fragmentInstanceSlotReuse");
+    if (!mainSlot) {
+      return new NullFragmentVisualProxy();
+    }
+    const detailInstances: FragmentDetailInstance[] = [];
+    for (const part of fragmentDecorationParts({ materialId, size })) {
+      const detailSlot = this.acquireSlot(
+        this.detailBucketFor(part.material),
+        "render.fragmentDetailInstanceSlotMiss",
+        "render.fragmentDetailInstanceSlotReuse"
+      );
+      if (!detailSlot) {
+        continue;
+      }
+      const localRotation = new THREE.Quaternion().setFromEuler(part.rotation);
+      detailInstances.push({
+        slot: detailSlot,
+        localMatrix: new THREE.Matrix4().compose(part.offset, localRotation, part.size)
+      });
+    }
+    return new FragmentInstanceVisualProxy(this, mainSlot, size.clone(), detailInstances);
+  }
+
+  setVisible(slot: FragmentInstanceSlot, detailInstances: FragmentDetailInstance[], visible: boolean): void {
+    if (!slot.renderer.slotIsCurrent(slot)) {
+      return;
+    }
+    slot.visible = visible;
+    this.writeSlotMatrix(slot);
+    for (const detail of detailInstances) {
+      if (!detail.slot.renderer.slotIsCurrent(detail.slot)) {
+        continue;
+      }
+      detail.slot.visible = visible;
+      this.writeSlotMatrix(detail.slot);
+    }
+  }
+
+  sync(
+    slot: FragmentInstanceSlot,
+    size: THREE.Vector3,
+    detailInstances: FragmentDetailInstance[],
+    position: THREE.Vector3,
+    rotation: THREE.Quaternion
+  ): void {
+    if (!slot.renderer.slotIsCurrent(slot)) {
+      return;
+    }
+    if (!slot.visible) {
+      this.writeSlotMatrix(slot);
+      for (const detail of detailInstances) {
+        this.writeSlotMatrix(detail.slot);
+      }
+      return;
+    }
+    this.scratchParentMatrix.compose(position, rotation, size);
+    this.writeMatrix(slot, this.scratchParentMatrix);
+    this.scratchRigidMatrix.compose(position, rotation, this.unitScale);
+    for (const detail of detailInstances) {
+      if (!detail.slot.visible || !detail.slot.renderer.slotIsCurrent(detail.slot)) {
+        continue;
+      }
+      this.scratchWorldMatrix.multiplyMatrices(this.scratchRigidMatrix, detail.localMatrix);
+      this.writeMatrix(detail.slot, this.scratchWorldMatrix);
+    }
+  }
+
+  freeze(
+    slot: FragmentInstanceSlot,
+    size: THREE.Vector3,
+    detailInstances: FragmentDetailInstance[],
+    position: THREE.Vector3,
+    rotation: THREE.Quaternion
+  ): FrozenVisualHandle | null {
+    if (!slot.renderer.slotIsCurrent(slot)) {
+      return null;
+    }
+    slot.visible = true;
+    for (const detail of detailInstances) {
+      detail.slot.visible = true;
+    }
+    this.sync(slot, size, detailInstances, position, rotation);
+    return {
+      dispose: () => {
+        this.release(slot);
+        for (const detail of detailInstances) {
+          this.release(detail.slot);
+        }
+      }
+    };
+  }
+
+  release(slot: FragmentInstanceSlot): void {
+    const bucket = this.bucketFor(slot.bucketKey);
+    if (!bucket.occupied[slot.index]) {
+      return;
+    }
+    slot.visible = false;
+    bucket.occupied[slot.index] = false;
+    bucket.mesh.setMatrixAt(slot.index, this.hiddenMatrix);
+    bucket.mesh.instanceMatrix.needsUpdate = true;
+    bucket.freeSlots.push(slot.index);
+  }
+
+  private slotIsCurrent(slot: FragmentInstanceSlot): boolean {
+    const bucket = this.bucketFor(slot.bucketKey);
+    return bucket.occupied[slot.index];
+  }
+
+  private writeSlotMatrix(slot: FragmentInstanceSlot): void {
+    this.writeMatrix(slot, this.hiddenMatrix);
+  }
+
+  private writeMatrix(slot: FragmentInstanceSlot, matrix: THREE.Matrix4): void {
+    const bucket = this.bucketFor(slot.bucketKey);
+    bucket.mesh.setMatrixAt(slot.index, matrix);
+    bucket.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private acquireSlot(bucket: FragmentInstanceBucket, missMetric: string, reuseMetric: string): FragmentInstanceSlot | null {
+    const index = bucket.freeSlots.pop();
+    if (index === undefined) {
+      perfMonitor.addCount(missMetric);
+      return null;
+    }
+    bucket.occupied[index] = true;
+    bucket.highWater = Math.max(bucket.highWater, index + 1);
+    bucket.mesh.count = Math.max(bucket.mesh.count, bucket.highWater);
+    perfMonitor.addCount(reuseMetric);
+    return { bucketKey: bucket.key, index, renderer: this, visible: true };
+  }
+
+  private mainBucketFor(materialId: MaterialId): FragmentInstanceBucket {
+    return this.bucketFor(
+      `main:${materialId}`,
+      this.materials.getRenderMaterial(materialId),
+      `${this.materials.get(materialId).name} instanced fragments`
+    );
+  }
+
+  private detailBucketFor(material: THREE.Material): FragmentInstanceBucket {
+    return this.bucketFor(`detail:${material.uuid}`, material, `${material.name || "fragment detail"} instanced fragment details`);
+  }
+
+  private bucketFor(key: string, material?: THREE.Material, name?: string): FragmentInstanceBucket {
+    const existing = this.buckets.get(key);
+    if (existing) {
+      return existing;
+    }
+    if (!material || !name) {
+      throw new Error(`Missing fragment instance bucket metadata for ${key}`);
+    }
+    const mesh = new THREE.InstancedMesh(FRAGMENT_POOL_BOX_GEOMETRY, material, FRAGMENT_INSTANCE_CAPACITY_PER_MATERIAL);
+    mesh.name = name;
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.count = 1;
+    mesh.setMatrixAt(0, this.hiddenMatrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    const bucket: FragmentInstanceBucket = {
+      key,
+      mesh,
+      capacity: FRAGMENT_INSTANCE_CAPACITY_PER_MATERIAL,
+      freeSlots: Array.from({ length: FRAGMENT_INSTANCE_CAPACITY_PER_MATERIAL }, (_, index) => FRAGMENT_INSTANCE_CAPACITY_PER_MATERIAL - 1 - index),
+      occupied: new Array(FRAGMENT_INSTANCE_CAPACITY_PER_MATERIAL).fill(false),
+      highWater: 1
+    };
+    this.buckets.set(key, bucket);
+    return bucket;
+  }
+
+  private writeWarmupSlot(bucket: FragmentInstanceBucket, index: number, matrix: THREE.Matrix4): void {
+    bucket.mesh.count = Math.max(bucket.mesh.count, index + 1);
+    bucket.mesh.setMatrixAt(index, matrix);
+    bucket.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private parkWarmupSlot(bucket: FragmentInstanceBucket): void {
+    this.writeWarmupSlot(bucket, 0, this.hiddenMatrix);
+  }
+}
+
+class FragmentInstanceVisualProxy implements DynamicVisualProxy {
+  constructor(
+    private readonly renderer: FragmentInstanceRenderer,
+    private readonly slot: FragmentInstanceSlot,
+    private readonly size: THREE.Vector3,
+    private readonly detailInstances: FragmentDetailInstance[]
+  ) {}
+
+  setVisible(visible: boolean): void {
+    this.renderer.setVisible(this.slot, this.detailInstances, visible);
+  }
+
+  sync(position: THREE.Vector3, rotation: THREE.Quaternion): void {
+    this.renderer.sync(this.slot, this.size, this.detailInstances, position, rotation);
+  }
+
+  freeze(position: THREE.Vector3, rotation: THREE.Quaternion): FrozenVisualHandle | null {
+    return this.renderer.freeze(this.slot, this.size, this.detailInstances, position, rotation);
+  }
+
+  dispose(): void {
+    this.renderer.release(this.slot);
+    for (const detail of this.detailInstances) {
+      this.renderer.release(detail.slot);
+    }
+  }
+}
+
+class NullFragmentVisualProxy implements DynamicVisualProxy {
+  setVisible(): void {}
+  sync(): void {}
+  freeze(): FrozenVisualHandle | null {
+    return null;
+  }
+  dispose(): void {}
 }
 
 export class DestructionSystem {
@@ -78,12 +430,72 @@ export class DestructionSystem {
   private readonly upwardBias = new THREE.Vector3(0, 0.58, 0);
   private readonly fractureJobs: FractureJob[] = [];
   private readonly queuedFractureIds = new Set<number>();
+  private readonly fragmentInstances: FragmentInstanceRenderer;
 
   constructor(
     private readonly physics: PhysicsWorld,
     private readonly materials: MaterialCatalog,
     private readonly rng: RandomSource
-  ) {}
+  ) {
+    this.fragmentInstances = new FragmentInstanceRenderer(materials);
+  }
+
+  createFragmentVisualPoolWarmupObjects(): THREE.Object3D[] {
+    return this.fragmentInstances.warmupObjects();
+  }
+
+  showFragmentVisualWarmupPreview(): void {
+    this.fragmentInstances.showWarmupPreview();
+  }
+
+  parkFragmentVisualWarmupPreview(): void {
+    this.fragmentInstances.parkWarmupPreview();
+  }
+
+  createRuntimeFragmentPipelineWarmupObjects(): number[] {
+    const objectIds: number[] = [];
+    for (let materialIndex = 0; materialIndex < this.materials.order.length; materialIndex += 1) {
+      const materialId = this.materials.order[materialIndex];
+      const material = this.materials.get(materialId);
+      const parentSize = fragmentInstanceWarmupSize(materialId).multiplyScalar(2.8);
+      const fragmentCount = Math.max(6, Math.min(maxFragmentsFor(materialId), RUNTIME_FRAGMENT_PIPELINE_WARMUP_PER_MATERIAL));
+      for (let index = 0; index < RUNTIME_FRAGMENT_PIPELINE_WARMUP_PER_MATERIAL; index += 1) {
+        const size = this.fragmentSizeFor(materialId, parentSize, fragmentCount).multiplyScalar(0.82 + (index % 5) * 0.11);
+        const rotation = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(index * 0.23, materialIndex * 0.31 + index * 0.07, (index - materialIndex) * 0.19)
+        );
+        const position = new THREE.Vector3(
+          -2.35 + materialIndex * 0.92 + (index % 4) * 0.08,
+          0.34 + Math.floor(index / 4) * 0.12,
+          -1.15 + (index % 7) * 0.06
+        );
+        const visualProxy = this.fragmentInstances.acquire(materialId, size);
+        const object = this.physics.addDynamicBox({
+          label: `${material.name} instanced runtime fragment pipeline warmup`,
+          material,
+          renderMaterial: this.materials.getRenderMaterial(materialId),
+          visualProxy,
+          position,
+          size,
+          rotation,
+          destructible: index % 3 === 0,
+          canFracture: index % 3 === 0,
+          isDebris: true,
+          chainSource: true,
+          category: "debris",
+          scoreRole: "neutral",
+          zoneId: "render-warmup",
+          scoreValue: 0,
+          sleeping: true,
+          stageVisualActivation: index % 2 === 0,
+          ccd: index % 3 === 0
+        });
+        object.visualProxy?.sync(position, rotation);
+        objectIds.push(object.id);
+      }
+    }
+    return objectIds;
+  }
 
   explode(origin: THREE.Vector3, blastStrength: number, blastRadius: number): ExplosionResult {
     const startedAt = perfMonitor.timeStart();
@@ -449,15 +861,22 @@ export class DestructionSystem {
     this.physics.removeObject(object.id);
     this.physics.destabilizeUnsupportedStructures(object, parentPosition);
 
-    for (const plan of plans) {
+    const immediateVisualPlanIndexes = immediateFragmentVisualPlanIndexes(plans, object.isDebris);
+
+    for (let planIndex = 0; planIndex < plans.length; planIndex += 1) {
+      const plan = plans[planIndex];
       const worldOffset = plan.offset.clone().applyQuaternion(parentRotation);
+      const fragmentPosition = parentPosition.clone().add(worldOffset);
       const rotation = parentRotation.clone().multiply(plan.rotation);
       const breakableFragment = !object.isDebris && canFragmentShatterAgain(material.id, plan.size);
+      const stageVisualActivation = !immediateVisualPlanIndexes.has(planIndex);
+      const visualProxy = this.fragmentInstances.acquire(material.id, plan.size);
       const fragment = this.physics.addDynamicBox({
         label: `${material.name} debris`,
         material,
         renderMaterial: this.materials.getRenderMaterial(material.id),
-        position: parentPosition.clone().add(worldOffset),
+        visualProxy,
+        position: fragmentPosition,
         size: plan.size,
         rotation,
         destructible: breakableFragment,
@@ -470,9 +889,10 @@ export class DestructionSystem {
         scoreValue: Math.max(1, Math.round(object.scoreValue / plans.length)),
         linearVelocity: inheritedVelocity.clone().multiplyScalar(0.22),
         angularVelocity: randomUnitVector(this.rng).multiplyScalar(material.angularResponse * 2.35),
-        ccd: breakableFragment
+        ccd: breakableFragment,
+        stageVisualActivation
       });
-      decorateFragment(fragment.mesh, { size: plan.size, materialId: material.id });
+      fragment.visualProxy?.sync(fragmentPosition, rotation);
       this.kickFragment(fragment, origin, blastStrength, blastRadius);
       limitFragmentMotion(fragment, material.id, object.isDebris);
     }
@@ -672,6 +1092,24 @@ function clamp(value: number, min: number, max: number): number {
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.floor(clamp(value, min, max));
+}
+
+function immediateFragmentVisualPlanIndexes(plans: FragmentPlan[], sourceWasDebris: boolean): Set<number> {
+  if (plans.length <= IMMEDIATE_PRIMARY_FRAGMENT_VISUALS) {
+    return new Set(plans.map((_, index) => index));
+  }
+  const budget = sourceWasDebris ? IMMEDIATE_DEBRIS_FRAGMENT_VISUALS : IMMEDIATE_PRIMARY_FRAGMENT_VISUALS;
+  return new Set(
+    plans
+      .map((plan, index) => ({ index, volume: fragmentVolume(plan.size) }))
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, budget)
+      .map((entry) => entry.index)
+  );
+}
+
+function fragmentVolume(size: THREE.Vector3): number {
+  return size.x * size.y * size.z;
 }
 
 function maxFragmentsFor(materialId: MaterialId): number {

@@ -11,11 +11,12 @@ import {
 import { DestructionAudio } from "./audio";
 import { CameraRig } from "./cameraRig";
 import { Cannon } from "./cannon";
+import { decorateFragment } from "./cityVisuals";
 import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
-import { MaterialCatalog } from "./materialCatalog";
-import { perfMonitor, type PerfReport } from "./perf";
+import { MaterialCatalog, type MaterialId } from "./materialCatalog";
+import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
 import { PROJECTILES, ProjectileSystem, type ActiveProjectile, type ProjectileId } from "./projectile";
 import { SeededRandom, createRunSeed, randomRange } from "./random";
@@ -24,7 +25,10 @@ import { ScorePopupLayer } from "./scorePopups";
 import { ShotScoreTracker, type ScoreBreakdown, type ScoreEvent } from "./scoring";
 import {
   DEFAULT_GAME_SETTINGS,
+  GRAPHICS_QUALITY_LABELS,
+  RENDERER_BACKEND_LABELS,
   type GameSettings,
+  type GraphicsQuality,
   type RendererBackendPreference,
   graphicsPixelRatioCap,
   loadGameSettings,
@@ -40,7 +44,6 @@ const CHAIN_DEBRIS_MIN_SPEED = 1.85;
 const CHAIN_IMPACT_COOLDOWN_MS = 220;
 const CHAIN_IMPACT_MAX_PER_FRAME = 14;
 const CHAIN_COLLISION_DRAIN_MAX_PER_FRAME = 192;
-const CRANE_CRUSH_MAX_PER_FRAME = 8;
 const SURFACE_IMPACT_MAX_PER_FRAME = 6;
 const SURFACE_COLLISION_MAX_PER_FRAME = 160;
 const FRACTURE_PROCESS_MAX_PER_FRAME = 2;
@@ -78,6 +81,21 @@ const IMPACT_BOUNDS = {
   maxZ: 35.8
 };
 const AIM_SURFACE_NORMAL = new THREE.Vector3(0, 1, 0);
+const RENDER_WARMUP_FRAGMENT_MATERIALS: readonly MaterialId[] = ["glass", "concrete", "metal", "rubber", "foam", "wood"];
+const RENDER_WARMUP_RUNTIME_FRAGMENT_BATCHES = 8;
+const RENDER_WARMUP_BRUTAL_PASSES = 4;
+const RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS = 10;
+const RENDER_WARMUP_DELTA_SECONDS = 1 / 30;
+const RENDER_WARMUP_MIN_FRAMES = 64;
+const RENDER_WARMUP_STABLE_FRAMES = 24;
+const RENDER_WARMUP_MAX_FRAMES = 180;
+const RENDER_WARMUP_SYNTHETIC_OBJECTS_PER_MATERIAL = 8;
+const RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES = 3;
+const RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES = 72;
+const RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES = 260;
+const RENDER_WARMUP_SYNTHETIC_ORIGIN = new THREE.Vector3(72, 1.2, 72);
+const NIGHT_SKY_RADIUS = 118;
+const MOON_DIRECTION = new THREE.Vector3(-0.2, 0.24, -0.95).normalize();
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
 
 interface BurningHazard {
@@ -120,10 +138,24 @@ interface DowntownMayhemRenderStats {
 interface DowntownMayhemDebugApi {
   getRenderStats(): DowntownMayhemRenderStats;
   getPerfReport(): PerfReport;
+  getRenderWarmupState(): RenderWarmupState;
   setPerfEnabled(enabled: boolean): void;
   clearPerfReport(): void;
+  flushPerfLog(reason?: string): void;
   freezeForCapture(): DowntownMayhemRenderStats;
   resume(): void;
+}
+
+interface RenderWarmupState {
+  phase: "idle" | "warming" | "ready" | "failed";
+  token: number;
+  startedAt: number;
+  finishedAt: number | null;
+  durationMs: number | null;
+  programs: number;
+  geometries: number;
+  frames: number;
+  error?: string;
 }
 
 interface DowntownMayhemRendererBundle {
@@ -234,6 +266,1389 @@ function setOptionalShadowMapFlag(renderer: DowntownMayhemRenderer, key: "autoUp
   (renderer.shadowMap as typeof renderer.shadowMap & Partial<Record<typeof key, boolean>>)[key] = value;
 }
 
+function createInitialRenderWarmupState(): RenderWarmupState {
+  return {
+    phase: "idle",
+    token: 0,
+    startedAt: 0,
+    finishedAt: null,
+    durationMs: null,
+    programs: 0,
+    geometries: 0,
+    frames: 0
+  };
+}
+
+function renderWarmupFragmentSize(materialId: MaterialId): THREE.Vector3 {
+  switch (materialId) {
+    case "glass":
+      return new THREE.Vector3(0.42, 0.04, 0.88);
+    case "metal":
+      return new THREE.Vector3(0.22, 0.24, 1.05);
+    case "concrete":
+      return new THREE.Vector3(0.62, 0.46, 0.58);
+    case "wood":
+      return new THREE.Vector3(0.24, 0.7, 0.48);
+    case "foam":
+      return new THREE.Vector3(0.5, 0.34, 0.46);
+    case "rubber":
+      return new THREE.Vector3(0.36, 0.32, 0.42);
+  }
+}
+
+function renderWarmupRuntimeFragmentSize(materialId: MaterialId, batch: number): THREE.Vector3 {
+  const size = renderWarmupFragmentSize(materialId);
+  const scaleSets = [
+    new THREE.Vector3(1, 1, 1),
+    new THREE.Vector3(1.55, 0.75, 1.2),
+    new THREE.Vector3(0.72, 1.35, 0.85),
+    new THREE.Vector3(1.2, 0.58, 1.65)
+  ] as const;
+  const scale = scaleSets[batch % scaleSets.length];
+  return size.multiply(scale);
+}
+
+function disableFrustumCulling(root: THREE.Object3D): void {
+  root.traverse((object) => {
+    const maybeRenderable = object as THREE.Object3D & { frustumCulled?: boolean };
+    maybeRenderable.frustumCulled = false;
+  });
+}
+
+function disableSceneFrustumCullingForWarmup(root: THREE.Object3D): () => void {
+  const states: Array<{ object: THREE.Object3D & { frustumCulled: boolean }; frustumCulled: boolean }> = [];
+  root.traverse((object) => {
+    const maybeRenderable = object as THREE.Object3D & { frustumCulled?: boolean };
+    if (maybeRenderable.frustumCulled === undefined) {
+      return;
+    }
+    states.push({
+      object: maybeRenderable as THREE.Object3D & { frustumCulled: boolean },
+      frustumCulled: maybeRenderable.frustumCulled
+    });
+    maybeRenderable.frustumCulled = false;
+  });
+  return () => {
+    for (const state of states) {
+      state.object.frustumCulled = state.frustumCulled;
+    }
+  };
+}
+
+function addInstancedWarmupVariants(group: THREE.Group, root: THREE.Object3D, label: string): void {
+  const meshes: THREE.Mesh<THREE.BufferGeometry, THREE.Material>[] = [];
+  root.updateMatrixWorld(true);
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh) || object instanceof THREE.InstancedMesh || Array.isArray(object.material)) {
+      return;
+    }
+    meshes.push(object as THREE.Mesh<THREE.BufferGeometry, THREE.Material>);
+  });
+  for (const mesh of meshes) {
+    const instanced = new THREE.InstancedMesh(mesh.geometry, mesh.material, 1);
+    instanced.name = `${label} instanced warmup`;
+    instanced.frustumCulled = false;
+    instanced.renderOrder = mesh.renderOrder;
+    instanced.castShadow = mesh.castShadow;
+    instanced.receiveShadow = mesh.receiveShadow;
+    instanced.setMatrixAt(0, mesh.matrixWorld);
+    instanced.instanceMatrix.needsUpdate = true;
+    group.add(instanced);
+  }
+}
+
+function renderWarmupYield(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function createRenderWarmupCameras(sourceCamera: THREE.PerspectiveCamera): THREE.PerspectiveCamera[] {
+  const cameras: THREE.PerspectiveCamera[] = [sourceCamera];
+  const addCamera = (position: THREE.Vector3, target: THREE.Vector3, fov = 58): void => {
+    const camera = new THREE.PerspectiveCamera(fov, sourceCamera.aspect, 0.05, 120);
+    camera.position.copy(position);
+    camera.lookAt(target);
+    camera.updateMatrixWorld(true);
+    cameras.push(camera);
+  };
+  addCamera(new THREE.Vector3(0, 1.7, 7), new THREE.Vector3(0, 0.15, 0), 55);
+  addCamera(new THREE.Vector3(-8.8, 9.4, 13.2), new THREE.Vector3(1.4, 6.4, 0.85), 68);
+  addCamera(new THREE.Vector3(8.6, 13.2, 10.4), new THREE.Vector3(3.2, 9.9, 0.85), 62);
+  return cameras;
+}
+
+function createNightSkyDome(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "Moonlit night sky";
+
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(NIGHT_SKY_RADIUS, 32, 16),
+    new THREE.MeshBasicMaterial({
+      map: createNightSkyTexture(),
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false
+    })
+  );
+  sky.name = "Deep blue night sky gradient";
+  sky.renderOrder = -100;
+  group.add(sky);
+
+  const stars = createStarField();
+  group.add(stars);
+
+  const moonPosition = MOON_DIRECTION.clone().multiplyScalar(NIGHT_SKY_RADIUS * 0.72);
+  const halo = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createMoonHaloTexture(),
+      color: 0x9fc8ff,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    })
+  );
+  halo.name = "Cold moon halo";
+  halo.position.copy(moonPosition);
+  halo.scale.set(24, 24, 1);
+  halo.renderOrder = -40;
+  group.add(halo);
+
+  const moon = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createMoonTexture(),
+      color: 0xe9f5ff,
+      transparent: true,
+      opacity: 0.98,
+      depthWrite: false
+    })
+  );
+  moon.name = "Textured moon";
+  moon.position.copy(moonPosition.clone().multiplyScalar(0.995));
+  moon.scale.set(7.2, 7.2, 1);
+  moon.renderOrder = -35;
+  group.add(moon);
+
+  return group;
+}
+
+function createNightSkyTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to create night sky texture context");
+  }
+
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, "#02040d");
+  gradient.addColorStop(0.4, "#050d20");
+  gradient.addColorStop(0.76, "#09172a");
+  gradient.addColorStop(1, "#0d2030");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const cityGlow = context.createRadialGradient(canvas.width * 0.55, canvas.height * 1.08, 24, canvas.width * 0.55, canvas.height * 1.08, canvas.width * 0.58);
+  cityGlow.addColorStop(0, "rgba(88, 144, 190, 0.18)");
+  cityGlow.addColorStop(0.45, "rgba(30, 66, 108, 0.12)");
+  cityGlow.addColorStop(1, "rgba(3, 8, 18, 0)");
+  context.fillStyle = cityGlow;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  return texture;
+}
+
+function createMoonTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to create moon texture context");
+  }
+
+  const body = context.createRadialGradient(100, 78, 18, 128, 128, 108);
+  body.addColorStop(0, "rgba(255, 255, 255, 1)");
+  body.addColorStop(0.52, "rgba(220, 236, 245, 0.98)");
+  body.addColorStop(0.86, "rgba(147, 177, 197, 0.92)");
+  body.addColorStop(1, "rgba(70, 92, 116, 0)");
+  context.fillStyle = body;
+  context.beginPath();
+  context.arc(128, 128, 106, 0, Math.PI * 2);
+  context.fill();
+
+  const craters = [
+    [86, 112, 13, 0.14],
+    [142, 82, 10, 0.11],
+    [162, 148, 18, 0.12],
+    [110, 166, 9, 0.1],
+    [183, 106, 7, 0.12],
+    [122, 123, 6, 0.09]
+  ] as const;
+  for (const [x, y, radius, opacity] of craters) {
+    const crater = context.createRadialGradient(x - radius * 0.28, y - radius * 0.35, radius * 0.18, x, y, radius);
+    crater.addColorStop(0, `rgba(255, 255, 255, ${opacity * 0.65})`);
+    crater.addColorStop(0.58, `rgba(70, 88, 108, ${opacity})`);
+    crater.addColorStop(1, "rgba(20, 30, 44, 0)");
+    context.fillStyle = crater;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  return texture;
+}
+
+function createMoonHaloTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to create moon halo texture context");
+  }
+  const glow = context.createRadialGradient(128, 128, 4, 128, 128, 126);
+  glow.addColorStop(0, "rgba(255, 255, 255, 0.72)");
+  glow.addColorStop(0.18, "rgba(164, 212, 255, 0.34)");
+  glow.addColorStop(0.54, "rgba(80, 136, 220, 0.12)");
+  glow.addColorStop(1, "rgba(4, 10, 24, 0)");
+  context.fillStyle = glow;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  return texture;
+}
+
+function createStarField(): THREE.Points {
+  const count = 96;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const color = new THREE.Color();
+  for (let index = 0; index < count; index += 1) {
+    const u = ((index * 37) % count) / count;
+    const v = ((index * 97) % count) / count;
+    const theta = u * Math.PI * 2;
+    const y = 0.16 + v * 0.72;
+    const radius = Math.sqrt(Math.max(0, 1 - y * y)) * NIGHT_SKY_RADIUS * 0.86;
+    positions[index * 3] = Math.cos(theta) * radius;
+    positions[index * 3 + 1] = y * NIGHT_SKY_RADIUS * 0.86;
+    positions[index * 3 + 2] = Math.sin(theta) * radius;
+    color.setHSL(0.57 + ((index % 9) - 4) * 0.004, 0.38, 0.72 + (index % 5) * 0.035);
+    colors[index * 3] = color.r;
+    colors[index * 3 + 1] = color.g;
+    colors[index * 3 + 2] = color.b;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  const material = new THREE.PointsMaterial({
+    size: 0.16,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.76,
+    depthWrite: false,
+    fog: false
+  });
+  const stars = new THREE.Points(geometry, material);
+  stars.name = "Sparse cold stars";
+  stars.frustumCulled = false;
+  stars.renderOrder = -70;
+  return stars;
+}
+
+type AppShellScreen = "menu" | "settings" | "loading";
+
+interface AppShellCallbacks {
+  startLevel(levelIndex: number): void;
+}
+
+class AppShell {
+  private readonly root: HTMLDivElement;
+  private readonly levelRail: HTMLDivElement;
+  private readonly statusValue: HTMLDivElement;
+  private readonly loadingTitle: HTMLElement;
+  private readonly loadingStatus: HTMLElement;
+  private readonly settingsSummaryValue: HTMLElement;
+  private readonly antialiasInput: HTMLInputElement;
+  private readonly masterVolumeInput: HTMLInputElement;
+  private readonly masterVolumeValue: HTMLElement;
+  private readonly cameraShakeInput: HTMLInputElement;
+  private readonly cameraShakeValue: HTMLElement;
+  private readonly motionEffectsInput: HTMLInputElement;
+  private readonly showFpsInput: HTMLInputElement;
+  private readonly qualityButtons = new Map<GraphicsQuality, HTMLButtonElement>();
+  private readonly rendererBackendButtons = new Map<RendererBackendPreference, HTMLButtonElement>();
+
+  private screen: AppShellScreen = "menu";
+  private busy = false;
+  private settings = loadGameSettings();
+  private progress = loadArcadeProgress(ARCADE_LEVELS);
+  private renderedLevelKey = "";
+  private renderedSettingsKey = "";
+
+  constructor(private readonly callbacks: AppShellCallbacks) {
+    installAppShellStyles();
+    const app = document.querySelector<HTMLDivElement>("#app");
+    if (!app) {
+      throw new Error("Missing #app");
+    }
+
+    this.root = document.createElement("div");
+    this.root.className = "app-shell";
+    this.root.dataset.screen = this.screen;
+    this.root.innerHTML = `
+      <section class="app-shell__menu" aria-label="Downtown Mayhem main menu">
+        <header class="app-shell__topbar">
+          <div class="app-shell__brand">
+            <span class="app-shell__brand-mark">DM</span>
+            <div>
+              <strong>Downtown Mayhem</strong>
+              <span>Destructible city arcade</span>
+            </div>
+          </div>
+          <button type="button" data-action="settings">Settings</button>
+        </header>
+
+        <main class="app-shell__content">
+          <section class="app-shell__intro">
+            <span>OBJECT DESTRUCTION RANGE</span>
+            <h1>Downtown Mayhem</h1>
+            <p>Choose a district, wait through the renderer warmup, then fire the cannon with the frame spikes already paid for.</p>
+            <div class="app-shell__status" data-role="shell-status"></div>
+          </section>
+          <section class="app-shell__levels" data-role="shell-levels" aria-label="Districts"></section>
+        </main>
+      </section>
+
+      <section class="app-shell__settings" aria-label="Settings">
+        <div class="app-shell__settings-panel">
+          <div class="app-shell__settings-head">
+            <button type="button" data-action="menu">Back</button>
+            <button type="button" data-action="settings-defaults">Defaults</button>
+          </div>
+          <span>RANGE SETTINGS</span>
+          <h2>Feel And Performance</h2>
+          <em data-role="shell-settings-summary"></em>
+
+          <div class="app-shell__setting-row app-shell__setting-row--stacked">
+            <span>Graphics</span>
+            <div class="app-shell__segmented" role="group" aria-label="Graphics quality">
+              <button type="button" data-quality="performance">Performance</button>
+              <button type="button" data-quality="balanced">Balanced</button>
+              <button type="button" data-quality="cinematic">Cinematic</button>
+            </div>
+          </div>
+
+          <div class="app-shell__setting-row app-shell__setting-row--stacked">
+            <span>Renderer</span>
+            <div class="app-shell__segmented" role="group" aria-label="Renderer backend">
+              <button type="button" data-renderer-backend="auto">Auto</button>
+              <button type="button" data-renderer-backend="webgpu">WebGPU</button>
+              <button type="button" data-renderer-backend="webgl">WebGL</button>
+            </div>
+          </div>
+
+          <label class="app-shell__setting-row app-shell__setting-row--toggle">
+            <span>Anti-aliasing</span>
+            <input type="checkbox" data-setting="antialias" />
+          </label>
+
+          <label class="app-shell__setting-row">
+            <span>Master volume</span>
+            <input type="range" data-setting="master-volume" min="0" max="100" step="1" />
+            <strong data-role="shell-master-volume"></strong>
+          </label>
+
+          <label class="app-shell__setting-row">
+            <span>Camera shake</span>
+            <input type="range" data-setting="camera-shake" min="0" max="100" step="1" />
+            <strong data-role="shell-camera-shake"></strong>
+          </label>
+
+          <label class="app-shell__setting-row app-shell__setting-row--toggle">
+            <span>Flash + slow-mo</span>
+            <input type="checkbox" data-setting="motion-effects" />
+          </label>
+
+          <label class="app-shell__setting-row app-shell__setting-row--toggle">
+            <span>FPS counter</span>
+            <input type="checkbox" data-setting="show-fps" />
+          </label>
+        </div>
+      </section>
+
+      <section class="app-shell__loading" aria-live="polite" aria-busy="true">
+        <div class="app-shell__loading-panel">
+          <span>LOADING DISTRICT</span>
+          <strong data-role="shell-loading-title"></strong>
+          <em data-role="shell-loading-status"></em>
+          <div class="app-shell__loading-bar" aria-hidden="true"><span></span></div>
+        </div>
+      </section>
+    `;
+    app.appendChild(this.root);
+
+    this.levelRail = this.requireElement("[data-role='shell-levels']");
+    this.statusValue = this.requireElement("[data-role='shell-status']");
+    this.loadingTitle = this.requireElement("[data-role='shell-loading-title']");
+    this.loadingStatus = this.requireElement("[data-role='shell-loading-status']");
+    this.settingsSummaryValue = this.requireElement("[data-role='shell-settings-summary']");
+    this.antialiasInput = this.requireElement("[data-setting='antialias']");
+    this.masterVolumeInput = this.requireElement("[data-setting='master-volume']");
+    this.masterVolumeValue = this.requireElement("[data-role='shell-master-volume']");
+    this.cameraShakeInput = this.requireElement("[data-setting='camera-shake']");
+    this.cameraShakeValue = this.requireElement("[data-role='shell-camera-shake']");
+    this.motionEffectsInput = this.requireElement("[data-setting='motion-effects']");
+    this.showFpsInput = this.requireElement("[data-setting='show-fps']");
+
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-quality]")) {
+      const quality = button.dataset.quality;
+      if (quality === "performance" || quality === "balanced" || quality === "cinematic") {
+        this.qualityButtons.set(quality, button);
+      }
+    }
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-renderer-backend]")) {
+      const rendererBackend = button.dataset.rendererBackend;
+      if (rendererBackend === "auto" || rendererBackend === "webgpu" || rendererBackend === "webgl") {
+        this.rendererBackendButtons.set(rendererBackend, button);
+      }
+    }
+
+    this.root.addEventListener("click", this.handleClick);
+    this.root.addEventListener("input", this.handleInput);
+    this.root.addEventListener("change", this.handleInput);
+    this.render();
+  }
+
+  showMenu(message = ""): void {
+    this.busy = false;
+    this.screen = "menu";
+    this.root.hidden = false;
+    this.settings = loadGameSettings();
+    this.progress = loadArcadeProgress(ARCADE_LEVELS);
+    setText(this.statusValue, message);
+    this.render();
+  }
+
+  showLoading(levelName: string, status: string): void {
+    this.busy = true;
+    this.screen = "loading";
+    this.root.hidden = false;
+    this.root.dataset.screen = this.screen;
+    setText(this.loadingTitle, levelName);
+    setText(this.loadingStatus, status);
+  }
+
+  updateLoadingStatus(status: string): void {
+    if (this.screen === "loading") {
+      setText(this.loadingStatus, status);
+    }
+  }
+
+  hide(): void {
+    this.root.hidden = true;
+  }
+
+  dispose(): void {
+    this.root.removeEventListener("click", this.handleClick);
+    this.root.removeEventListener("input", this.handleInput);
+    this.root.removeEventListener("change", this.handleInput);
+    this.root.remove();
+  }
+
+  private readonly handleClick = (event: MouseEvent): void => {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>("button") : null;
+    if (!target || !this.root.contains(target)) {
+      return;
+    }
+
+    const action = target.dataset.action;
+    if (this.busy && action !== undefined) {
+      return;
+    }
+    if (action === "start-arcade") {
+      const levelIndex = Number(target.dataset.levelIndex ?? 0);
+      if (Number.isFinite(levelIndex)) {
+        this.callbacks.startLevel(levelIndex);
+      }
+      return;
+    }
+    if (action === "settings") {
+      this.screen = "settings";
+      this.render();
+      return;
+    }
+    if (action === "menu") {
+      this.showMenu();
+      return;
+    }
+    if (action === "settings-defaults") {
+      this.updateSettings({ ...DEFAULT_GAME_SETTINGS });
+      return;
+    }
+
+    const quality = target.dataset.quality;
+    if (quality === "performance" || quality === "balanced" || quality === "cinematic") {
+      this.updateSettings({ graphicsQuality: quality });
+      return;
+    }
+    const rendererBackend = target.dataset.rendererBackend;
+    if (rendererBackend === "auto" || rendererBackend === "webgpu" || rendererBackend === "webgl") {
+      this.updateSettings({ rendererBackend });
+    }
+  };
+
+  private readonly handleInput = (event: Event): void => {
+    if (!(event.target instanceof HTMLInputElement) || this.busy) {
+      return;
+    }
+    const setting = event.target.dataset.setting;
+    if (setting === "antialias") {
+      this.updateSettings({ antialias: event.target.checked });
+      return;
+    }
+    if (setting === "master-volume") {
+      this.updateSettings({ masterVolume: Number(event.target.value) / 100 });
+      return;
+    }
+    if (setting === "camera-shake") {
+      this.updateSettings({ cameraShake: Number(event.target.value) / 100 });
+      return;
+    }
+    if (setting === "motion-effects") {
+      this.updateSettings({ motionEffects: event.target.checked });
+      return;
+    }
+    if (setting === "show-fps") {
+      this.updateSettings({ showFps: event.target.checked });
+    }
+  };
+
+  private updateSettings(patch: Partial<GameSettings>): void {
+    this.settings = sanitizeGameSettings({ ...this.settings, ...patch });
+    saveGameSettings(this.settings);
+    this.renderedSettingsKey = "";
+    this.render();
+  }
+
+  private render(): void {
+    this.root.dataset.screen = this.screen;
+    this.renderLevels();
+    this.renderSettings();
+  }
+
+  private renderLevels(): void {
+    const key = [
+      this.progress.highestUnlockedLevel,
+      this.progress.totalStars,
+      ...TEST_CHAMBERS.flatMap((level, index) => {
+        const progress = this.progress.levels[level.id];
+        return [index, level.name, level.objective, progress?.stars ?? 0, progress?.bestScore ?? 0, progress?.attempts ?? 0];
+      })
+    ].join("|");
+    if (this.renderedLevelKey === key) {
+      return;
+    }
+    this.renderedLevelKey = key;
+    this.levelRail.innerHTML = TEST_CHAMBERS.map((level, index) => {
+      const progress = this.progress.levels[level.id];
+      const locked = index > this.progress.highestUnlockedLevel;
+      const stars = progress?.stars ?? 0;
+      const bestScore = progress?.bestScore ?? 0;
+      const progressText = locked ? "LOCKED" : `${stars}/3 stars`;
+      return `
+        <button type="button" class="app-shell__level-card${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${index}" ${locked ? "disabled" : ""}>
+          <span>${String(index + 1).padStart(2, "0")} / ${progressText}</span>
+          <strong>${escapeShellHtml(level.name)}</strong>
+          <em>${escapeShellHtml(level.objective)}</em>
+          <small>${locked ? "Earn 2 stars on the previous district" : `Best ${formatShellScore(bestScore)}`}</small>
+        </button>
+      `;
+    }).join("");
+  }
+
+  private renderSettings(): void {
+    const key = settingsRenderKey(this.settings);
+    if (this.renderedSettingsKey === key) {
+      return;
+    }
+    this.renderedSettingsKey = key;
+    setText(this.settingsSummaryValue, settingsStatus(this.settings));
+    for (const [quality, button] of this.qualityButtons) {
+      const active = quality === this.settings.graphicsQuality;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+    for (const [rendererBackend, button] of this.rendererBackendButtons) {
+      const active = rendererBackend === this.settings.rendererBackend;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+
+    this.antialiasInput.checked = this.settings.antialias;
+    const volume = Math.round(this.settings.masterVolume * 100);
+    const shake = Math.round(this.settings.cameraShake * 100);
+    setInputValue(this.masterVolumeInput, String(volume));
+    setText(this.masterVolumeValue, `${volume}%`);
+    setInputValue(this.cameraShakeInput, String(shake));
+    setText(this.cameraShakeValue, `${shake}%`);
+    this.motionEffectsInput.checked = this.settings.motionEffects;
+    this.showFpsInput.checked = this.settings.showFps;
+  }
+
+  private requireElement<T extends HTMLElement = HTMLElement>(selector: string): T {
+    const element = this.root.querySelector<T>(selector);
+    if (!element) {
+      throw new Error(`Missing app shell element ${selector}`);
+    }
+    return element;
+  }
+}
+
+function setInputValue(input: HTMLInputElement, value: string): void {
+  if (input.value !== value) {
+    input.value = value;
+  }
+}
+
+function setText(element: HTMLElement, value: string): void {
+  if (element.textContent !== value) {
+    element.textContent = value;
+  }
+}
+
+function settingsRenderKey(settings: GameSettings): string {
+  return [
+    settings.graphicsQuality,
+    settings.rendererBackend,
+    Number(settings.antialias),
+    settings.masterVolume.toFixed(3),
+    settings.cameraShake.toFixed(3),
+    Number(settings.motionEffects),
+    Number(settings.showFps)
+  ].join("|");
+}
+
+function formatShellScore(value: number): string {
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function escapeShellHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+let appShellStylesInstalled = false;
+
+function installAppShellStyles(): void {
+  if (appShellStylesInstalled) {
+    return;
+  }
+  appShellStylesInstalled = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    :root {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f4f8fb;
+      background: #07090d;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body,
+    #app {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    input,
+    textarea,
+    [contenteditable="true"] {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    button {
+      font: inherit;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .app-shell {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      color: #f4f8fb;
+      background:
+        linear-gradient(115deg, rgba(7, 9, 13, 0.98), rgba(10, 16, 20, 0.94) 54%, rgba(19, 17, 15, 0.98)),
+        #07090d;
+      overflow: auto;
+    }
+
+    .app-shell[hidden] {
+      display: none !important;
+    }
+
+    .app-shell__menu,
+    .app-shell__settings,
+    .app-shell__loading {
+      min-height: 100%;
+    }
+
+    .app-shell[data-screen="settings"] .app-shell__menu,
+    .app-shell[data-screen="loading"] .app-shell__menu,
+    .app-shell[data-screen="menu"] .app-shell__settings,
+    .app-shell[data-screen="loading"] .app-shell__settings,
+    .app-shell[data-screen="menu"] .app-shell__loading,
+    .app-shell[data-screen="settings"] .app-shell__loading {
+      display: none;
+    }
+
+    .app-shell__topbar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 72px;
+      padding: max(16px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 14px max(18px, env(safe-area-inset-left));
+      border-bottom: 1px solid rgba(184, 234, 255, 0.12);
+      background: rgba(6, 9, 12, 0.84);
+      backdrop-filter: blur(14px);
+    }
+
+    .app-shell__brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .app-shell__brand-mark {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 38px;
+      height: 38px;
+      border: 1px solid rgba(255, 205, 100, 0.42);
+      border-radius: 7px;
+      color: #ffd36d;
+      background: rgba(255, 166, 41, 0.13);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .app-shell__brand strong,
+    .app-shell__intro h1,
+    .app-shell__settings-panel h2 {
+      display: block;
+      margin: 0;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .app-shell__brand strong {
+      font-size: 16px;
+    }
+
+    .app-shell__brand span,
+    .app-shell__intro > span,
+    .app-shell__level-card span,
+    .app-shell__level-card small,
+    .app-shell__settings-panel > span,
+    .app-shell__settings-panel em,
+    .app-shell__setting-row span,
+    .app-shell__loading-panel span,
+    .app-shell__loading-panel em {
+      color: #9db6c4;
+      font-size: 12px;
+      line-height: 1.25;
+    }
+
+    .app-shell__topbar button,
+    .app-shell__settings-head button,
+    .app-shell__segmented button,
+    .app-shell__level-card {
+      min-height: 40px;
+      border: 1px solid rgba(185, 245, 255, 0.2);
+      border-radius: 7px;
+      color: #f8fdff;
+      background: rgba(255, 255, 255, 0.08);
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .app-shell__topbar button,
+    .app-shell__settings-head button {
+      padding: 0 14px;
+    }
+
+    .app-shell__content {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.84fr) minmax(360px, 1.16fr);
+      gap: 22px;
+      width: min(1180px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 34px 0 42px;
+    }
+
+    .app-shell__intro {
+      display: grid;
+      align-content: start;
+      gap: 16px;
+      min-width: 0;
+      padding-top: 28px;
+    }
+
+    .app-shell__intro h1 {
+      font-size: 48px;
+      color: #ffffff;
+    }
+
+    .app-shell__intro p {
+      max-width: 520px;
+      margin: 0;
+      color: #c3d5df;
+      font-size: 16px;
+      line-height: 1.48;
+    }
+
+    .app-shell__status {
+      min-height: 20px;
+      color: #ffd36d;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .app-shell__levels {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .app-shell__level-card {
+      display: grid;
+      gap: 8px;
+      width: 100%;
+      min-height: 146px;
+      padding: 16px;
+      text-align: left;
+      background: rgba(11, 17, 23, 0.82);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .app-shell__level-card:hover:not(:disabled),
+    .app-shell__level-card:focus-visible {
+      border-color: rgba(121, 240, 255, 0.78);
+      background: rgba(19, 30, 36, 0.94);
+      outline: none;
+    }
+
+    .app-shell__level-card:disabled {
+      cursor: not-allowed;
+      opacity: 0.52;
+    }
+
+    .app-shell__level-card strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #ffffff;
+      font-size: 22px;
+      line-height: 1.05;
+    }
+
+    .app-shell__level-card em {
+      color: #c3d5df;
+      font-size: 13px;
+      font-style: normal;
+      line-height: 1.35;
+    }
+
+    .app-shell__level-card small {
+      color: #8ddfff;
+      font-weight: 800;
+    }
+
+    .app-shell__settings {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .app-shell__settings-panel {
+      display: grid;
+      gap: 14px;
+      width: min(620px, 100%);
+      padding: 18px;
+      border: 1px solid rgba(183, 232, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(7, 11, 17, 0.9);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+    }
+
+    .app-shell__settings-panel h2 {
+      color: #ffffff;
+      font-size: 30px;
+    }
+
+    .app-shell__settings-panel em {
+      font-style: normal;
+      color: #8ddfff;
+    }
+
+    .app-shell__settings-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .app-shell__setting-row {
+      display: grid;
+      grid-template-columns: minmax(130px, 0.8fr) minmax(160px, 1fr) 56px;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .app-shell__setting-row--stacked {
+      grid-template-columns: 1fr;
+    }
+
+    .app-shell__setting-row--toggle {
+      grid-template-columns: 1fr auto;
+    }
+
+    .app-shell__setting-row strong {
+      color: #ffffff;
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .app-shell__setting-row input[type="range"] {
+      width: 100%;
+      min-width: 0;
+      accent-color: #79f0ff;
+    }
+
+    .app-shell__setting-row input[type="checkbox"] {
+      width: 24px;
+      height: 24px;
+      accent-color: #79f0ff;
+    }
+
+    .app-shell__segmented {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .app-shell__segmented button {
+      min-width: 0;
+      padding: 0 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #bdf8ff;
+      background: rgba(157, 248, 255, 0.07);
+    }
+
+    .app-shell__segmented button.is-active {
+      color: #061015;
+      background: #79f0ff;
+      border-color: #bdf8ff;
+    }
+
+    .app-shell__loading {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(5, 8, 12, 0.94);
+    }
+
+    .app-shell__loading-panel {
+      display: grid;
+      gap: 14px;
+      width: min(520px, 100%);
+      padding: 18px;
+      border: 1px solid rgba(183, 232, 255, 0.2);
+      border-radius: 8px;
+      background: rgba(7, 11, 17, 0.96);
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.52);
+    }
+
+    .app-shell__loading-panel strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #ffffff;
+      font-size: 28px;
+      line-height: 1.08;
+    }
+
+    .app-shell__loading-panel em {
+      min-height: 18px;
+      font-style: normal;
+      color: #8ddfff;
+    }
+
+    .app-shell__loading-bar {
+      position: relative;
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .app-shell__loading-bar span {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 42%;
+      border-radius: inherit;
+      background: #79f0ff;
+      animation: app-shell-loading 1050ms ease-in-out infinite alternate;
+    }
+
+    @keyframes app-shell-loading {
+      from {
+        transform: translateX(0);
+      }
+      to {
+        transform: translateX(138%);
+      }
+    }
+
+    @media (max-width: 760px) {
+      .app-shell__topbar {
+        min-height: 64px;
+        padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 12px max(12px, env(safe-area-inset-left));
+      }
+
+      .app-shell__brand span:not(.app-shell__brand-mark) {
+        display: none;
+      }
+
+      .app-shell__content {
+        grid-template-columns: 1fr;
+        width: min(100% - 24px, 560px);
+        padding: 18px 0 30px;
+      }
+
+      .app-shell__intro {
+        gap: 10px;
+        padding-top: 0;
+      }
+
+      .app-shell__intro h1 {
+        font-size: 34px;
+      }
+
+      .app-shell__intro p {
+        font-size: 14px;
+      }
+
+      .app-shell__level-card {
+        min-height: 124px;
+        padding: 13px;
+      }
+
+      .app-shell__level-card strong {
+        font-size: 19px;
+      }
+
+      .app-shell__settings {
+        padding: 12px;
+      }
+
+      .app-shell__settings-panel {
+        padding: 14px;
+      }
+
+      .app-shell__settings-panel h2 {
+        font-size: 24px;
+      }
+
+      .app-shell__setting-row {
+        grid-template-columns: 1fr;
+      }
+
+      .app-shell__setting-row--toggle {
+        grid-template-columns: 1fr auto;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+interface GameOptions {
+  initialLevelIndex?: number;
+  onMainMenu?: () => void;
+  showLoading?: (levelName: string, status: string) => void;
+  updateLoadingStatus?: (status: string) => void;
+  hideLoading?: () => void;
+}
+
+const PERF_DISK_LOG_ENDPOINT = "/__downtown-mayhem/perf-log";
+const PERF_DISK_LOG_INTERVAL_MS = 900;
+
+interface PerfFrameSummary {
+  frame: number;
+  totalMs: number;
+  deltaMs: number;
+  bodyCount: number;
+  renderMs: number;
+  physicsStepMs: number;
+  rapierMs: number;
+  impactsMs: number;
+  fractureMs: number;
+  queuedFractureMs: number;
+  addBoxMs: number;
+  vfxExplodeMs: number;
+  fragments: number;
+  dynamicBoxes: number;
+  particles: number;
+  boxCacheMiss: number;
+  childBoxCacheMiss: number;
+  frozenRubbleBuckets: number;
+  stagedActivated: number;
+  droppedSubsteps: number;
+}
+
+interface PerfDiskLogSummary {
+  frameCount: number;
+  slowFrameCount: number;
+  slowRatioPercent: number;
+  shotFrameCount: number;
+  maxFrame: PerfFrameSummary | null;
+  shotMax: {
+    totalMs: number;
+    renderMs: number;
+    physicsStepMs: number;
+    rapierMs: number;
+    fractureMs: number;
+    queuedFractureMs: number;
+    addBoxMs: number;
+    particlesInFrame: number;
+    fragmentsInFrame: number;
+    boxCacheMissesInFrame: number;
+    childBoxCacheMissesInFrame: number;
+    droppedSubstepsInFrame: number;
+  };
+  shotTotals: {
+    fragments: number;
+    dynamicBoxes: number;
+    particles: number;
+    boxCacheMisses: number;
+    childBoxCacheMisses: number;
+    frozenRubbleBuckets: number;
+    stagedActivated: number;
+    droppedSubsteps: number;
+  };
+  topShotSlowFrames: PerfFrameSummary[];
+  topAllSlowFrames: PerfFrameSummary[];
+}
+
+class PerfDiskLogger {
+  private readonly sessionId = createPerfDiskSessionId();
+  private readonly handlePageHide = () => this.flush("pagehide");
+  private intervalId: number | null = null;
+  private sequence = 0;
+  private inFlight = false;
+  private queuedReason: string | null = null;
+
+  constructor(private readonly game: Game) {}
+
+  start(): void {
+    this.flush("session-start");
+    this.intervalId = window.setInterval(() => this.flush("interval"), PERF_DISK_LOG_INTERVAL_MS);
+    window.addEventListener("pagehide", this.handlePageHide);
+  }
+
+  dispose(reason = "dispose"): void {
+    if (this.intervalId !== null) {
+      window.clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    window.removeEventListener("pagehide", this.handlePageHide);
+    this.flush(reason);
+  }
+
+  flush(reason = "manual"): void {
+    if (this.inFlight) {
+      this.queuedReason = reason;
+      return;
+    }
+    const payload = this.createPayload(reason);
+    const body = JSON.stringify(payload);
+    this.inFlight = true;
+    void fetch(PERF_DISK_LOG_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body
+    })
+      .catch((error: unknown) => {
+        console.warn("Downtown Mayhem: perf disk log write failed.", error);
+      })
+      .finally(() => {
+        this.inFlight = false;
+        const queuedReason = this.queuedReason;
+        this.queuedReason = null;
+        if (queuedReason) {
+          this.flush(queuedReason);
+        }
+      });
+  }
+
+  private createPayload(reason: string) {
+    const report = perfMonitor.report();
+    return {
+      sessionId: this.sessionId,
+      sequence: this.sequence++,
+      reason,
+      createdAt: new Date().toISOString(),
+      pageTimeMs: Math.round(performance.now() * 10) / 10,
+      href: location.href,
+      stats: this.game.getRenderStats(),
+      warmup: this.game.getRenderWarmupState(),
+      summary: summarizePerfReport(report),
+      report
+    };
+  }
+}
+
+function summarizePerfReport(report: PerfReport): PerfDiskLogSummary {
+  const frames = report.recentSlowFrames;
+  const shotFrames = frames.filter(isShotPerfFrame);
+  return {
+    frameCount: report.frameCount,
+    slowFrameCount: report.slowFrameCount,
+    slowRatioPercent: Math.round((report.slowFrameCount / Math.max(1, report.frameCount)) * 1000) / 10,
+    shotFrameCount: shotFrames.length,
+    maxFrame: report.maxFrame ? summarizePerfFrame(report.maxFrame) : null,
+    shotMax: {
+      totalMs: maxPerfValue(shotFrames, (frame) => frame.totalMs),
+      renderMs: maxPerfValue(shotFrames, (frame) => frame.timings["renderer.render"]),
+      physicsStepMs: maxPerfValue(shotFrames, (frame) => frame.timings["physics.step"]),
+      rapierMs: maxPerfValue(shotFrames, (frame) => frame.timings["physics.rapierStep"]),
+      fractureMs: maxPerfValue(shotFrames, (frame) => frame.timings["destruction.fracture"]),
+      queuedFractureMs: maxPerfValue(shotFrames, (frame) => frame.timings["destruction.processQueuedFractures"]),
+      addBoxMs: maxPerfValue(shotFrames, (frame) => frame.timings["physics.addDynamicBox"]),
+      particlesInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["vfx.particlesSpawned"]),
+      fragmentsInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["destruction.fragmentsCreated"]),
+      boxCacheMissesInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["render.boxGeometryCacheMiss"]),
+      childBoxCacheMissesInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["render.childBoxGeometryCacheMiss"]),
+      droppedSubstepsInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["physics.substepsDropped"])
+    },
+    shotTotals: {
+      fragments: sumPerfValue(shotFrames, (frame) => frame.counters["destruction.fragmentsCreated"]),
+      dynamicBoxes: sumPerfValue(shotFrames, (frame) => frame.counters["physics.dynamicBoxesAdded"]),
+      particles: sumPerfValue(shotFrames, (frame) => frame.counters["vfx.particlesSpawned"]),
+      boxCacheMisses: sumPerfValue(shotFrames, (frame) => frame.counters["render.boxGeometryCacheMiss"]),
+      childBoxCacheMisses: sumPerfValue(shotFrames, (frame) => frame.counters["render.childBoxGeometryCacheMiss"]),
+      frozenRubbleBuckets: sumPerfValue(shotFrames, (frame) => frame.counters["physics.frozenRubbleBucketsCreated"]),
+      stagedActivated: sumPerfValue(shotFrames, (frame) => frame.counters["render.stagedVisualActivationsActivated"]),
+      droppedSubsteps: sumPerfValue(shotFrames, (frame) => frame.counters["physics.substepsDropped"])
+    },
+    topShotSlowFrames: topPerfFrames(shotFrames),
+    topAllSlowFrames: topPerfFrames(frames)
+  };
+}
+
+function summarizePerfFrame(frame: PerfFrameSnapshot): PerfFrameSummary {
+  return {
+    frame: frame.frame,
+    totalMs: frame.totalMs,
+    deltaMs: frame.deltaMs,
+    bodyCount: frame.bodyCount,
+    renderMs: frame.timings["renderer.render"] ?? 0,
+    physicsStepMs: frame.timings["physics.step"] ?? 0,
+    rapierMs: frame.timings["physics.rapierStep"] ?? 0,
+    impactsMs: frame.timings["game.processDebrisImpacts"] ?? 0,
+    fractureMs: frame.timings["destruction.fracture"] ?? 0,
+    queuedFractureMs: frame.timings["destruction.processQueuedFractures"] ?? 0,
+    addBoxMs: frame.timings["physics.addDynamicBox"] ?? 0,
+    vfxExplodeMs: frame.timings["vfx.explode"] ?? 0,
+    fragments: frame.counters["destruction.fragmentsCreated"] ?? 0,
+    dynamicBoxes: frame.counters["physics.dynamicBoxesAdded"] ?? 0,
+    particles: frame.counters["vfx.particlesSpawned"] ?? 0,
+    boxCacheMiss: frame.counters["render.boxGeometryCacheMiss"] ?? 0,
+    childBoxCacheMiss: frame.counters["render.childBoxGeometryCacheMiss"] ?? 0,
+    frozenRubbleBuckets: frame.counters["physics.frozenRubbleBucketsCreated"] ?? 0,
+    stagedActivated: frame.counters["render.stagedVisualActivationsActivated"] ?? 0,
+    droppedSubsteps: frame.counters["physics.substepsDropped"] ?? 0
+  };
+}
+
+function isShotPerfFrame(frame: PerfFrameSnapshot): boolean {
+  return Boolean(
+    frame.timings["physics.step"] ||
+      frame.timings["game.projectiles"] ||
+      frame.timings["destruction.explode"] ||
+      frame.counters["collision.chainDrained"] ||
+      frame.counters["collision.surfaceDrained"] ||
+      frame.counters["destruction.fragmentsCreated"] ||
+      frame.counters["physics.dynamicBoxesAdded"] ||
+      frame.counters["destruction.fracturesQueued"]
+  );
+}
+
+function topPerfFrames(frames: PerfFrameSnapshot[]): PerfFrameSummary[] {
+  return frames
+    .slice()
+    .sort((a, b) => b.totalMs - a.totalMs)
+    .slice(0, 10)
+    .map(summarizePerfFrame);
+}
+
+function maxPerfValue(frames: PerfFrameSnapshot[], readValue: (frame: PerfFrameSnapshot) => number | undefined): number {
+  return Math.max(0, ...frames.map((frame) => readValue(frame) ?? 0));
+}
+
+function sumPerfValue(frames: PerfFrameSnapshot[], readValue: (frame: PerfFrameSnapshot) => number | undefined): number {
+  return Math.round(frames.reduce((total, frame) => total + (readValue(frame) ?? 0), 0) * 10) / 10;
+}
+
+function createPerfDiskSessionId(): string {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return random.replaceAll(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function shouldEnablePerfDiskLogging(): boolean {
+  return import.meta.env.DEV && perfMonitor.isEnabled();
+}
+
 class Game {
   private readonly renderer: DowntownMayhemRenderer;
   private readonly rendererPreference: RendererBackendPreference;
@@ -274,6 +1689,9 @@ class Game {
   private readonly arenaObjects: THREE.Object3D[] = [];
   private readonly cannonBatteryObjects: THREE.Object3D[] = [];
   private readonly levelDecorations: THREE.Object3D[] = [];
+  private renderWarmupGroup: THREE.Group | null = null;
+  private renderPipelineSentinelGroup: THREE.Group | null = null;
+  private readonly renderWarmupPersistentObjects: THREE.Object3D[] = [];
   private readonly handleResize = () => this.resize();
   private readonly handleBeforeUnload = () => this.input.dispose();
   private readonly chainImpactCooldowns = new Map<string, number>();
@@ -302,6 +1720,11 @@ class Game {
   private hasProjectileSpectacleFocus = false;
   private disposed = false;
   private frozenForCapture = false;
+  private levelReloadInProgress = false;
+  private readonly perfDiskLogger: PerfDiskLogger | null = shouldEnablePerfDiskLogging() ? new PerfDiskLogger(this) : null;
+  private renderWarmupToken = 0;
+  private renderWarmupPromise: Promise<void> | null = null;
+  private renderWarmupState: RenderWarmupState = createInitialRenderWarmupState();
   private renderStatsFrame = 0;
   private lastRenderStats: DowntownMayhemRenderStats = {
     frame: 0,
@@ -320,7 +1743,7 @@ class Game {
     visibleMaterials: 0
   };
 
-  constructor(settings: GameSettings, rendererBundle: DowntownMayhemRendererBundle) {
+  constructor(settings: GameSettings, rendererBundle: DowntownMayhemRendererBundle, private readonly options: GameOptions = {}) {
     const app = document.querySelector<HTMLDivElement>("#app");
     if (!app) {
       throw new Error("Missing #app");
@@ -334,8 +1757,8 @@ class Game {
     this.renderer.domElement.dataset.rendererBackend = this.rendererBackend;
     app.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(0x080b10);
-    this.scene.fog = new THREE.Fog(0x080b10, 28, 78);
+    this.scene.background = new THREE.Color(0x050811);
+    this.scene.fog = new THREE.Fog(0x07111c, 34, 92);
     this.timer.connect(document);
 
     this.rng = new SeededRandom(this.runSeed);
@@ -354,6 +1777,7 @@ class Game {
       reset: () => this.reset(),
       clearDebris: () => this.clearDebris(),
       finishRun: () => this.finishRun(),
+      openMainMenu: () => this.openMainMenu(),
       selectProjectile: (id) => this.selectProjectile(id),
       selectLevel: (index) => this.selectLevel(index),
       nextLevel: () => this.nextLevel(),
@@ -371,12 +1795,16 @@ class Game {
       nextLevel: () => this.nextLevel()
     });
 
+    this.scene.add(createNightSkyDome());
     this.configureLights();
     this.applySettings();
     this.buildArena();
+    this.levelIndex = clampInitialLevelIndex(options.initialLevelIndex, this.arcadeProgress.highestUnlockedLevel);
     this.loadLevel();
     this.audio.preload();
     this.resize();
+    this.scheduleRenderWarmup();
+    this.perfDiskLogger?.start();
     window.addEventListener("resize", this.handleResize);
     window.visualViewport?.addEventListener("resize", this.handleResize);
     window.addEventListener("beforeunload", this.handleBeforeUnload);
@@ -389,6 +1817,18 @@ class Game {
 
   getRenderStats(): DowntownMayhemRenderStats {
     return this.captureRenderStats();
+  }
+
+  getRenderWarmupState(): RenderWarmupState {
+    return { ...this.renderWarmupState };
+  }
+
+  flushPerfLog(reason?: string): void {
+    this.perfDiskLogger?.flush(reason ?? "manual");
+  }
+
+  showPlayScreen(): void {
+    this.ui.showPlayScreen();
   }
 
   freezeForCapture(): DowntownMayhemRenderStats {
@@ -414,6 +1854,7 @@ class Game {
     window.removeEventListener("resize", this.handleResize);
     window.visualViewport?.removeEventListener("resize", this.handleResize);
     window.removeEventListener("beforeunload", this.handleBeforeUnload);
+    this.perfDiskLogger?.dispose("game-dispose");
     if (window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().frame === this.lastRenderStats.frame) {
       delete window.__DOWNTOWN_MAYHEM_DEBUG__;
     }
@@ -424,6 +1865,8 @@ class Game {
     this.physics.clearDynamic();
     this.physics.clearStatics();
     this.clearLevelDecorations();
+    this.disposeRenderWarmupGroup();
+    this.disposeRenderPipelineSentinels();
     const disposedObjects = new Set<THREE.Object3D>();
     const disposedMaterials = new Set<THREE.Material>();
     for (const object of this.arenaObjects) {
@@ -457,6 +1900,7 @@ class Game {
     perfMonitor.beginFrame(frameDelta * 1000, this.physics.getDynamicBodyCount());
     try {
       this.updateFps(frameDelta);
+      this.physics.flushStagedVisualActivations();
       const motionEffectsActive = this.settings.motionEffects;
       const hitStopped = motionEffectsActive && this.hitStopTimer > 0;
       const slowMotionActive = motionEffectsActive && this.slowMotionTimer > 0;
@@ -502,6 +1946,7 @@ class Game {
       this.updatePhase();
       perfMonitor.addTiming("game.updatePhase", startedAt);
       this.destruction.processQueuedFractures(FRACTURE_PROCESS_MAX_PER_FRAME, FRACTURE_PROCESS_TIME_BUDGET_MS);
+      this.physics.flushStagedVisualActivations(8, 0.25);
 
       startedAt = perfMonitor.timeStart();
       this.particles.update(delta * visualScale);
@@ -534,7 +1979,12 @@ class Game {
       });
       perfMonitor.addTiming("game.ui", startedAt);
       startedAt = perfMonitor.timeStart();
+      const programsBeforeRender = rendererProgramCount(this.renderer);
       this.renderer.render(this.scene, this.cameraRig.camera);
+      const programDelta = rendererProgramCount(this.renderer) - programsBeforeRender;
+      if (programDelta > 0 && this.renderWarmupState.phase === "ready") {
+        perfMonitor.addCount("renderer.programsCreatedAfterWarmup", programDelta);
+      }
       perfMonitor.addTiming("renderer.render", startedAt);
     } finally {
       perfMonitor.endFrame();
@@ -619,22 +2069,22 @@ class Game {
   }
 
   private configureLights(): void {
-    const ambient = new THREE.AmbientLight(0xb6c6d5, 0.52);
+    const ambient = new THREE.HemisphereLight(0x9fc8ff, 0x151b24, 0.58);
     this.scene.add(ambient);
 
-    const key = new THREE.DirectionalLight(0xf7fbff, 3.4);
-    key.position.set(7, 11, 6);
-    key.castShadow = false;
-    key.shadow.mapSize.set(1024, 1024);
-    key.shadow.camera.near = 1;
-    key.shadow.camera.far = 60;
-    key.shadow.camera.left = -22;
-    key.shadow.camera.right = 22;
-    key.shadow.camera.top = 22;
-    key.shadow.camera.bottom = -22;
-    this.scene.add(key);
+    const moonKey = new THREE.DirectionalLight(0xc7e2ff, 1.55);
+    moonKey.position.copy(MOON_DIRECTION.clone().multiplyScalar(18));
+    moonKey.castShadow = false;
+    moonKey.shadow.mapSize.set(1024, 1024);
+    moonKey.shadow.camera.near = 1;
+    moonKey.shadow.camera.far = 70;
+    moonKey.shadow.camera.left = -24;
+    moonKey.shadow.camera.right = 24;
+    moonKey.shadow.camera.top = 24;
+    moonKey.shadow.camera.bottom = -24;
+    this.scene.add(moonKey);
 
-    const rim = new THREE.DirectionalLight(0x6aa7ff, 1.05);
+    const rim = new THREE.DirectionalLight(0x6da8ff, 0.22);
     rim.position.set(-7, 5, -8);
     this.scene.add(rim);
   }
@@ -759,13 +2209,554 @@ class Game {
       materials: this.materials,
       addDecoration: (object) => this.addDecoration(object)
     });
+    this.physics.batchStaticDetails();
     setOptionalShadowMapFlag(this.renderer, "needsUpdate", true);
     this.status = `${level.name}: ${level.objective}`;
     this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
   }
 
+  waitForRenderWarmup(): Promise<void> {
+    return this.renderWarmupPromise ?? Promise.resolve();
+  }
+
+  private scheduleRenderWarmup(): void {
+    const token = this.renderWarmupToken + 1;
+    this.renderWarmupToken = token;
+    this.disposeRenderWarmupGroup();
+    this.disposeRenderPipelineSentinels();
+    this.renderWarmupPersistentObjects.length = 0;
+    const group = this.createRenderWarmupGroup();
+    this.renderWarmupGroup = group;
+    this.renderWarmupState = {
+      phase: "warming",
+      token,
+      startedAt: performance.now(),
+      finishedAt: null,
+      durationMs: null,
+      programs: rendererProgramCount(this.renderer),
+      geometries: this.renderer.info.memory.geometries,
+      frames: 0
+    };
+    this.status = "Preparing renderer pipelines before impact.";
+    this.renderWarmupPromise = this.runRenderWarmup(token, group);
+  }
+
+  private async runRenderWarmup(token: number, group: THREE.Group): Promise<void> {
+    this.scene.add(group);
+    const restoreFrustumCulling = disableSceneFrustumCullingForWarmup(this.scene);
+    const warmupCameras = createRenderWarmupCameras(this.cameraRig.camera);
+    const runtimeWarmupObjectIds = this.createRuntimeFragmentWarmupObjects();
+    const runtimeFragmentPipelineWarmupObjectIds = this.destruction.createRuntimeFragmentPipelineWarmupObjects();
+    let runtimeWarmupPreserved = false;
+    const cleanupTransientWarmup = (
+      preserveFrozenRubbleWarmup = false,
+      preserveParticlePools = false,
+      preserveRenderWarmupGroup = false
+    ): void => {
+      this.destruction.parkFragmentVisualWarmupPreview();
+      this.clearRuntimeWarmupObjects(runtimeFragmentPipelineWarmupObjectIds);
+      if (!runtimeWarmupPreserved) {
+        this.clearRuntimeWarmupObjects(runtimeWarmupObjectIds);
+      }
+      if (!preserveFrozenRubbleWarmup) {
+        this.physics.clearFrozenRubbleWarmupObjects();
+      }
+      this.particles.clearTransientEffects();
+      if (preserveRenderWarmupGroup) {
+        group.position.set(0, -10000, 0);
+        group.visible = false;
+        group.updateMatrixWorld(true);
+      } else {
+        this.scene.remove(group);
+      }
+      if (preserveParticlePools) {
+        this.particles.keepPoolPipelinesResident();
+      }
+    };
+    try {
+      this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+      this.destruction.showFragmentVisualWarmupPreview();
+      this.playRenderWarmupEffects(0);
+      for (const camera of warmupCameras) {
+        await this.renderer.compileAsync(this.scene, camera);
+      }
+      let frames = 0;
+      let stableFrames = 0;
+      let lastProgramCount = rendererProgramCount(this.renderer);
+      const updateWarmupState = (): void => {
+        this.renderWarmupState = {
+          ...this.renderWarmupState,
+          programs: rendererProgramCount(this.renderer),
+          geometries: this.renderer.info.memory.geometries,
+          frames
+        };
+      };
+      const renderWarmupFrame = async (): Promise<boolean> => {
+        this.particles.update(RENDER_WARMUP_DELTA_SECONDS);
+        for (const camera of warmupCameras) {
+          await renderWarmupYield();
+          this.renderer.render(this.scene, camera);
+          if (this.disposed || token !== this.renderWarmupToken) {
+            cleanupTransientWarmup();
+            return false;
+          }
+        }
+        frames += 1;
+        updateWarmupState();
+        return true;
+      };
+      for (let pass = 0; pass < RENDER_WARMUP_BRUTAL_PASSES; pass += 1) {
+        this.status = `Preparing renderer pipelines before impact (${pass + 1}/${RENDER_WARMUP_BRUTAL_PASSES}).`;
+        this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+        this.destruction.showFragmentVisualWarmupPreview();
+        this.playRenderWarmupEffects(pass);
+        for (let frame = 0; frame < RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS; frame += 1) {
+          if (!(await renderWarmupFrame())) {
+            return;
+          }
+        }
+        lastProgramCount = rendererProgramCount(this.renderer);
+        stableFrames = 0;
+      }
+      if (!(await this.runSyntheticDestructionWarmup(token, renderWarmupFrame))) {
+        return;
+      }
+      while (
+        frames < RENDER_WARMUP_MAX_FRAMES &&
+        (frames < RENDER_WARMUP_MIN_FRAMES || stableFrames < RENDER_WARMUP_STABLE_FRAMES)
+      ) {
+        if (!(await renderWarmupFrame())) {
+          return;
+        }
+        const programs = rendererProgramCount(this.renderer);
+        if (programs === lastProgramCount) {
+          stableFrames += 1;
+        } else {
+          lastProgramCount = programs;
+          stableFrames = 0;
+        }
+      }
+      group.position.set(0, -10000, 0);
+      group.updateMatrixWorld(true);
+      group.visible = false;
+      this.preserveRuntimeWarmupObjects(runtimeWarmupObjectIds);
+      this.preserveRenderWarmupPersistentObjects();
+      runtimeWarmupPreserved = true;
+      cleanupTransientWarmup(true, true, true);
+      restoreFrustumCulling();
+      this.status = "Preparing renderer pipelines before impact (settling runtime scene).";
+      lastProgramCount = rendererProgramCount(this.renderer);
+      stableFrames = 0;
+      let postCleanupFrames = 0;
+      while (
+        postCleanupFrames < RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES &&
+        stableFrames < RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES
+      ) {
+        if (!(await renderWarmupFrame())) {
+          return;
+        }
+        postCleanupFrames += 1;
+        const programs = rendererProgramCount(this.renderer);
+        if (programs === lastProgramCount) {
+          stableFrames += 1;
+        } else {
+          lastProgramCount = programs;
+          stableFrames = 0;
+        }
+      }
+      const finishedAt = performance.now();
+      this.renderWarmupState = {
+        ...this.renderWarmupState,
+        phase: "ready",
+        finishedAt,
+        durationMs: finishedAt - this.renderWarmupState.startedAt,
+        programs: rendererProgramCount(this.renderer),
+        geometries: this.renderer.info.memory.geometries,
+        frames
+      };
+      if (this.runState.phase === "aim" && this.runState.shotAvailable) {
+        const level = this.currentLevel();
+        this.status = `${level.name}: ${level.objective}`;
+      }
+    } catch (error) {
+      if (this.disposed || token !== this.renderWarmupToken) {
+        cleanupTransientWarmup();
+        return;
+      }
+      cleanupTransientWarmup();
+      const finishedAt = performance.now();
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("Downtown Mayhem: render warmup failed.", error);
+      this.renderWarmupState = {
+        ...this.renderWarmupState,
+        phase: "failed",
+        finishedAt,
+        durationMs: finishedAt - this.renderWarmupState.startedAt,
+        programs: rendererProgramCount(this.renderer),
+        geometries: this.renderer.info.memory.geometries,
+        frames: this.renderWarmupState.frames,
+        error: message
+      };
+      this.status = "Renderer warmup failed; impact may stutter.";
+    } finally {
+      restoreFrustumCulling();
+    }
+  }
+
+  private createRenderWarmupGroup(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = "Render pipeline warmup";
+    group.frustumCulled = false;
+    const fragmentMeshes: THREE.Mesh[] = [];
+    const fragmentMaterials = RENDER_WARMUP_FRAGMENT_MATERIALS.map((materialId) => this.materials.getRenderMaterial(materialId));
+    const runtimeFragmentMeshes = this.physics.createBoxGeometryWarmupObjects(fragmentMaterials);
+    for (let index = 0; index < RENDER_WARMUP_FRAGMENT_MATERIALS.length; index += 1) {
+      const materialId = RENDER_WARMUP_FRAGMENT_MATERIALS[index];
+      const size = renderWarmupFragmentSize(materialId);
+      const mesh = runtimeFragmentMeshes[index];
+      mesh.name = `${materialId} fragment warmup`;
+      mesh.position.set(index * 0.28, 0, 0);
+      mesh.scale.copy(size);
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      decorateFragment(mesh, { size, materialId });
+      disableFrustumCulling(mesh);
+      group.add(mesh);
+      addInstancedWarmupVariants(group, mesh, `${materialId} fragment`);
+      fragmentMeshes.push(mesh);
+    }
+    this.physics.createFrozenRubbleWarmupObjects(fragmentMeshes);
+
+    for (const object of this.destruction.createFragmentVisualPoolWarmupObjects()) {
+      disableFrustumCulling(object);
+      this.scene.add(object);
+    }
+
+    for (const projectileId of Object.keys(PROJECTILES) as ProjectileId[]) {
+      for (const object of this.physics.createSphereGeometryWarmupObjects([10, 16, 24, 28], this.projectiles.getRenderMaterial(projectileId))) {
+        disableFrustumCulling(object);
+        this.addPersistentRenderWarmupObject(group, object);
+      }
+    }
+    for (const object of this.physics.createStaticDetailWarmupObjects()) {
+      disableFrustumCulling(object);
+      this.addPersistentRenderWarmupObject(group, object);
+    }
+    for (const object of this.physics.createSupportReleaseWarmupObjects()) {
+      disableFrustumCulling(object);
+      this.addPersistentRenderWarmupObject(group, object);
+    }
+    for (const object of this.projectiles.createWarmupObjects()) {
+      disableFrustumCulling(object);
+      group.add(object);
+    }
+    for (const object of this.particles.createWarmupObjects()) {
+      disableFrustumCulling(object);
+      group.add(object);
+    }
+    return group;
+  }
+
+  private addPersistentRenderWarmupObject(group: THREE.Group, object: THREE.Object3D): void {
+    group.add(object);
+    this.renderWarmupPersistentObjects.push(object);
+  }
+
+  private createRuntimeFragmentWarmupObjects(): number[] {
+    const objectIds: number[] = [];
+    const columns = RENDER_WARMUP_FRAGMENT_MATERIALS.length;
+    for (let materialIndex = 0; materialIndex < columns; materialIndex += 1) {
+      const materialId = RENDER_WARMUP_FRAGMENT_MATERIALS[materialIndex];
+      const material = this.materials.get(materialId);
+      for (let batch = 0; batch < RENDER_WARMUP_RUNTIME_FRAGMENT_BATCHES; batch += 1) {
+        const size = renderWarmupRuntimeFragmentSize(materialId, batch);
+        const rotation = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(batch * 0.27, materialIndex * 0.18, (batch - materialIndex) * 0.14)
+        );
+        const object = this.physics.addDynamicBox({
+          label: `${material.name} runtime fragment warmup`,
+          material,
+          renderMaterial: this.materials.getRenderMaterial(materialId),
+          position: new THREE.Vector3(-2.2 + materialIndex * 0.82, 0.35 + batch * 0.22, -0.45 + batch * 0.18),
+          size,
+          rotation,
+          destructible: batch % 3 === 0,
+          canFracture: batch % 3 === 0,
+          isDebris: batch % 2 === 0,
+          chainSource: batch % 2 === 0,
+          category: batch % 2 === 0 ? "debris" : "structure",
+          scoreRole: batch % 4 === 0 ? "target" : "neutral",
+          zoneId: "render-warmup-synthetic",
+          scoreValue: 0,
+          sleeping: true,
+          stageVisualActivation: true
+        });
+        object.mesh.castShadow = false;
+        object.mesh.receiveShadow = true;
+        decorateFragment(object.mesh, { size, materialId });
+        disableFrustumCulling(object.mesh);
+        objectIds.push(object.id);
+      }
+    }
+    return objectIds;
+  }
+
+  private preserveRuntimeWarmupObjects(objectIds: number[]): void {
+    if (objectIds.length === 0) {
+      return;
+    }
+    const group = this.ensureRenderPipelineSentinelGroup();
+    for (let index = 0; index < objectIds.length; index += 1) {
+      const objectId = objectIds[index];
+      const mesh = this.physics.detachObjectForRenderWarmup(objectId);
+      if (!mesh) {
+        continue;
+      }
+      mesh.name = `${mesh.name} sentinel`;
+      mesh.visible = true;
+      mesh.position.set((index % RENDER_WARMUP_FRAGMENT_MATERIALS.length) * 0.18, -10000, Math.floor(index / RENDER_WARMUP_FRAGMENT_MATERIALS.length) * 0.18);
+      mesh.updateMatrixWorld(true);
+      disableFrustumCulling(mesh);
+      group.add(mesh);
+    }
+    objectIds.length = 0;
+  }
+
+  private preserveRenderWarmupPersistentObjects(): void {
+    if (this.renderWarmupPersistentObjects.length === 0) {
+      return;
+    }
+    const group = this.ensureRenderPipelineSentinelGroup();
+    let index = 0;
+    while (this.renderWarmupPersistentObjects.length > 0) {
+      const object = this.renderWarmupPersistentObjects.shift();
+      if (!object) {
+        continue;
+      }
+      object.name = `${object.name || "render warmup"} sentinel`;
+      object.visible = true;
+      object.position.set((index % 18) * 0.16 - 1.36, -10000, Math.floor(index / 18) * 0.16);
+      object.updateMatrixWorld(true);
+      disableFrustumCulling(object);
+      group.add(object);
+      index += 1;
+    }
+  }
+
+  private ensureRenderPipelineSentinelGroup(): THREE.Group {
+    if (this.renderPipelineSentinelGroup) {
+      return this.renderPipelineSentinelGroup;
+    }
+    const group = new THREE.Group();
+    group.name = "Persistent render pipeline sentinels";
+    group.frustumCulled = false;
+    this.renderPipelineSentinelGroup = group;
+    this.scene.add(group);
+    return group;
+  }
+
+  private clearRuntimeWarmupObjects(objectIds: number[]): void {
+    while (objectIds.length > 0) {
+      const objectId = objectIds.pop();
+      if (objectId !== undefined) {
+        this.physics.removeObject(objectId);
+      }
+    }
+  }
+
+  private async runSyntheticDestructionWarmup(token: number, renderWarmupFrame: () => Promise<boolean>): Promise<boolean> {
+    const objectIds = this.createSyntheticDestructionWarmupObjects();
+    try {
+      for (let pass = 0; pass < RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES; pass += 1) {
+        this.status = `Preparing renderer pipelines before impact (destruction ${pass + 1}/${RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES}).`;
+        const origin = RENDER_WARMUP_SYNTHETIC_ORIGIN.clone().add(new THREE.Vector3(pass * 1.35, pass * 0.16, -pass * 0.95));
+        const projectileId = (Object.keys(PROJECTILES) as ProjectileId[])[pass % Object.keys(PROJECTILES).length];
+        const hitMaterialId = RENDER_WARMUP_FRAGMENT_MATERIALS[pass % RENDER_WARMUP_FRAGMENT_MATERIALS.length];
+        const result = this.destruction.explode(origin, 58 + pass * 9, 8.8 + pass * 0.85);
+        this.explosion.play(origin, 8.6 + pass * 0.9, result.dustColors, {
+          projectileId,
+          result,
+          powerScale: 2.35,
+          sizeScale: 1.85,
+          hitMaterialId,
+          impactDirection: new THREE.Vector3(0.4 + pass * 0.12, 0.22, -1).normalize(),
+          role: pass === 0 ? "primary" : "secondary"
+        });
+        this.particles.cityDebrisSpray(origin.clone().add(new THREE.Vector3(0.25, 0.08, 0)), result.dustColors, 2.6);
+        this.particles.fireBurst(origin.clone().add(new THREE.Vector3(0.55, 0.1, -0.35)), 2.05);
+        this.particles.spark(origin.clone().add(new THREE.Vector3(-0.45, 0.12, 0.18)), 0xffd25c, 2.4);
+        for (let frame = 0; frame < RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS; frame += 1) {
+          this.destruction.processQueuedFractures(24, 8);
+          this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+          if (!(await renderWarmupFrame())) {
+            return false;
+          }
+          if (this.disposed || token !== this.renderWarmupToken) {
+            return false;
+          }
+        }
+      }
+      while (this.destruction.getQueuedFractureCount() > 0) {
+        this.destruction.processQueuedFractures(24, 8);
+        this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+        if (!(await renderWarmupFrame())) {
+          return false;
+        }
+        if (this.disposed || token !== this.renderWarmupToken) {
+          return false;
+        }
+      }
+      this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+      return true;
+    } finally {
+      this.clearRuntimeWarmupObjects(objectIds);
+      this.clearSyntheticDestructionWarmupObjects();
+    }
+  }
+
+  private createSyntheticDestructionWarmupObjects(): number[] {
+    const objectIds: number[] = [];
+    for (let materialIndex = 0; materialIndex < RENDER_WARMUP_FRAGMENT_MATERIALS.length; materialIndex += 1) {
+      const materialId = RENDER_WARMUP_FRAGMENT_MATERIALS[materialIndex];
+      const material = this.materials.get(materialId);
+      const renderMaterial = this.materials.getRenderMaterial(materialId);
+      for (let index = 0; index < RENDER_WARMUP_SYNTHETIC_OBJECTS_PER_MATERIAL; index += 1) {
+        const size = renderWarmupRuntimeFragmentSize(materialId, index).multiplyScalar(1.65 + (index % 3) * 0.34);
+        const position = RENDER_WARMUP_SYNTHETIC_ORIGIN.clone().add(
+          new THREE.Vector3(
+            (materialIndex - 2.5) * 1.05 + (index % 2) * 0.28,
+            0.18 + Math.floor(index / 2) * 0.58,
+            (index - (RENDER_WARMUP_SYNTHETIC_OBJECTS_PER_MATERIAL - 1) * 0.5) * 0.48
+          )
+        );
+        const rotation = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(index * 0.22, materialIndex * 0.33 + index * 0.08, (index - materialIndex) * 0.17)
+        );
+        const object = this.physics.addDynamicBox({
+          label: `${material.name} synthetic destruction warmup`,
+          material,
+          renderMaterial,
+          position,
+          size,
+          rotation,
+          destructible: true,
+          canFracture: true,
+          isDebris: false,
+          chainSource: true,
+          category: "structure",
+          scoreRole: index % 3 === 0 ? "target" : "neutral",
+          zoneId: "render-warmup",
+          scoreValue: 0,
+          bodyType: "fixed"
+        });
+        decorateFragment(object.mesh, { size, materialId });
+        disableFrustumCulling(object.mesh);
+        objectIds.push(object.id);
+      }
+    }
+    return objectIds;
+  }
+
+  private clearSyntheticDestructionWarmupObjects(): void {
+    const warmupObjectIds = Array.from(this.physics.objects.values())
+      .filter((object) => object.zoneId === "render-warmup-synthetic")
+      .map((object) => object.id);
+    for (const objectId of warmupObjectIds) {
+      this.physics.removeObject(objectId);
+    }
+    this.destruction.clearQueuedFractures();
+    this.physics.clearFrozenRubbleWarmupObjects();
+  }
+
+  private disposeRenderPipelineSentinels(): void {
+    const group = this.renderPipelineSentinelGroup;
+    if (!group) {
+      return;
+    }
+    group.parent?.remove(group);
+    group.clear();
+    this.renderPipelineSentinelGroup = null;
+  }
+
+  private playRenderWarmupEffects(pass = 0): void {
+    const dustColors = [new THREE.Color(0xa49f94), new THREE.Color(0xd8fbff), new THREE.Color(0xffb36a)];
+    const direction = new THREE.Vector3(0.2 + pass * 0.05, 0.18, -1).normalize();
+    const materialIds: readonly MaterialId[] = ["glass", "metal", "concrete", "wood", "foam", "rubber"];
+    const projectileIds = Object.keys(PROJECTILES) as ProjectileId[];
+
+    this.particles.warmupAllRuntimeFxProfiles(pass);
+
+    for (let index = 0; index < projectileIds.length; index += 1) {
+      const projectileId = projectileIds[index];
+      const origin = new THREE.Vector3((index - 2) * 0.55, 0.12, 0);
+      this.particles.explode(origin, PROJECTILES[projectileId].blastRadius, dustColors, {
+        projectileId,
+        hitMaterialId: materialIds[index % materialIds.length],
+        impactDirection: direction,
+        powerScale: 1.8,
+        sizeScale: 1.35,
+        role: "primary"
+      });
+    }
+
+    for (let index = 0; index < materialIds.length; index += 1) {
+      const materialId = materialIds[index];
+      const origin = new THREE.Vector3((index - 2.5) * 0.42, 0.32, -0.55);
+      this.particles.explode(origin, 3.2, dustColors, {
+        hitMaterialId: materialId,
+        impactDirection: direction,
+        powerScale: 1.35,
+        sizeScale: 1.1,
+        role: "secondary"
+      });
+    }
+
+    this.particles.muzzleFlash(new THREE.Vector3(0, 0.22, 0.55), PROJECTILES.slug.color);
+    this.particles.cityDebrisSpray(new THREE.Vector3(-0.8, 0.1, -0.35), dustColors, 2.2);
+    this.particles.fireBurst(new THREE.Vector3(0.65, 0.1, -0.25), 1.8);
+    this.particles.fireLick(new THREE.Vector3(1.0, 0.1, -0.25), 1.2);
+    this.particles.armingPulse(new THREE.Vector3(-1.0, 0.1, -0.25), 1.2, 0xff9a42);
+    this.particles.spark(new THREE.Vector3(0.1, 0.1, -0.75), 0xffd25c, 2.1);
+  }
+
+  private disposeRenderWarmupGroup(): void {
+    const group = this.renderWarmupGroup;
+    if (!group) {
+      return;
+    }
+    group.parent?.remove(group);
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    group.traverse((object) => {
+      const renderable = object as THREE.Object3D & {
+        geometry?: THREE.BufferGeometry;
+        material?: THREE.Material | THREE.Material[];
+      };
+      if (renderable.geometry?.userData.renderWarmupOwned === true) {
+        geometries.add(renderable.geometry);
+      }
+      if (renderable.material) {
+        const objectMaterials = Array.isArray(renderable.material) ? renderable.material : [renderable.material];
+        for (const material of objectMaterials) {
+          if (material.userData.renderWarmupOwned === true) {
+            materials.add(material);
+          }
+        }
+      }
+    });
+    for (const geometry of geometries) {
+      geometry.dispose();
+    }
+    for (const material of materials) {
+      material.dispose();
+    }
+    group.clear();
+    this.renderWarmupGroup = null;
+  }
+
   private aim(pointer: THREE.Vector2): void {
-    if (this.ui.isGameplayBlocked()) {
+    if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
     if (this.runState.phase === "aim") {
@@ -822,11 +2813,20 @@ class Game {
   }
 
   private fire(): void {
-    if (this.ui.isGameplayBlocked()) {
+    if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
+      return;
+    }
+    if (this.renderWarmupState.phase === "warming") {
+      this.status = "Renderer preparing impact shaders. Fire is armed in a moment.";
+      this.audio.playUiReject();
       return;
     }
     if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
       return;
+    }
+    if (perfMonitor.isEnabled()) {
+      perfMonitor.clear();
+      this.perfDiskLogger?.flush("shot-start");
     }
     const projectile = PROJECTILES[this.selectedProjectile];
     const muzzle = this.cannon.getMuzzlePosition();
@@ -841,6 +2841,14 @@ class Game {
     this.cameraRig.shake(projectile.id === "gravity" ? 0.36 : 0.24, 0.48);
     this.runState.beginFlight();
     this.status = `${projectile.name} fired from the high battery.`;
+  }
+
+  private openMainMenu(): void {
+    if (this.options.onMainMenu) {
+      this.options.onMainMenu();
+      return;
+    }
+    this.ui.showHomeScreen();
   }
 
   private finishRun(): void {
@@ -862,6 +2870,7 @@ class Game {
     saveArcadeProgress(this.arcadeProgress);
     this.audio.playScoreCeremony(score.totalScore, recorded.result.stars, recorded.result.completed);
     this.status = `${statusPrefix}${statusPrefix ? " " : ""}${scoreStatus(score, recorded.result)}`;
+    this.perfDiskLogger?.flush("score-finalized");
   }
 
   private detectImpact(active: ActiveProjectile): { point: THREE.Vector3; object: PhysicsObject | null } | null {
@@ -1353,18 +3362,15 @@ class Game {
       if (!this.physics.getObject(source.id) || !this.physics.getObject(target.id)) {
         continue;
       }
-      const impactProfile = chainImpactProfile(source);
       const sourcePosition = vectorFromRapier(source.body.translation());
       const targetPosition = vectorFromRapier(target.body.translation());
       const relativeVelocity = impactVelocityAtTarget(source, target, sourcePosition, targetPosition);
       const relativeSpeedSq = velocityLengthSq(relativeVelocity);
-      const minSpeed = impactProfile?.minSpeed ?? CHAIN_DEBRIS_MIN_SPEED;
-      if (relativeSpeedSq < minSpeed * minSpeed) {
+      if (relativeSpeedSq < CHAIN_DEBRIS_MIN_SPEED * CHAIN_DEBRIS_MIN_SPEED) {
         continue;
       }
       const towardTarget = targetPosition.clone().sub(sourcePosition);
       if (
-        impactProfile?.ignoreApproach !== true &&
         towardTarget.lengthSq() > 0.0001 &&
         relativeVelocity.x * towardTarget.x + relativeVelocity.y * towardTarget.y + relativeVelocity.z * towardTarget.z <= 0
       ) {
@@ -1378,7 +3384,7 @@ class Game {
       this.chainImpactCooldowns.set(pairKey, now + CHAIN_IMPACT_COOLDOWN_MS);
 
       const origin = sourcePosition.clone().lerp(targetPosition, 0.5);
-      const relativeSpeed = adjustedChainImpactSpeed(Math.sqrt(relativeSpeedSq), impactProfile);
+      const relativeSpeed = Math.sqrt(relativeSpeedSq);
       const result = this.destruction.impact(source, target, origin, relativeSpeed);
       const damaged = result.affectedObjects[0];
       if (!damaged?.fractured) {
@@ -1400,72 +3406,7 @@ class Game {
       }
       impactsThisFrame += 1;
     }
-    events.push(...this.processPersistentCrushImpacts(now));
     events.push(...this.processSurfaceImpacts(now));
-    return events;
-  }
-
-  private processPersistentCrushImpacts(now: number): ScoreEvent[] {
-    const events: ScoreEvent[] = [];
-    let impactsThisFrame = 0;
-    for (const sourceSnapshot of this.physics.getDynamicObjects()) {
-      const source = this.physics.getObject(sourceSnapshot.id);
-      if (!source) {
-        continue;
-      }
-      const impactProfile = chainImpactProfile(source);
-      if (!impactProfile?.persistentCrush || source.bodyType !== "dynamic") {
-        continue;
-      }
-      const sourcePosition = vectorFromRapier(source.body.translation());
-      for (const targetSnapshot of this.physics.getBlastCandidates(sourcePosition, impactProfile.reach)) {
-        if (impactsThisFrame >= CRANE_CRUSH_MAX_PER_FRAME) {
-          return events;
-        }
-        const liveSource = this.physics.getObject(source.id);
-        const target = this.physics.getObject(targetSnapshot.id);
-        if (!liveSource || !target) {
-          break;
-        }
-        if (target.id === source.id || !isChainTarget(target) || target.label.includes("Central construction crane")) {
-          continue;
-        }
-        const liveSourcePosition = vectorFromRapier(liveSource.body.translation());
-        const targetPosition = vectorFromRapier(target.body.translation());
-        if (!isWithinCraneCrushEnvelope(liveSource, target, liveSourcePosition, targetPosition)) {
-          continue;
-        }
-        const pairKey = `${liveSource.id}:${target.id}`;
-        if ((this.chainImpactCooldowns.get(pairKey) ?? 0) > now) {
-          continue;
-        }
-        const relativeVelocity = impactVelocityAtTarget(liveSource, target, liveSourcePosition, targetPosition);
-        const relativeSpeed = adjustedChainImpactSpeed(Math.sqrt(velocityLengthSq(relativeVelocity)), impactProfile);
-        this.chainImpactCooldowns.set(pairKey, now + CHAIN_IMPACT_COOLDOWN_MS);
-
-        const origin = liveSourcePosition.clone().lerp(targetPosition, 0.5);
-        const result = this.destruction.impact(liveSource, target, origin, relativeSpeed);
-        const damaged = result.affectedObjects[0];
-        if (!damaged?.fractured) {
-          continue;
-        }
-
-        this.audio.playChainImpact({
-          point: origin,
-          result,
-          relativeSpeed,
-          materialId: damaged.materialId
-        });
-        events.push(...this.applyExplosionResult(result));
-        const points = Math.max(80, Math.round(damaged.weightedDamage * 1.1 + relativeSpeed * 11));
-        events.push(...this.scoreTracker.addChainReaction(points, damaged.position, chainImpactLabel(damaged)));
-        this.particles.spark(origin, 0xffd25c, Math.min(1.6, 0.75 + relativeSpeed * 0.04));
-        if (result.dustColors.length > 0) {
-          this.particles.cityDebrisSpray(origin, result.dustColors, 0.42 + result.fracturedBodies * 0.045);
-        }
-        impactsThisFrame += 1;
-      }
-    }
     return events;
   }
 
@@ -1612,25 +3553,24 @@ class Game {
     return events;
   }
 
-  private reset(): void {
-    if (this.ui.isGameplayBlocked()) {
+  private async reset(): Promise<void> {
+    if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
-    this.loadLevel();
-    this.ui.showPlayScreen();
+    await this.reloadLevelWithLoading("Resetting district");
   }
 
-  private nextLevel(): void {
-    if (this.ui.isGameplayBlocked()) {
+  private async nextLevel(): Promise<void> {
+    if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
     const unlockedCount = Math.max(1, Math.min(TEST_CHAMBERS.length, this.arcadeProgress.highestUnlockedLevel + 1));
     this.levelIndex = (this.levelIndex + 1) % unlockedCount;
-    this.loadLevel();
+    await this.reloadLevelWithLoading("Loading next district");
   }
 
   private selectLevel(index: number): boolean {
-    if (!Number.isFinite(index)) {
+    if (!Number.isFinite(index) || this.levelReloadInProgress) {
       return false;
     }
     const levelIndex = THREE.MathUtils.clamp(Math.trunc(index), 0, TEST_CHAMBERS.length - 1);
@@ -1638,12 +3578,35 @@ class Game {
       return false;
     }
     this.levelIndex = levelIndex;
-    this.loadLevel();
+    void this.reloadLevelWithLoading("Loading district");
     return true;
   }
 
+  private async reloadLevelWithLoading(status: string): Promise<void> {
+    this.levelReloadInProgress = true;
+    void this.renderer.setAnimationLoop(null);
+    const level = this.currentLevel();
+    this.perfDiskLogger?.flush("level-reload-start");
+    this.options.showLoading?.(level.name, status);
+    try {
+      this.loadLevel();
+      this.scheduleRenderWarmup();
+      this.ui.showPlayScreen();
+      this.options.updateLoadingStatus?.("Warming renderer pipelines");
+      await this.waitForRenderWarmup();
+      perfMonitor.clear();
+      this.perfDiskLogger?.flush("level-reload-ready");
+    } finally {
+      this.levelReloadInProgress = false;
+      if (!this.disposed) {
+        this.options.hideLoading?.();
+        this.start();
+      }
+    }
+  }
+
   private clearDebris(): void {
-    if (this.ui.isGameplayBlocked()) {
+    if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
     this.physics.clearDebris();
@@ -1652,7 +3615,7 @@ class Game {
   }
 
   private selectProjectile(id: ProjectileId): void {
-    if (this.ui.isGameplayBlocked()) {
+    if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
     if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
@@ -1775,30 +3738,122 @@ function createAimMarker(material: THREE.MeshBasicMaterial): THREE.Group {
 }
 
 let activeGame: Game | null = null;
+let activeShell: AppShell | null = null;
+let rapierReady: Promise<unknown> | null = null;
+let startToken = 0;
 
 async function boot(): Promise<void> {
-  await RAPIER.init();
-  const settings = loadGameSettings();
-  const rendererBundle = await createDowntownMayhemRenderer(settings);
-  activeGame?.dispose();
-  const game = new Game(settings, rendererBundle);
-  activeGame = game;
-  window.__DOWNTOWN_MAYHEM_DEBUG__ = {
-    getRenderStats: () => game.getRenderStats(),
-    getPerfReport: () => perfMonitor.report(),
-    setPerfEnabled: (enabled) => perfMonitor.setEnabled(enabled),
-    clearPerfReport: () => perfMonitor.clear(),
-    freezeForCapture: () => game.freezeForCapture(),
-    resume: () => game.resume()
-  };
-  game.start();
+  activeShell?.dispose();
+  const shell = new AppShell({
+    startLevel: (levelIndex) => {
+      void startLevelFromShell(shell, levelIndex);
+    }
+  });
+  activeShell = shell;
+  shell.showMenu();
+
   if (import.meta.hot) {
     import.meta.hot.dispose(() => {
+      startToken += 1;
       activeGame?.dispose();
       activeGame = null;
+      activeShell?.dispose();
+      activeShell = null;
       delete window.__DOWNTOWN_MAYHEM_DEBUG__;
     });
   }
+}
+
+async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number): Promise<void> {
+  const progress = loadArcadeProgress(ARCADE_LEVELS);
+  const levelIndex = clampInitialLevelIndex(requestedLevelIndex, progress.highestUnlockedLevel);
+  const level = TEST_CHAMBERS[levelIndex];
+  const token = startToken + 1;
+  startToken = token;
+  activeGame?.dispose();
+  activeGame = null;
+  delete window.__DOWNTOWN_MAYHEM_DEBUG__;
+  shell.showLoading(level.name, "Initializing physics engine");
+
+  try {
+    await ensureRapierReady();
+    if (!isActiveStart(shell, token)) {
+      return;
+    }
+    shell.updateLoadingStatus("Creating GPU renderer");
+    const settings = loadGameSettings();
+    const rendererBundle = await createDowntownMayhemRenderer(settings);
+    if (!isActiveStart(shell, token)) {
+      rendererBundle.renderer.dispose();
+      return;
+    }
+
+    shell.updateLoadingStatus("Building destructible district");
+    const game = new Game(settings, rendererBundle, {
+      initialLevelIndex: levelIndex,
+      onMainMenu: () => returnToMainMenu(shell),
+      showLoading: (levelName, status) => shell.showLoading(levelName, status),
+      updateLoadingStatus: (status) => shell.updateLoadingStatus(status),
+      hideLoading: () => shell.hide()
+    });
+    activeGame = game;
+    installDebugApi(game);
+    shell.updateLoadingStatus("Warming renderer pipelines");
+    await game.waitForRenderWarmup();
+    if (!isActiveStart(shell, token) || activeGame !== game) {
+      game.dispose();
+      return;
+    }
+    game.showPlayScreen();
+    shell.hide();
+    game.start();
+  } catch (error) {
+    console.error(error);
+    if (isActiveStart(shell, token)) {
+      activeGame?.dispose();
+      activeGame = null;
+      delete window.__DOWNTOWN_MAYHEM_DEBUG__;
+      const message = error instanceof Error ? error.message : String(error);
+      shell.showMenu(`Could not start level: ${message}`);
+    }
+  }
+}
+
+function ensureRapierReady(): Promise<unknown> {
+  rapierReady ??= RAPIER.init();
+  return rapierReady;
+}
+
+function isActiveStart(shell: AppShell, token: number): boolean {
+  return activeShell === shell && startToken === token;
+}
+
+function returnToMainMenu(shell: AppShell): void {
+  startToken += 1;
+  const game = activeGame;
+  activeGame = null;
+  game?.dispose();
+  delete window.__DOWNTOWN_MAYHEM_DEBUG__;
+  shell.showMenu();
+}
+
+function installDebugApi(game: Game): void {
+  window.__DOWNTOWN_MAYHEM_DEBUG__ = {
+    getRenderStats: () => game.getRenderStats(),
+    getPerfReport: () => perfMonitor.report(),
+    getRenderWarmupState: () => game.getRenderWarmupState(),
+    setPerfEnabled: (enabled) => perfMonitor.setEnabled(enabled),
+    clearPerfReport: () => perfMonitor.clear(),
+    flushPerfLog: (reason) => game.flushPerfLog(reason),
+    freezeForCapture: () => game.freezeForCapture(),
+    resume: () => game.resume()
+  };
+}
+
+function clampInitialLevelIndex(index: number | undefined, highestUnlockedLevel: number): number {
+  const requested = typeof index === "number" && Number.isFinite(index) ? Math.trunc(index) : 0;
+  const maxUnlockedLevel = Math.max(0, Math.min(TEST_CHAMBERS.length - 1, highestUnlockedLevel));
+  return THREE.MathUtils.clamp(requested, 0, maxUnlockedLevel);
 }
 
 function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
@@ -1858,52 +3913,6 @@ function velocityLengthSq(velocity: { x: number; y: number; z: number }): number
   return velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z;
 }
 
-interface ChainImpactProfile {
-  minSpeed: number;
-  speedScale: number;
-  persistentCrush: boolean;
-  reach: number;
-  ignoreApproach: boolean;
-}
-
-function chainImpactProfile(source: PhysicsObject): ChainImpactProfile | null {
-  if (source.label === "Central construction crane boom assembly") {
-    return {
-      minSpeed: 0.55,
-      speedScale: 4.6,
-      persistentCrush: true,
-      reach: 17.5,
-      ignoreApproach: true
-    };
-  }
-  if (source.label === "Central construction crane mast assembly") {
-    return {
-      minSpeed: 0.5,
-      speedScale: 3.4,
-      persistentCrush: true,
-      reach: 7.5,
-      ignoreApproach: true
-    };
-  }
-  if (source.label === "Central construction crane heavy payload") {
-    return {
-      minSpeed: 0.45,
-      speedScale: 3.8,
-      persistentCrush: true,
-      reach: 3.8,
-      ignoreApproach: true
-    };
-  }
-  return null;
-}
-
-function adjustedChainImpactSpeed(rawSpeed: number, profile: ChainImpactProfile | null): number {
-  if (!profile) {
-    return rawSpeed;
-  }
-  return Math.max(profile.minSpeed * 6.5, rawSpeed * profile.speedScale);
-}
-
 function impactVelocityAtTarget(
   source: PhysicsObject,
   target: PhysicsObject,
@@ -1932,45 +3941,6 @@ function impactVelocityAtTarget(
     y: sourceVelocity.y + tangentialVelocity.y - targetVelocity.y,
     z: sourceVelocity.z + tangentialVelocity.z - targetVelocity.z
   };
-}
-
-function isWithinCraneCrushEnvelope(
-  source: PhysicsObject,
-  target: PhysicsObject,
-  sourcePosition: THREE.Vector3,
-  targetPosition: THREE.Vector3
-): boolean {
-  if (source.label === "Central construction crane heavy payload") {
-    const reach = Math.max(2.35, target.radius + source.radius * 0.65);
-    return targetPosition.distanceToSquared(sourcePosition) <= reach * reach;
-  }
-
-  const rotation = source.body.rotation();
-  const inverseRotation = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w).invert();
-  const localTarget = targetPosition.clone().sub(sourcePosition).applyQuaternion(inverseRotation);
-  const targetPadX = Math.max(0.75, target.dimensions.x * 0.55);
-  const targetPadY = Math.max(0.85, target.dimensions.y * 0.58);
-  const targetPadZ = Math.max(0.72, target.dimensions.z * 0.58);
-
-  if (source.label === "Central construction crane boom assembly") {
-    return (
-      localTarget.x >= -4.45 - targetPadX &&
-      localTarget.x <= 13.4 + targetPadX &&
-      Math.abs(localTarget.y) <= 1.15 + targetPadY &&
-      Math.abs(localTarget.z) <= 0.85 + targetPadZ
-    );
-  }
-
-  if (source.label !== "Central construction crane mast assembly") {
-    return false;
-  }
-
-  return (
-    Math.abs(localTarget.x) <= 0.72 + targetPadX &&
-    localTarget.y >= -source.dimensions.y * 0.5 - targetPadY &&
-    localTarget.y <= source.dimensions.y * 0.5 + targetPadY &&
-    Math.abs(localTarget.z) <= 0.72 + targetPadZ
-  );
 }
 
 function chainCollisionPair(first: PhysicsObject, second: PhysicsObject): { source: PhysicsObject; target: PhysicsObject } | null {
@@ -2579,7 +4549,7 @@ function scoreStatus(score: ScoreBreakdown, result: ArcadeResult): string {
 }
 
 function settingsStatus(settings: GameSettings): string {
-  return `${settings.graphicsQuality}, ${settings.rendererBackend} renderer, ${Math.round(settings.masterVolume * 100)}% volume, ${Math.round(settings.cameraShake * 100)}% shake`;
+  return `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]}, ${RENDERER_BACKEND_LABELS[settings.rendererBackend]} renderer, ${Math.round(settings.masterVolume * 100)}% volume, ${Math.round(settings.cameraShake * 100)}% shake`;
 }
 
 boot().catch((error: unknown) => {

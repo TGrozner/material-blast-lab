@@ -94,11 +94,12 @@ test("shows a clear three-level selector without free play", async ({ page }) =>
   await page.goto("/");
 
   await expect(page).toHaveTitle("Downtown Mayhem");
-  await expect(page.locator(".hud__brand")).toContainText("Downtown Mayhem");
-  await expect(page.locator(".hud")).toHaveAttribute("data-screen", "home");
+  await expect(page.locator(".app-shell__brand")).toContainText("Downtown Mayhem");
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-screen", "menu");
+  await expect(page.locator("canvas")).toHaveCount(0);
   await expect(page.locator("[data-action='start-free']")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Free Play" })).toHaveCount(0);
-  await expect(page.locator("[data-role='home-levels'] [data-action='start-arcade']")).toHaveCount(3);
+  await expect(page.locator("[data-role='shell-levels'] [data-action='start-arcade']")).toHaveCount(3);
   await expect(levelCard(page, "Hazard Junction")).toBeVisible();
   await expect(levelCard(page, "Breaker Yard")).toBeVisible();
   await expect(levelCard(page, "Switchback Crush")).toBeVisible();
@@ -157,6 +158,7 @@ test("boots the auto renderer with a WebGPU or WebGL2 backend", async ({ page })
   );
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto("/");
+  await clickUi(page.locator("[data-action='start-arcade']").first());
   await expectRenderableCanvas(page);
   const stats = await waitForRenderStats(page);
 
@@ -181,7 +183,8 @@ test("loads the baked second and third city levels inside their object budgets",
     await expectRenderableCanvas(page);
     await expectBodyCountWithinBudget(page, BAKED_LEVEL_BODY_BUDGET);
     await clickUi(page.getByRole("button", { name: "Menu" }));
-    await expect(page.locator(".hud")).toHaveAttribute("data-screen", "home");
+    await expect(page.locator(".app-shell")).toHaveAttribute("data-screen", "menu");
+    await expect(page.locator("canvas")).toHaveCount(0);
   }
 
   expect(consoleErrors).toEqual([]);
@@ -231,7 +234,6 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   await page.setViewportSize({ width: 1024, height: 768 });
   await useSmokePerformanceSettings(page);
   await page.goto("/");
-  await expectRenderableCanvas(page);
 
   await openSettings(page);
 
@@ -244,8 +246,8 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
 
   await openSettings(page);
   await expect(page.getByRole("button", { name: "Performance" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("[data-role='master-volume']")).toHaveText("35%");
-  await expect(page.locator("[data-role='camera-shake']")).toHaveText("20%");
+  await expect(page.locator("[data-role='shell-master-volume']")).toHaveText("35%");
+  await expect(page.locator("[data-role='shell-camera-shake']")).toHaveText("20%");
   await expect.poll(() => page.evaluate(readSavedSettings).catch(() => ({}))).toMatchObject({
     graphicsQuality: "performance",
     rendererBackend: "webgl",
@@ -257,16 +259,14 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   });
 
   await page.reload();
-  await expectRenderableCanvas(page);
   await openSettings(page);
   await expect(page.getByRole("button", { name: "Performance" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "WebGL" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("checkbox", { name: "Anti-aliasing" })).not.toBeChecked({ timeout: UI_READY_TIMEOUT_MS });
-  await expect(page.locator("[data-role='master-volume']")).toHaveText("35%");
-  await expect(page.locator("[data-role='camera-shake']")).toHaveText("20%");
+  await expect(page.locator("[data-role='shell-master-volume']")).toHaveText("35%");
+  await expect(page.locator("[data-role='shell-camera-shake']")).toHaveText("20%");
   await expect(page.getByRole("checkbox", { name: "Flash + slow-mo" })).not.toBeChecked({ timeout: UI_READY_TIMEOUT_MS });
   await expect(page.getByRole("checkbox", { name: "FPS counter" })).not.toBeChecked({ timeout: UI_READY_TIMEOUT_MS });
-  await expect(page.evaluate(hasWebglAntialias)).resolves.toBe(false);
 
   if (process.env.CI) {
     expect(consoleErrors).toEqual([]);
@@ -276,6 +276,8 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   await clickUi(page.getByRole("button", { name: "Back" }));
   await clickUi(levelCard(page, "Hazard Junction"));
   await expect(page.locator(".hud")).toHaveAttribute("data-screen", "play");
+  await expectRenderableCanvas(page);
+  await expect(page.evaluate(hasWebglAntialias)).resolves.toBe(false);
   await expect(page.locator(".hud [data-role='fps']")).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });
@@ -318,12 +320,12 @@ async function clickUi(locator: Locator): Promise<void> {
 }
 
 async function openSettings(page: Page): Promise<void> {
-  const hud = page.locator(".hud");
-  await expect(hud).toBeAttached({ timeout: UI_READY_TIMEOUT_MS });
-  if ((await hud.getAttribute("data-screen", { timeout: UI_READY_TIMEOUT_MS })) !== "settings") {
+  const shell = page.locator(".app-shell");
+  await expect(shell).toBeAttached({ timeout: UI_READY_TIMEOUT_MS });
+  if ((await shell.getAttribute("data-screen", { timeout: UI_READY_TIMEOUT_MS })) !== "settings") {
     await clickUi(page.getByRole("button", { name: "Settings" }));
   }
-  await expect(hud).toHaveAttribute("data-screen", "settings", { timeout: UI_READY_TIMEOUT_MS });
+  await expect(shell).toHaveAttribute("data-screen", "settings", { timeout: UI_READY_TIMEOUT_MS });
 }
 
 async function uncheckUi(locator: Locator): Promise<void> {
@@ -354,7 +356,7 @@ function fireButton(page: Page) {
 }
 
 function levelCard(page: Page, name: string): Locator {
-  return page.locator("[data-role='home-levels'] [data-action='start-arcade']").filter({ hasText: name }).first();
+  return page.locator("[data-role='shell-levels'] [data-action='start-arcade']").filter({ hasText: name }).first();
 }
 
 async function expectBodyCountWithinBudget(page: Page, budget = BODY_COUNT_BUDGET): Promise<void> {
