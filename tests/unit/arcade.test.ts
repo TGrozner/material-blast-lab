@@ -152,7 +152,7 @@ describe("Arcade progress storage", () => {
 function score(overrides: Partial<ScoreBreakdown> = {}): ScoreBreakdown {
   return {
     targetDamage: 0,
-    cityChaos: 0,
+    collateralChaos: 0,
     chainReactionBonus: 0,
     remainingDebrisMotion: 0,
     mayhemRating: "SPARK SHOW",

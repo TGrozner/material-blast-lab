@@ -115,7 +115,7 @@ export class GameUI {
         </div>
 
         <div class="hud__goal-grid">
-          <div><span>Score route</span><strong data-role="target-score"></strong></div>
+          <div><span>Mayhem target</span><strong data-role="target-score"></strong></div>
           <div><span>Object damage</span><strong data-role="target-damage"></strong></div>
           <div><span>3-star route</span><strong data-role="three-star"></strong></div>
           <div><span>Bonus</span><strong data-role="bonus-goal"></strong></div>
@@ -142,7 +142,7 @@ export class GameUI {
           <div class="hud__hero-copy">
             <span class="hud__eyebrow">DESTRUCTIBLE OBJECT ARCADE</span>
             <h1>Material Blast Lab</h1>
-            <p>Pick a destructible city route, choose one fictional sci-fi payload, fire once, then chase maximum mayhem through readable object chains.</p>
+            <p>Pick a destructible city route, choose one fictional sci-fi payload, fire once, then chase a high Mayhem Score through readable object chains.</p>
             <div class="hud__hero-actions">
               <button type="button" data-action="start-arcade">Arcade</button>
               <button type="button" data-action="start-free">Free Play</button>
@@ -293,9 +293,9 @@ export class GameUI {
       setText(this.fpsValue, `${state.fps} FPS`);
     }
     setText(this.statusValue, state.status);
-    setText(this.targetScoreValue, `${state.mission.scoreThresholds.twoStar}+`);
-    setText(this.targetDamageValue, String(state.mission.targetDamageThreshold));
-    setText(this.threeStarValue, `${state.mission.scoreThresholds.threeStar}+`);
+    setText(this.targetScoreValue, `${formatScoreNumber(state.mission.scoreThresholds.twoStar)}+`);
+    setText(this.targetDamageValue, formatScoreNumber(state.mission.targetDamageThreshold));
+    setText(this.threeStarValue, `${formatScoreNumber(state.mission.scoreThresholds.threeStar)}+`);
     setText(this.bonusGoalValue, bonusSummary(state.mission));
 
     const blocked = this.isGameplayBlocked();
@@ -376,7 +376,7 @@ export class GameUI {
       <button type="button" class="hud__level-card is-locked" disabled>
         <span>${String(Math.min(state.levelIndex + 2, state.levelCount)).padStart(2, "0")} / CAMPAIGN</span>
         <strong>${state.levelIndex + 1 < state.levelCount ? "Next unlocked mission" : "Campaign loop"}</strong>
-        <em>${state.levelIndex + 1 < state.levelCount ? "Complete the current run" : "Replay for louder mayhem"}</em>
+        <em>${state.levelIndex + 1 < state.levelCount ? "Complete the current run" : "Replay for a higher Mayhem Score"}</em>
       </button>
       <button type="button" class="hud__level-card is-locked" disabled>
         <span>FREE PLAY</span>
@@ -452,6 +452,10 @@ function settingsRenderKey(settings: GameSettings): string {
   ].join("|");
 }
 
+function formatScoreNumber(value: number): string {
+  return Math.round(value).toLocaleString("en-US");
+}
+
 function renderScore(state: UIState): string {
   const score = state.score;
   if (!score) {
@@ -464,22 +468,22 @@ function renderScore(state: UIState): string {
   const goals = [
     {
       label: "Object damage",
-      value: `${score.targetDamage} / ${state.mission.targetDamageThreshold}`,
+      value: `${formatScoreNumber(score.targetDamage)} / ${formatScoreNumber(state.mission.targetDamageThreshold)}`,
       passed: score.targetDamage >= state.mission.targetDamageThreshold
     },
     {
-      label: "Score route",
-      value: `${score.totalScore} / ${state.mission.scoreThresholds.twoStar}`,
+      label: "Mayhem target",
+      value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.twoStar)}`,
       passed: score.totalScore >= state.mission.scoreThresholds.twoStar
     },
     {
       label: "3-star route",
-      value: `${score.totalScore} / ${state.mission.scoreThresholds.threeStar}`,
+      value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.threeStar)}`,
       passed: score.totalScore >= state.mission.scoreThresholds.threeStar
     },
     {
       label: state.mission.bonusObjective,
-      value: `${bonusValue} / ${state.mission.bonusThreshold.minimum}`,
+      value: `${formatScoreNumber(bonusValue)} / ${formatScoreNumber(state.mission.bonusThreshold.minimum)}`,
       passed: result?.bonusCompleted ?? false
     }
   ];
@@ -491,9 +495,9 @@ function renderScore(state: UIState): string {
     </div>
     <div class="hud__stars" aria-label="${stars} stars">${renderStars(stars)}</div>
     <div class="hud__total">
-      <span>Total Score</span>
-      <strong>${score.totalScore}</strong>
-      <em>Best ${state.levelProgress.bestScore}</em>
+      <span>Mayhem Score</span>
+      <strong>${formatScoreNumber(score.totalScore)}</strong>
+      <em>Best ${formatScoreNumber(state.levelProgress.bestScore)}</em>
     </div>
     <div class="hud__objective-list">
       ${goals
@@ -509,10 +513,10 @@ function renderScore(state: UIState): string {
     </div>
     <div class="hud__score-breakdown">
       <div><span>Payload</span><strong>${escapeHtml(score.shotName)}</strong></div>
-      <div><span>City Chaos</span><strong>${score.cityChaos}</strong></div>
-      <div><span>Chain Bonus</span><strong>${score.chainReactionBonus}</strong></div>
+      <div><span>Collateral Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
+      <div><span>Chain Bonus</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
       <div><span>Chain Hits</span><strong>${score.chainReactionCount}${score.maxChainCombo > 1 ? ` / x${score.maxChainCombo}` : ""}</strong></div>
-      <div><span>Motion Bonus</span><strong>${score.remainingDebrisMotion}</strong></div>
+      <div><span>Motion Bonus</span><strong>${formatScoreNumber(score.remainingDebrisMotion)}</strong></div>
     </div>
     <div class="hud__result-actions">
       <button type="button" data-action="result-retry">Retry</button>
@@ -522,7 +526,7 @@ function renderScore(state: UIState): string {
 }
 
 function bonusSummary(mission: ArcadeMissionFields): string {
-  return `${mission.bonusThreshold.minimum}+ ${metricLabel(mission.bonusThreshold.metric)}`;
+  return `${formatScoreNumber(mission.bonusThreshold.minimum)}+ ${metricLabel(mission.bonusThreshold.metric)}`;
 }
 
 function bonusMetricValue(score: ScoreBreakdown, metric: ArcadeMissionFields["bonusThreshold"]["metric"]): number {
@@ -533,8 +537,8 @@ function metricLabel(metric: ArcadeMissionFields["bonusThreshold"]["metric"]): s
   switch (metric) {
     case "targetDamage":
       return "target";
-    case "cityChaos":
-      return "chaos";
+    case "collateralChaos":
+      return "collateral";
     case "chainReactionBonus":
       return "chain";
     case "remainingDebrisMotion":
@@ -1130,7 +1134,13 @@ function installStyles(): void {
     }
 
     .hud__objective-list div {
+      align-items: flex-start;
       border-left: 3px solid #ff7c9f;
+    }
+
+    .hud__objective-list span {
+      min-width: 0;
+      white-space: normal;
     }
 
     .hud__objective-list div.is-passed {
@@ -1140,12 +1150,13 @@ function installStyles(): void {
     .hud__objective-list strong,
     .hud__score-breakdown strong,
     .hud__setting-row strong {
-      min-width: 0;
-      overflow: hidden;
+      flex: 0 0 auto;
+      min-width: max-content;
+      overflow: visible;
       color: #ffffff;
       font-size: 12px;
       text-align: right;
-      text-overflow: ellipsis;
+      text-overflow: clip;
       white-space: nowrap;
     }
 

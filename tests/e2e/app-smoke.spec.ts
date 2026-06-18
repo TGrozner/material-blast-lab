@@ -213,7 +213,7 @@ async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   await expect(scorePanel.locator(".hud__score-breakdown")).toContainText(shotName);
   await expect(scorePanel.locator(".hud__total strong")).toHaveText(/\d+/);
   await expect(scorePanel.getByText("Object damage")).toBeVisible();
-  await expect(scorePanel.getByText("City Chaos")).toBeVisible();
+  await expect(scorePanel.getByText("Collateral Chaos")).toBeVisible();
 }
 
 async function setRange(page: Page, setting: string, value: number): Promise<void> {

@@ -7,7 +7,7 @@ export type ArcadeStars = 0 | 1 | 2 | 3;
 
 export type ArcadeBonusMetric =
   | "targetDamage"
-  | "cityChaos"
+  | "collateralChaos"
   | "chainReactionBonus"
   | "remainingDebrisMotion"
   | "chainReactionCount"
@@ -60,19 +60,19 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
     id: "target-primer",
     title: "Target Primer",
     thresholds: {
-      missionScore: 900,
-      twoStarScore: 1300,
-      threeStarScore: 1800,
-      threeStarBonus: { metric: "targetDamage", minimum: 700 }
+      missionScore: 900_000,
+      twoStarScore: 1_300_000,
+      threeStarScore: 1_800_000,
+      threeStarBonus: { metric: "targetDamage", minimum: 7_000 }
     }
   },
   {
     id: "cascade-lane",
     title: "Cascade Lane",
     thresholds: {
-      missionScore: 1100,
-      twoStarScore: 1650,
-      threeStarScore: 2200,
+      missionScore: 1_100_000,
+      twoStarScore: 1_650_000,
+      threeStarScore: 2_200_000,
       threeStarBonus: { metric: "chainReactionCount", minimum: 3 }
     }
   },
@@ -80,9 +80,9 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
     id: "switchback-crush",
     title: "Switchback Crush",
     thresholds: {
-      missionScore: 1200,
-      twoStarScore: 1600,
-      threeStarScore: 2100,
+      missionScore: 1_200_000,
+      twoStarScore: 1_600_000,
+      threeStarScore: 2_100_000,
       threeStarBonus: { metric: "maxChainCombo", minimum: 2 }
     }
   },
@@ -90,20 +90,20 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
     id: "depot-breaker",
     title: "Depot Breaker",
     thresholds: {
-      missionScore: 1350,
-      twoStarScore: 1850,
-      threeStarScore: 2350,
-      threeStarBonus: { metric: "cityChaos", minimum: 450 }
+      missionScore: 1_350_000,
+      twoStarScore: 1_850_000,
+      threeStarScore: 2_350_000,
+      threeStarBonus: { metric: "collateralChaos", minimum: 4_500 }
     }
   },
   {
     id: "high-score-route",
     title: "High-Score Route",
     thresholds: {
-      missionScore: 1500,
-      twoStarScore: 2100,
-      threeStarScore: 2800,
-      threeStarBonus: { metric: "chainReactionBonus", minimum: 500 }
+      missionScore: 1_500_000,
+      twoStarScore: 2_100_000,
+      threeStarScore: 2_800_000,
+      threeStarBonus: { metric: "chainReactionBonus", minimum: 500_000 }
     }
   }
 ] as const;

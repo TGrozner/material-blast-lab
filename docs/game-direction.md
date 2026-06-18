@@ -96,11 +96,14 @@ No account, server, or purchase flow is needed for this phase.
 
 The current scoring categories are a good base:
 
-- Target Damage
-- City Chaos
+- Mayhem Score is the total run score used for stars, best score, and rating.
+- Collateral Chaos is only the secondary-destruction sub-score from debris,
+  vehicles, relays, loose props, and non-primary breakage.
+- Object Damage
+- Collateral Chaos
 - Chain Bonus
 - Motion Bonus
-- Total Score
+- Mayhem Score
 - Mayhem Rating
 
 Add a star layer on top of the existing score:

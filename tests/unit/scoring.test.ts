@@ -6,7 +6,7 @@ import { PROJECTILES } from "../../src/projectile";
 import { ShotScoreTracker } from "../../src/scoring";
 
 describe("ShotScoreTracker", () => {
-  test("deduplicates mayhem damage while emitting high-value chaos events", () => {
+  test("deduplicates object damage while emitting high-value collateral chaos events", () => {
     const tracker = new ShotScoreTracker();
     tracker.beginShot(PROJECTILES.slug);
 
@@ -21,8 +21,8 @@ describe("ShotScoreTracker", () => {
     );
 
     expect(events.map((event) => [event.kind, event.label, event.points])).toEqual([
-      ["target", "MAYHEM", 110],
-      ["chaos", "CHAOS", 96]
+      ["target", "BREAK", 110],
+      ["chaos", "COLLATERAL", 96]
     ]);
 
     expect(
@@ -63,7 +63,7 @@ describe("ShotScoreTracker", () => {
       combo: 3
     });
     expect(tracker.addChainReaction(100, new THREE.Vector3(0, 0, 0))[0]).toMatchObject({
-      label: "MAYHEM x4",
+      label: "COMBO x4",
       points: 226,
       combo: 4
     });
@@ -92,6 +92,18 @@ describe("ShotScoreTracker", () => {
     ).toMatchObject({
       remainingDebrisMotion: 196,
       totalScore: 196
+    });
+  });
+
+  test("keeps mayhem ratings on the same scale as million-point route targets", () => {
+    const tracker = new ShotScoreTracker();
+    tracker.beginShot(PROJECTILES.slug);
+
+    tracker.addExplosion(result({ materialChaos: 2_500_000 }));
+
+    expect(tracker.finalize(fakePhysics([]))).toMatchObject({
+      totalScore: 2_625_000,
+      mayhemRating: "CITY WRECKER"
     });
   });
 });

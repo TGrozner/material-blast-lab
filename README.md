@@ -1,6 +1,6 @@
 # Material Blast Lab
 
-Material Blast Lab is a compact browser arcade physics toy built with Vite, TypeScript, Three.js, and Rapier3D. The current prototype mode is **Cannon Trial**: choose one fictional sci-fi projectile, aim from behind a city siege cannon, fire once, then watch the destructible city fracture into debris, vehicle wrecks, chain reactions, camera shake, slow motion, and a mayhem score.
+Material Blast Lab is a compact browser arcade physics toy built with Vite, TypeScript, Three.js, and Rapier3D. The current prototype mode is **Cannon Trial**: choose one fictional sci-fi projectile, aim from behind a city siege cannon, fire once, then watch the destructible city fracture into debris, vehicle wrecks, chain reactions, camera shake, slow motion, and a Mayhem Score.
 
 This is not a realistic explosive simulator and does not model real devices or weapons tactics. The game is a fictional arcade object-destruction toy focused on readable chains and score mastery.
 
@@ -83,13 +83,13 @@ DIST_DIR="$AUDIT_DIST" npm run harden:dist
 
 ## Score
 
-The score appears after the shot settles for a few seconds:
+The score appears after the shot settles for a few seconds. Mayhem Score is the total run score and star-route target; Collateral Chaos is the secondary-destruction sub-score from debris, relays, vehicles, and loose objects.
 
-- Structure Damage
-- Material Chaos
+- Object Damage
+- Collateral Chaos
 - Chain Reaction Bonus
 - Remaining Debris Motion
-- Total Score
+- Mayhem Rating
 
 ## Architecture
 

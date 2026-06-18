@@ -15,7 +15,7 @@ export interface ScoreEvent {
 
 export interface ScoreBreakdown {
   targetDamage: number;
-  cityChaos: number;
+  collateralChaos: number;
   chainReactionBonus: number;
   remainingDebrisMotion: number;
   mayhemRating: string;
@@ -27,7 +27,7 @@ export interface ScoreBreakdown {
 
 export class ShotScoreTracker {
   private targetDamage = 0;
-  private cityChaos = 0;
+  private collateralChaos = 0;
   private chainReactionBonus = 0;
   private currentProjectile: ProjectileDefinition | null = null;
   private chainReactionCount = 0;
@@ -36,7 +36,7 @@ export class ShotScoreTracker {
 
   beginShot(projectile: ProjectileDefinition): void {
     this.targetDamage = 0;
-    this.cityChaos = 0;
+    this.collateralChaos = 0;
     this.chainReactionBonus = 0;
     this.chainReactionCount = 0;
     this.maxChainCombo = 0;
@@ -48,13 +48,13 @@ export class ShotScoreTracker {
     const events: ScoreEvent[] = [];
     const target = this.dedupPositive(result);
     this.targetDamage += target.points;
-    this.cityChaos += result.materialChaos;
+    this.collateralChaos += result.materialChaos;
     events.push(...target.events);
 
     if (result.materialChaos >= 95) {
       events.push({
         kind: "chaos",
-        label: "CHAOS",
+        label: "COLLATERAL",
         points: Math.round(result.materialChaos),
         position: result.origin.clone().add(new THREE.Vector3(0, 0.72, 0))
       });
@@ -98,13 +98,13 @@ export class ShotScoreTracker {
     const modifier = projectile?.scoreModifier ?? 1;
     const raw =
       this.targetDamage +
-      this.cityChaos +
+      this.collateralChaos +
       this.chainReactionBonus +
       remainingDebrisMotion;
     const totalScore = Math.max(0, Math.round(raw * modifier));
     return {
       targetDamage: Math.round(this.targetDamage * modifier),
-      cityChaos: Math.round(this.cityChaos * modifier),
+      collateralChaos: Math.round(this.collateralChaos * modifier),
       chainReactionBonus: Math.round(this.chainReactionBonus * modifier),
       remainingDebrisMotion: Math.round(remainingDebrisMotion * modifier),
       mayhemRating: mayhemRating(totalScore),
@@ -127,7 +127,7 @@ export class ShotScoreTracker {
       if (next > previous) {
         const delta = next - previous;
         points += delta;
-        events.push(scoreEventFromObject("target", "MAYHEM", delta, object));
+        events.push(scoreEventFromObject("target", "BREAK", delta, object));
         this.scoredObjects.set(object.id, next);
       }
     }
@@ -150,7 +150,7 @@ function sortScoreEvents(a: ScoreEvent, b: ScoreEvent): number {
 
 function chainLabel(combo: number): string {
   if (combo >= 4) {
-    return `MAYHEM x${combo}`;
+    return `COMBO x${combo}`;
   }
   if (combo >= 3) {
     return `CASCADE x${combo}`;
@@ -162,14 +162,14 @@ function chainLabel(combo: number): string {
 }
 
 function mayhemRating(totalScore: number): string {
-  if (totalScore >= 3600) {
+  if (totalScore >= 3_600_000) {
     return "MAXIMUM MAYHEM";
   }
-  if (totalScore >= 2600) {
+  if (totalScore >= 2_600_000) {
     return "CITY WRECKER";
   }
-  if (totalScore >= 1600) {
-    return "CHAOS ROUTE";
+  if (totalScore >= 1_600_000) {
+    return "WRECK ROUTE";
   }
   return "SPARK SHOW";
 }

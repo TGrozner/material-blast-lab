@@ -54,7 +54,7 @@ export const TEST_CHAMBERS: TestChamber[] = [
     id: "hazard-junction",
     name: "Hazard Junction",
     description: "A dense hazard city packed below the high siege battery.",
-    objective: "Cause maximum mayhem across the orange hazard core, transformer relays, vehicles, cargo, and power lines.",
+    objective: "Build a maximum Mayhem Score across the orange hazard core, transformer relays, vehicles, cargo, and power lines.",
     chaosBrief: "Everything is a target. Every break, bounce, relay detonation, and moving wreck adds to the route.",
     cannonPosition: new THREE.Vector3(0, 6.08, 24.55),
     defaultAimPoint: new THREE.Vector3(0, 0.16, -3.4),
@@ -64,11 +64,11 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 1,
       targetZone: "hazard-core",
       scoreThresholds: {
-        oneStar: 2200,
-        twoStar: 3000,
-        threeStar: 3900
+        oneStar: 2_200_000,
+        twoStar: 3_000_000,
+        threeStar: 3_900_000
       },
-      targetDamageThreshold: 1300,
+      targetDamageThreshold: 10_000,
       bonusThreshold: { metric: "chainReactionCount", minimum: 2 },
       bonusObjective: "Start at least two secondary hits through the foundry, transformer relays, cargo, or street grid.",
       briefingHint: "The densest score is no longer a clean route: break the core, kick vehicles into relays, and let power-grid debris travel."
@@ -101,14 +101,14 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 2,
       targetZone: "breaker-spine",
       scoreThresholds: {
-        oneStar: 900,
-        twoStar: 1250,
-        threeStar: 1650
+        oneStar: 900_000,
+        twoStar: 1_250_000,
+        threeStar: 1_650_000
       },
-      targetDamageThreshold: 650,
-      bonusThreshold: { metric: "cityChaos", minimum: 380 },
-      bonusObjective: "Rack up 380+ city chaos from relay booths, cargo, and vehicle debris.",
-      briefingHint: "A straight hit starts the score; angled debris through the relays is where the mayhem comes from."
+      targetDamageThreshold: 6_500,
+      bonusThreshold: { metric: "collateralChaos", minimum: 3_800 },
+      bonusObjective: "Rack up 3,800+ collateral chaos from relay booths, cargo, and vehicle debris.",
+      briefingHint: "A straight hit starts Object Damage; angled debris through the relays is where Collateral Chaos climbs."
     },
     setup: (context) => setupCompactChamber(context, BREAKER_YARD_CHAMBER)
   },
@@ -126,13 +126,13 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 3,
       targetZone: "glass-depot",
       scoreThresholds: {
-        oneStar: 1050,
-        twoStar: 1500,
-        threeStar: 2050
+        oneStar: 1_050_000,
+        twoStar: 1_500_000,
+        threeStar: 2_050_000
       },
-      targetDamageThreshold: 720,
-      bonusThreshold: { metric: "cityChaos", minimum: 520 },
-      bonusObjective: "Push 520+ city chaos from crates, archive glass, and relay chains before scoring settles.",
+      targetDamageThreshold: 7_200,
+      bonusThreshold: { metric: "collateralChaos", minimum: 5_200 },
+      bonusObjective: "Push 5,200+ collateral chaos from crates, archive glass, and relay chains before scoring settles.",
       briefingHint: "Foam is the steering wheel; archive glass and service crates are the multiplier."
     },
     setup: (context) => setupCompactChamber(context, SWITCHBACK_CRUSH_CHAMBER)
@@ -151,11 +151,11 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 4,
       targetZone: "depot-pair",
       scoreThresholds: {
-        oneStar: 1150,
-        twoStar: 1650,
-        threeStar: 2250
+        oneStar: 1_150_000,
+        twoStar: 1_650_000,
+        threeStar: 2_250_000
       },
-      targetDamageThreshold: 780,
+      targetDamageThreshold: 7_800,
       bonusThreshold: { metric: "maxChainCombo", minimum: 3 },
       bonusObjective: "Reach a x3 chain combo through depot, side pods, and market windbreak.",
       briefingHint: "Aim for one core and let the crosswind lane throw wreckage into everything around it."
