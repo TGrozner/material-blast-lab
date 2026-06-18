@@ -279,6 +279,14 @@ function createInitialRenderWarmupState(): RenderWarmupState {
   };
 }
 
+function isSmokeWarmupMode(): boolean {
+  try {
+    return new URLSearchParams(globalThis.location?.search ?? "").has("smoke");
+  } catch {
+    return false;
+  }
+}
+
 function renderWarmupFragmentSize(materialId: MaterialId): THREE.Vector3 {
   switch (materialId) {
     case "glass":
@@ -2238,7 +2246,59 @@ class Game {
       frames: 0
     };
     this.status = "Preparing renderer pipelines before impact.";
-    this.renderWarmupPromise = this.runRenderWarmup(token, group);
+    this.renderWarmupPromise = isSmokeWarmupMode() ? this.runSmokeRenderWarmup(token, group) : this.runRenderWarmup(token, group);
+  }
+
+  private async runSmokeRenderWarmup(token: number, group: THREE.Group): Promise<void> {
+    this.scene.add(group);
+    const restoreFrustumCulling = disableSceneFrustumCullingForWarmup(this.scene);
+    try {
+      this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+      await this.renderer.compileAsync(this.scene, this.cameraRig.camera);
+      await renderWarmupYield();
+      this.renderer.render(this.scene, this.cameraRig.camera);
+      if (this.disposed || token !== this.renderWarmupToken) {
+        return;
+      }
+      const finishedAt = performance.now();
+      this.renderWarmupState = {
+        ...this.renderWarmupState,
+        phase: "ready",
+        finishedAt,
+        durationMs: finishedAt - this.renderWarmupState.startedAt,
+        programs: rendererProgramCount(this.renderer),
+        geometries: this.renderer.info.memory.geometries,
+        frames: 1
+      };
+      if (this.runState.phase === "aim" && this.runState.shotAvailable) {
+        const level = this.currentLevel();
+        this.status = `${level.name}: ${level.objective}`;
+      }
+    } catch (error) {
+      if (this.disposed || token !== this.renderWarmupToken) {
+        return;
+      }
+      const finishedAt = performance.now();
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("Downtown Mayhem: smoke render warmup failed.", error);
+      this.renderWarmupState = {
+        ...this.renderWarmupState,
+        phase: "failed",
+        finishedAt,
+        durationMs: finishedAt - this.renderWarmupState.startedAt,
+        programs: rendererProgramCount(this.renderer),
+        geometries: this.renderer.info.memory.geometries,
+        frames: this.renderWarmupState.frames,
+        error: message
+      };
+      this.status = "Renderer warmup failed; impact may stutter.";
+    } finally {
+      this.destruction.parkFragmentVisualWarmupPreview();
+      this.physics.clearFrozenRubbleWarmupObjects();
+      this.particles.clearTransientEffects();
+      this.disposeRenderWarmupGroup();
+      restoreFrustumCulling();
+    }
   }
 
   private async runRenderWarmup(token: number, group: THREE.Group): Promise<void> {

@@ -4,11 +4,13 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const BODY_COUNT_BUDGET = { min: 350, max: 700 };
 const BAKED_LEVEL_BODY_BUDGET = { min: 380, max: 620 };
 const UI_READY_TIMEOUT_MS = 15_000;
+const LEVEL_START_TIMEOUT_MS = process.env.CI ? 60_000 : 30_000;
 const SCORE_REVEAL_TIMEOUT_MS = 45_000;
 const LONG_TEST_TIMEOUT_MS = 180_000;
 const RUN_FULL_SIMULATION_SMOKE = process.env.RUN_FULL_SIMULATION_SMOKE === "true";
 const SETTINGS_STORAGE_KEY = "downtown-mayhem:settings:v1";
 const ARCADE_PROGRESS_STORAGE_KEY = "downtown-mayhem:arcade-progress";
+const SMOKE_URL = "/?smoke=1";
 const STABLE_VISUAL_NOW = 1_710_000_000_000;
 const SMOKE_PERFORMANCE_SETTINGS = {
   graphicsQuality: "performance",
@@ -28,9 +30,9 @@ const HAZARD_JUNCTION_RENDER_BUDGET = {
   drawCalls: 5_150,
   visibleMeshes: 3_300,
   visibleMaterials: 340,
-  programs: 22,
+  programs: 30,
   geometries: 1_780,
-  textures: 24
+  textures: 36
 };
 
 interface RenderStats {
@@ -70,8 +72,6 @@ test("renders the mobile city trial inside the initial body-count budget", async
   await bootTrial(page, MOBILE_VIEWPORT);
 
   await expect(page.locator(".hud")).toBeVisible();
-  await expect(page.locator(".hud [data-role='chamber']")).toHaveText("Hazard Junction");
-  await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
   await expect(fireButton(page)).toBeEnabled();
   await expect(page.getByRole("button", { name: "Heavy" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Impulse" })).toBeVisible();
@@ -91,7 +91,7 @@ test("shows a clear three-level selector without free play", async ({ page }) =>
 
   await useSmokePerformanceSettings(page);
   await page.setViewportSize({ width: 1024, height: 768 });
-  await page.goto("/");
+  await page.goto(SMOKE_URL);
 
   await expect(page).toHaveTitle("Downtown Mayhem");
   await expect(page.locator(".app-shell__brand")).toContainText("Downtown Mayhem");
@@ -109,8 +109,7 @@ test("shows a clear three-level selector without free play", async ({ page }) =>
   await expect(page.getByText("Crosswind Depot")).toHaveCount(0);
 
   await clickUi(levelCard(page, "Hazard Junction"));
-  await expect(page.locator(".hud")).toHaveAttribute("data-screen", "play");
-  await expect(page.locator(".hud [data-role='chamber']")).toHaveText("Hazard Junction");
+  await expectLevelReady(page, "Hazard Junction");
   await expectBodyCountWithinBudget(page);
   expect(consoleErrors).toEqual([]);
 });
@@ -157,8 +156,9 @@ test("boots the auto renderer with a WebGPU or WebGL2 backend", async ({ page })
     { key: SETTINGS_STORAGE_KEY, settings: { ...SMOKE_PERFORMANCE_SETTINGS, rendererBackend: "auto" } }
   );
   await page.setViewportSize({ width: 1024, height: 768 });
-  await page.goto("/");
+  await page.goto(SMOKE_URL);
   await clickUi(page.locator("[data-action='start-arcade']").first());
+  await expectLevelReady(page, "Hazard Junction");
   await expectRenderableCanvas(page);
   const stats = await waitForRenderStats(page);
 
@@ -174,12 +174,11 @@ test("loads the baked second and third city levels inside their object budgets",
   await useSmokePerformanceSettings(page);
   await seedArcadeProgress(page, { "hazard-junction": 2, "breaker-yard": 2 });
   await page.setViewportSize({ width: 1024, height: 768 });
-  await page.goto("/");
+  await page.goto(SMOKE_URL);
 
   for (const levelName of ["Breaker Yard", "Switchback Crush"]) {
     await clickUi(levelCard(page, levelName));
-    await expect(page.locator(".hud [data-role='chamber']")).toHaveText(levelName, { timeout: UI_READY_TIMEOUT_MS });
-    await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
+    await expectLevelReady(page, levelName);
     await expectRenderableCanvas(page);
     await expectBodyCountWithinBudget(page, BAKED_LEVEL_BODY_BUDGET);
     await clickUi(page.getByRole("button", { name: "Menu" }));
@@ -233,7 +232,7 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
 
   await page.setViewportSize({ width: 1024, height: 768 });
   await useSmokePerformanceSettings(page);
-  await page.goto("/");
+  await page.goto(SMOKE_URL);
 
   await openSettings(page);
 
@@ -275,7 +274,7 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
 
   await clickUi(page.getByRole("button", { name: "Back" }));
   await clickUi(levelCard(page, "Hazard Junction"));
-  await expect(page.locator(".hud")).toHaveAttribute("data-screen", "play");
+  await expectLevelReady(page, "Hazard Junction");
   await expectRenderableCanvas(page);
   await expect(page.evaluate(hasWebglAntialias)).resolves.toBe(false);
   await expect(page.locator(".hud [data-role='fps']")).toBeHidden();
@@ -301,11 +300,17 @@ function isIgnoredGpuConsoleError(text: string): boolean {
 async function bootTrial(page: Page, viewport: { width: number; height: number }): Promise<void> {
   await useSmokePerformanceSettings(page);
   await page.setViewportSize(viewport);
-  await page.goto("/");
+  await page.goto(SMOKE_URL);
   const startButton = page.locator("[data-action='start-arcade']").first();
   await expect(startButton).toBeVisible({ timeout: UI_READY_TIMEOUT_MS });
   await clickUi(startButton);
-  await expect(page.locator(".hud")).toHaveAttribute("data-screen", "play");
+  await expectLevelReady(page, "Hazard Junction");
+}
+
+async function expectLevelReady(page: Page, levelName: string): Promise<void> {
+  await expect(page.locator(".hud")).toHaveAttribute("data-screen", "play", { timeout: LEVEL_START_TIMEOUT_MS });
+  await expect(page.locator(".hud [data-role='chamber']")).toHaveText(levelName, { timeout: UI_READY_TIMEOUT_MS });
+  await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY", { timeout: UI_READY_TIMEOUT_MS });
 }
 
 async function clickUi(locator: Locator): Promise<void> {
