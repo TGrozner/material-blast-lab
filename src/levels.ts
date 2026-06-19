@@ -60,7 +60,7 @@ export const TEST_CHAMBERS: TestChamber[] = [
     id: "hazard-junction",
     name: "Hazard Junction",
     description: "A dense hazard city packed below the high siege battery.",
-    objective: "Pick a chain starter: energy plant, gas station, substation, propane depot, parking silo, or tower collapse route.",
+    objective: "Pick a chain starter: energy plant, gas station, substation, propane depot, parking silo, elevated metro, or skyneedle collapse route.",
     chaosBrief: "Recognizable hazard buildings hit harder, but only a few can cascade per wave.",
     cannonPosition: new THREE.Vector3(0, 6.08, 24.55),
     defaultAimPoint: new THREE.Vector3(-1.72, 0.16, -3.35),
@@ -76,8 +76,8 @@ export const TEST_CHAMBERS: TestChamber[] = [
       },
       targetDamageThreshold: 18_000,
       bonusThreshold: { metric: "chainReactionCount", minimum: 320 },
-      bonusObjective: "Sustain 320+ secondary hits from the energy plant, gas line, substation, propane depot, parking silo, vehicle grid, or tower debris.",
-      briefingHint: "Aim choice matters: gas is wide and low, the substation arcs outward, propane pops in clusters, and the parking silo feeds vehicle chaos."
+      bonusObjective: "Sustain 320+ secondary hits from the energy plant, gas line, substation, propane depot, parking silo, metro line, vehicle grid, or skyneedle debris.",
+      briefingHint: "Aim choice matters: gas is wide and low, the metro carries moving mass, the skyneedle can shed vertical debris, and the parking silo feeds vehicle chaos."
     },
     setup: (context) => {
       addCityGround(context);
@@ -280,6 +280,14 @@ const INNER_BELT_TRAFFIC_LOOP: Array<[number, number]> = [
   [EAST_SOUTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z],
   [WEST_NORTHBOUND_LANE_X, SERVICE_WESTBOUND_LANE_Z]
 ];
+const ELEVATED_METRO_LOOP: Array<[number, number]> = [
+  [-13.78, -8.92],
+  [13.78, -8.92],
+  [13.78, 9.86],
+  [-13.78, 9.86]
+];
+const ELEVATED_METRO_DECK_Y = 3.08;
+const ELEVATED_METRO_TRAIN_Y = 3.58;
 
 function trafficLoop(points: Array<[number, number]>, speed: number, segmentIndex = 0): TrafficRoute {
   const normalizedSegmentIndex = normalizeLoopSegmentIndex(segmentIndex, points.length);
@@ -1632,6 +1640,8 @@ function spawnMayhemSpecialSetpieces(context: LevelContext): void {
   spawnElectricSubstation(context);
   spawnPropaneDepot(context);
   spawnParkingSilo(context);
+  spawnElevatedMetro(context);
+  spawnCentralSkyneedle(context);
 }
 
 function spawnElectricSubstation(context: LevelContext): void {
@@ -1775,6 +1785,366 @@ function spawnParkingSilo(context: LevelContext): void {
       hazardKind: "combustible"
     });
   }
+}
+
+function spawnElevatedMetro(context: LevelContext): void {
+  const deckMaterial = context.materials.get("concrete");
+  const pierMaterial = context.materials.get("concrete");
+  const deckRenderMaterial = sharedLevelMaterial(
+    "elevated-metro-deck",
+    () => new THREE.MeshStandardMaterial({ color: 0x687781, roughness: 0.78, metalness: 0.08, map: materialAtlasTile(2) })
+  );
+  const pierRenderMaterial = sharedLevelMaterial(
+    "elevated-metro-pier",
+    () => new THREE.MeshStandardMaterial({ color: 0x4c5962, roughness: 0.82, metalness: 0.06, map: materialAtlasTile(3) })
+  );
+  const supportGroupId = "elevated-metro-support";
+  const zoneId = "elevated-metro transit-spine moving-vehicles";
+  const y = ELEVATED_METRO_DECK_Y;
+  const routeMinX = ELEVATED_METRO_LOOP[0][0];
+  const routeMaxX = ELEVATED_METRO_LOOP[1][0];
+  const routeNorthZ = ELEVATED_METRO_LOOP[0][1];
+  const routeSouthZ = ELEVATED_METRO_LOOP[2][1];
+  const centerZ = (routeNorthZ + routeSouthZ) * 0.5;
+  const horizontalLength = routeMaxX - routeMinX + 0.84;
+  const verticalLength = routeSouthZ - routeNorthZ + 0.84;
+
+  for (const spec of [
+    { position: new THREE.Vector3(0, y, routeNorthZ), size: new THREE.Vector3(horizontalLength, 0.26, 0.78), rotationY: 0 },
+    { position: new THREE.Vector3(0, y, routeSouthZ), size: new THREE.Vector3(horizontalLength, 0.26, 0.78), rotationY: 0 },
+    { position: new THREE.Vector3(routeMinX, y, centerZ), size: new THREE.Vector3(0.78, 0.26, verticalLength), rotationY: 0 },
+    { position: new THREE.Vector3(routeMaxX, y, centerZ), size: new THREE.Vector3(0.78, 0.26, verticalLength), rotationY: 0 }
+  ] as const) {
+    const deck = context.physics.addDynamicBox({
+      label: "Elevated metro guideway",
+      material: deckMaterial,
+      renderMaterial: deckRenderMaterial,
+      position: spec.position,
+      size: spec.size,
+      rotation: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, spec.rotationY, 0)),
+      category: "structure",
+      scoreRole: "target",
+      zoneId,
+      canFracture: true,
+      destructible: true,
+      bodyType: "fixed",
+      chainSource: true,
+      supportGroupId,
+      supportReleaseMassScale: 1.45,
+      supportReleaseImpulseScale: 0.72,
+      supportReleaseTorqueScale: 0.7,
+      scoreValue: 410
+    });
+    deck.mesh.userData.disposeMaterial = false;
+    addMetroRailDecoration(context, spec.position, spec.size, spec.rotationY);
+  }
+
+  for (const z of [routeNorthZ, routeSouthZ]) {
+    for (const x of [-12.45, -4.15, 4.15, 12.45]) {
+      addMetroSupportPier(context, new THREE.Vector3(x, 1.54, z), pierMaterial, pierRenderMaterial, zoneId, supportGroupId);
+    }
+  }
+  for (const x of [routeMinX, routeMaxX]) {
+    for (const z of [-5.1, 1.7, 8.45]) {
+      addMetroSupportPier(context, new THREE.Vector3(x, 1.54, z), pierMaterial, pierRenderMaterial, zoneId, supportGroupId);
+    }
+  }
+
+  for (const [label, segmentProgress, accent, scoreValue] of [
+    ["Elevated metro bus lead car", 0.22, 0x8eeaff, 180],
+    ["Elevated metro bus middle car", 0.305, 0xf2f7ff, 160],
+    ["Elevated metro bus tail car", 0.39, 0x7bdcff, 170]
+  ] as const) {
+    addRoutedCityVehicle(
+      context,
+      label,
+      ELEVATED_METRO_LOOP,
+      0.82,
+      0,
+      segmentProgress,
+      ELEVATED_METRO_TRAIN_Y,
+      new THREE.Vector3(0.7, 0.56, 2.38),
+      accent,
+      {
+        zoneId,
+        scoreValue,
+        hazardKind: "electric"
+      }
+    );
+  }
+}
+
+function addMetroSupportPier(
+  context: LevelContext,
+  position: THREE.Vector3,
+  material: ReturnType<MaterialCatalog["get"]>,
+  renderMaterial: THREE.Material,
+  zoneId: string,
+  supportGroupId: string
+): void {
+  const size = new THREE.Vector3(0.32, 2.98, 0.32);
+  const pier = context.physics.addDynamicBox({
+    label: "Elevated metro support pier",
+    material,
+    renderMaterial,
+    position,
+    size,
+    category: "structure",
+    scoreRole: "target",
+    zoneId,
+    canFracture: true,
+    destructible: true,
+    bodyType: "fixed",
+    chainSource: true,
+    supportGroupId,
+    supportReleaseRadius: 7.2,
+    supportReleaseHeight: 4.5,
+    supportReleaseFallDirection: new THREE.Vector3(position.x >= 0 ? 0.45 : -0.45, 0, 1),
+    supportReleaseImpulseScale: 0.66,
+    supportReleaseTorqueScale: 0.58,
+    supportReleaseMassScale: 1.2,
+    scoreValue: 115
+  });
+  pier.mesh.userData.disposeMaterial = false;
+  decorateHazardIndicator(pier.mesh, { size, kind: "electric" });
+}
+
+function addMetroRailDecoration(context: LevelContext, position: THREE.Vector3, deckSize: THREE.Vector3, rotationY: number): void {
+  const railMaterial = sharedLevelMaterial(
+    "elevated-metro-rail",
+    () => new THREE.MeshStandardMaterial({ color: 0xa8c8cf, roughness: 0.38, metalness: 0.72, map: materialAtlasTile(10) })
+  );
+  const sleeperMaterial = sharedLevelMaterial(
+    "elevated-metro-sleepers",
+    () => new THREE.MeshStandardMaterial({ color: 0x242b31, roughness: 0.64, metalness: 0.26, map: materialAtlasTile(1) })
+  );
+  const group = new THREE.Group();
+  group.name = "elevated metro rail detail";
+  group.position.copy(position);
+  group.rotation.y = rotationY;
+
+  const isEastWest = deckSize.x >= deckSize.z;
+  const railLength = isEastWest ? deckSize.x * 0.96 : deckSize.z * 0.96;
+  const railThickness = 0.055;
+  const railGauge = 0.28;
+  for (const offset of [-railGauge, railGauge]) {
+    const rail = new THREE.Mesh(
+      isEastWest
+        ? sharedLevelBoxGeometry(railLength, railThickness, railThickness)
+        : sharedLevelBoxGeometry(railThickness, railThickness, railLength),
+      railMaterial
+    );
+    rail.name = "elevated metro rail";
+    rail.position.set(isEastWest ? 0 : offset, deckSize.y * 0.74, isEastWest ? offset : 0);
+    rail.castShadow = true;
+    rail.receiveShadow = false;
+    rail.userData.disposeMaterial = false;
+    group.add(rail);
+  }
+
+  const sleeperCount = Math.min(14, Math.max(6, Math.floor(railLength / 2.1)));
+  for (let index = 0; index < sleeperCount; index += 1) {
+    const t = sleeperCount === 1 ? 0.5 : index / (sleeperCount - 1);
+    const along = THREE.MathUtils.lerp(-railLength * 0.44, railLength * 0.44, t);
+    const sleeper = new THREE.Mesh(
+      isEastWest ? sharedLevelBoxGeometry(0.09, 0.045, 0.68) : sharedLevelBoxGeometry(0.68, 0.045, 0.09),
+      sleeperMaterial
+    );
+    sleeper.name = "elevated metro sleeper";
+    sleeper.position.set(isEastWest ? along : 0, deckSize.y * 0.68, isEastWest ? 0 : along);
+    sleeper.userData.disposeMaterial = false;
+    group.add(sleeper);
+  }
+
+  context.addDecoration(group);
+}
+
+function spawnCentralSkyneedle(context: LevelContext): void {
+  const supportGroupId = "central-skyneedle-collapse";
+  const zoneId = "central-skyneedle hazard-core tower-collapse";
+  const base = new THREE.Vector3(5.82, 0, -4.18);
+  const rotationY = -Math.PI * 0.055;
+  const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0));
+  const fallDirection = new THREE.Vector3(-0.58, 0, 0.82);
+  const metalMaterial = context.materials.get("metal");
+  const glassMaterial = context.materials.get("glass");
+  const concreteMaterial = context.materials.get("concrete");
+  const towerGlassRenderMaterial = sharedLevelMaterial(
+    "central-skyneedle-glass",
+    () =>
+      new THREE.MeshPhysicalMaterial({
+        color: 0x8ed8e8,
+        transparent: true,
+        opacity: 0.54,
+        roughness: 0.16,
+        metalness: 0.08,
+        depthWrite: false,
+        emissive: 0x123948,
+        emissiveIntensity: 0.2,
+        map: materialAtlasTile(8)
+      })
+  );
+  const towerMetalRenderMaterial = sharedLevelMaterial(
+    "central-skyneedle-metal",
+    () => new THREE.MeshStandardMaterial({ color: 0x90a7ad, roughness: 0.38, metalness: 0.58, map: materialAtlasTile(10) })
+  );
+  const podium = context.physics.addDynamicBox({
+    label: "Central skyneedle podium",
+    material: concreteMaterial,
+    renderMaterial: roleRenderMaterial(context.materials, "concrete", "target"),
+    position: new THREE.Vector3(base.x, 0.36, base.z),
+    size: new THREE.Vector3(2.08, 0.72, 1.78),
+    rotation,
+    category: "structure",
+    scoreRole: "target",
+    zoneId,
+    canFracture: true,
+    destructible: true,
+    bodyType: "fixed",
+    chainSource: true,
+    supportGroupId,
+    supportReleaseRadius: 4.2,
+    supportReleaseHeight: 13.8,
+    supportReleaseFallDirection: fallDirection,
+    supportReleaseImpulseScale: 1.05,
+    supportReleaseTorqueScale: 1.08,
+    supportReleaseMassScale: 1.35,
+    scoreValue: 760
+  });
+  decorateHazardIndicator(podium.mesh, { size: podium.dimensions, kind: "explosive" });
+  podium.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(podium.mesh.material);
+
+  for (const [offsetX, offsetZ, sizeX, sizeZ, localRotationY] of [
+    [-0.7, 0.1, 0.72, 1.42, 0],
+    [0.58, -0.38, 0.62, 1.08, Math.PI * 0.5],
+    [0.28, 0.6, 0.58, 1.02, Math.PI * 0.5]
+  ] as const) {
+    const local = new THREE.Vector3(offsetX, 0, offsetZ).applyQuaternion(rotation);
+    const buttressRotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY + localRotationY, 0));
+    const size = new THREE.Vector3(sizeX, 2.35, sizeZ);
+    const buttress = context.physics.addDynamicBox({
+      label: "Central skyneedle buttress",
+      material: concreteMaterial,
+      renderMaterial: roleRenderMaterial(context.materials, "concrete", "target"),
+      position: new THREE.Vector3(base.x + local.x, 1.54, base.z + local.z),
+      size,
+      rotation: buttressRotation,
+      category: "structure",
+      scoreRole: "target",
+      zoneId,
+      canFracture: false,
+      destructible: true,
+      bodyType: "dynamic",
+      chainSource: true,
+      supportGroupId,
+      supportReleaseRadius: 4.2,
+      supportReleaseHeight: 13.8,
+      supportReleaseFallDirection: fallDirection,
+      supportReleaseImpulseScale: 0.95,
+      supportReleaseTorqueScale: 0.98,
+      supportReleaseMassScale: 1.25,
+      sleeping: true,
+      linearDamping: 0.74,
+      angularDamping: 1.16,
+      additionalMass: size.x * size.y * size.z * 6.5,
+      scoreValue: 520
+    });
+    decorateBuildingCell(buttress.mesh, {
+      size,
+      materialId: "concrete",
+      scoreRole: "target",
+      style: "civic",
+      floor: 1,
+      column: 0,
+      floors: 3,
+      columns: 1
+    });
+    buttress.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(buttress.mesh.material);
+  }
+
+  let yBase = 2.84;
+  for (const [index, height, width, depth, material, renderMaterial, materialId] of [
+    [0, 1.62, 1.36, 1.22, metalMaterial, towerMetalRenderMaterial, "metal"],
+    [1, 1.78, 1.16, 1.04, glassMaterial, towerGlassRenderMaterial, "glass"],
+    [2, 1.58, 0.98, 0.86, metalMaterial, towerMetalRenderMaterial, "metal"],
+    [3, 1.42, 0.78, 0.68, glassMaterial, towerGlassRenderMaterial, "glass"],
+    [4, 1.2, 0.56, 0.5, metalMaterial, towerMetalRenderMaterial, "metal"]
+  ] as const) {
+    const size = new THREE.Vector3(width, height, depth);
+    const section = context.physics.addDynamicBox({
+      label: index === 4 ? "Central skyneedle crown tier" : "Central skyneedle taper tier",
+      material,
+      renderMaterial,
+      position: new THREE.Vector3(base.x, yBase + height * 0.5, base.z),
+      size,
+      rotation,
+      category: "structure",
+      scoreRole: "target",
+      zoneId,
+      canFracture: false,
+      destructible: true,
+      bodyType: "dynamic",
+      chainSource: true,
+      supportGroupId,
+      supportReleaseMassScale: 1.2,
+      supportReleaseImpulseScale: 1 + index * 0.08,
+      supportReleaseTorqueScale: 0.9 + index * 0.08,
+      sleeping: true,
+      linearDamping: 0.68,
+      angularDamping: 1.08,
+      additionalMass: size.x * size.y * size.z * (materialId === "glass" ? 5.8 : 6.8),
+      scoreValue: index === 4 ? 420 : 360
+    });
+    decorateBuildingCell(section.mesh, {
+      size,
+      materialId: materialId as MaterialId,
+      scoreRole: "target",
+      style: "glassTower",
+      floor: index,
+      column: 0,
+      floors: 5,
+      columns: 1
+    });
+    section.mesh.userData.disposeMaterial = false;
+    yBase += height;
+  }
+
+  const spireSize = new THREE.Vector3(0.18, 2.45, 0.18);
+  const spire = context.physics.addDynamicBox({
+    label: "Central skyneedle spire",
+    material: metalMaterial,
+    renderMaterial: towerMetalRenderMaterial,
+    position: new THREE.Vector3(base.x, yBase + spireSize.y * 0.5, base.z),
+    size: spireSize,
+    rotation,
+    category: "structure",
+    scoreRole: "target",
+    zoneId,
+    canFracture: false,
+    destructible: true,
+    bodyType: "dynamic",
+    chainSource: true,
+    supportGroupId,
+    supportReleaseMassScale: 0.82,
+    supportReleaseImpulseScale: 1.28,
+    supportReleaseTorqueScale: 1.24,
+    sleeping: true,
+    linearDamping: 0.56,
+    angularDamping: 0.92,
+    additionalMass: 0.8,
+    scoreValue: 260
+  });
+  spire.mesh.userData.disposeMaterial = false;
+  decorateSkyneedleBeacon(spire.mesh, spireSize);
+}
+
+function decorateSkyneedleBeacon(mesh: THREE.Mesh, size: THREE.Vector3): void {
+  const beaconMaterial = sharedLevelMaterial("central-skyneedle-beacon", () => new THREE.MeshBasicMaterial({ color: 0x9bf7ff }));
+  const beacon = new THREE.Mesh(sharedLevelBoxGeometry(0.26, 0.1, 0.26), beaconMaterial);
+  beacon.name = "central skyneedle beacon";
+  beacon.position.set(0, size.y * 0.48, 0);
+  beacon.userData.disposeMaterial = false;
+  mesh.add(beacon);
 }
 
 function addStrategicHazardBox(

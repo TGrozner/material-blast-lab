@@ -1700,6 +1700,7 @@ class Game {
   private renderWarmupGroup: THREE.Group | null = null;
   private renderPipelineSentinelGroup: THREE.Group | null = null;
   private readonly renderWarmupPersistentObjects: THREE.Object3D[] = [];
+  private readonly warmedLevelIds = new Set<string>();
   private readonly handleResize = () => this.resize();
   private readonly handleBeforeUnload = () => this.input.dispose();
   private readonly chainImpactCooldowns = new Map<string, number>();
@@ -2270,6 +2271,7 @@ class Game {
         geometries: this.renderer.info.memory.geometries,
         frames: 1
       };
+      this.markCurrentLevelWarmupReady();
       if (this.runState.phase === "aim" && this.runState.shotAvailable) {
         const level = this.currentLevel();
         this.status = `${level.name}: ${level.objective}`;
@@ -2434,6 +2436,7 @@ class Game {
         geometries: this.renderer.info.memory.geometries,
         frames
       };
+      this.markCurrentLevelWarmupReady();
       if (this.runState.phase === "aim" && this.runState.shotAvailable) {
         const level = this.currentLevel();
         this.status = `${level.name}: ${level.objective}`;
@@ -3617,7 +3620,7 @@ class Game {
     if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
-    await this.reloadLevelWithLoading("Resetting district");
+    await this.reloadLevelWithLoading("Resetting district", { reuseWarmup: true });
   }
 
   private async nextLevel(): Promise<void> {
@@ -3642,18 +3645,25 @@ class Game {
     return true;
   }
 
-  private async reloadLevelWithLoading(status: string): Promise<void> {
+  private async reloadLevelWithLoading(status: string, options: { reuseWarmup?: boolean } = {}): Promise<void> {
     this.levelReloadInProgress = true;
     void this.renderer.setAnimationLoop(null);
     const level = this.currentLevel();
+    const reuseWarmup = options.reuseWarmup === true && this.canReuseCurrentLevelWarmup();
     this.perfDiskLogger?.flush("level-reload-start");
     this.options.showLoading?.(level.name, status);
     try {
       this.loadLevel();
-      this.scheduleRenderWarmup();
       this.ui.showPlayScreen();
-      this.options.updateLoadingStatus?.("Warming renderer pipelines");
-      await this.waitForRenderWarmup();
+      if (reuseWarmup) {
+        this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+        this.status = `${level.name}: ${level.objective}`;
+        this.options.updateLoadingStatus?.("Ready");
+      } else {
+        this.scheduleRenderWarmup();
+        this.options.updateLoadingStatus?.("Warming renderer pipelines");
+        await this.waitForRenderWarmup();
+      }
       perfMonitor.clear();
       this.perfDiskLogger?.flush("level-reload-ready");
     } finally {
@@ -3663,6 +3673,14 @@ class Game {
         this.start();
       }
     }
+  }
+
+  private markCurrentLevelWarmupReady(): void {
+    this.warmedLevelIds.add(this.currentLevel().id);
+  }
+
+  private canReuseCurrentLevelWarmup(): boolean {
+    return this.renderWarmupState.phase === "ready" && this.warmedLevelIds.has(this.currentLevel().id);
   }
 
   private clearDebris(): void {
