@@ -60,30 +60,30 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
     id: "hazard-junction",
     title: "Hazard Junction",
     thresholds: {
-      missionScore: 120_000,
-      twoStarScore: 425_000,
-      threeStarScore: 900_000,
-      threeStarBonus: { metric: "chainReactionCount", minimum: 320 }
+      missionScore: 40_000,
+      twoStarScore: 90_000,
+      threeStarScore: 200_000,
+      threeStarBonus: { metric: "chainReactionCount", minimum: 100 }
     }
   },
   {
     id: "breaker-yard",
     title: "Breaker Yard",
     thresholds: {
-      missionScore: 160_000,
-      twoStarScore: 520_000,
-      threeStarScore: 1_050_000,
-      threeStarBonus: { metric: "chainReactionCount", minimum: 340 }
+      missionScore: 55_000,
+      twoStarScore: 120_000,
+      threeStarScore: 260_000,
+      threeStarBonus: { metric: "chainReactionCount", minimum: 120 }
     }
   },
   {
     id: "switchback-crush",
     title: "Switchback Crush",
     thresholds: {
-      missionScore: 175_000,
-      twoStarScore: 560_000,
-      threeStarScore: 1_120_000,
-      threeStarBonus: { metric: "collateralChaos", minimum: 70_000 }
+      missionScore: 60_000,
+      twoStarScore: 135_000,
+      threeStarScore: 300_000,
+      threeStarBonus: { metric: "collateralChaos", minimum: 28_000 }
     }
   }
 ] as const;

@@ -70,13 +70,13 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 1,
       targetZone: "hazard-core",
       scoreThresholds: {
-        oneStar: 120_000,
-        twoStar: 425_000,
-        threeStar: 900_000
+        oneStar: 40_000,
+        twoStar: 90_000,
+        threeStar: 200_000
       },
-      targetDamageThreshold: 18_000,
-      bonusThreshold: { metric: "chainReactionCount", minimum: 320 },
-      bonusObjective: "Sustain 320+ secondary hits from the energy plant, gas line, substation, propane depot, parking silo, metro line, vehicle grid, or skyneedle debris.",
+      targetDamageThreshold: 10_000,
+      bonusThreshold: { metric: "chainReactionCount", minimum: 100 },
+      bonusObjective: "Sustain 100+ secondary hits from the energy plant, gas line, substation, propane depot, parking silo, metro line, vehicle grid, or skyneedle debris.",
       briefingHint: "Aim choice matters: gas is wide and low, the metro carries moving mass, the skyneedle can shed vertical debris, and the parking silo feeds vehicle chaos."
     },
     setup: (context) => {
@@ -110,13 +110,13 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 2,
       targetZone: "breaker-spine",
       scoreThresholds: {
-        oneStar: 160_000,
-        twoStar: 520_000,
-        threeStar: 1_050_000
+        oneStar: 55_000,
+        twoStar: 120_000,
+        threeStar: 260_000
       },
-      targetDamageThreshold: 22_000,
-      bonusThreshold: { metric: "chainReactionCount", minimum: 340 },
-      bonusObjective: "Sustain 340+ secondary hits from breaker towers, substations, tankers, and vehicle debris.",
+      targetDamageThreshold: 12_000,
+      bonusThreshold: { metric: "chainReactionCount", minimum: 120 },
+      bonusObjective: "Sustain 120+ secondary hits from breaker towers, substations, tankers, and vehicle debris.",
       briefingHint: "The spine is tough but reliable; the substation yards are wider, flashier starters if you can catch the relay rows."
     },
     setup: (context) => setupBreakerYardCity(context)
@@ -135,13 +135,13 @@ export const TEST_CHAMBERS: TestChamber[] = [
       order: 3,
       targetZone: "glass-depot",
       scoreThresholds: {
-        oneStar: 175_000,
-        twoStar: 560_000,
-        threeStar: 1_120_000
+        oneStar: 60_000,
+        twoStar: 135_000,
+        threeStar: 300_000
       },
-      targetDamageThreshold: 24_000,
-      bonusThreshold: { metric: "collateralChaos", minimum: 70_000 },
-      bonusObjective: "Push 70,000+ collateral chaos from archive glass, foam redirects, vehicles, and service crates.",
+      targetDamageThreshold: 13_000,
+      bonusThreshold: { metric: "collateralChaos", minimum: 28_000 },
+      bonusObjective: "Push 28,000+ collateral chaos from archive glass, foam redirects, vehicles, and service crates.",
       briefingHint: "Foam is still the steering wheel, but now the city gives you multiple redirect lines instead of one obvious lane."
     },
     setup: (context) => setupSwitchbackCrushCity(context)

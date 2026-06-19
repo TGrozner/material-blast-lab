@@ -275,9 +275,33 @@ test("records post-shot perf budgets", async ({ page }) => {
   await expect(finishRunButton).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
   await clickUi(finishRunButton);
   await expectFinalScore(page, "Fragmentation Cluster");
-  await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.flushPerfLog("perf-smoke-final"));
+  await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.flushPerfLog("perf-smoke-first-shot"));
 
-  const payload = await waitForPerfLog();
+  const payload = await waitForPerfLog("perf-smoke-first-shot");
+  expectPerfBudget(payload);
+
+  await clickUi(page.locator("[data-action='result-retry']"));
+  await expect(page.locator(".hud [data-role='score']")).toBeHidden();
+  await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
+  await expect
+    .poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderWarmupState().phase), {
+      timeout: LEVEL_START_TIMEOUT_MS
+    })
+    .toBe("ready");
+  await expect(fireButton(page)).toBeEnabled();
+
+  await clickUi(fireButton(page));
+  await expect(finishRunButton).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
+  await clickUi(finishRunButton);
+  await expectFinalScore(page, "Fragmentation Cluster");
+  await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.flushPerfLog("perf-smoke-post-reset-final"));
+
+  const postResetPayload = await waitForPerfLog("perf-smoke-post-reset-final");
+  expectPerfBudget(postResetPayload);
+  expect(consoleErrors).toEqual([]);
+});
+
+function expectPerfBudget(payload: PerfLogPayload): void {
   expect(payload.href).toContain("perfFull");
   expect(payload.summary.frameCount).toBeGreaterThan(0);
   expect(payload.summary.maxFrame?.totalMs ?? 0).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.maxFrameMs);
@@ -287,8 +311,7 @@ test("records post-shot perf budgets", async ({ page }) => {
   expect(payload.report?.counterTotals["renderer.programsCreatedAfterWarmup"] ?? 0).toBeLessThanOrEqual(
     PERF_SMOKE_BUDGET.maxProgramsCreatedAfterWarmup
   );
-  expect(consoleErrors).toEqual([]);
-});
+}
 
 test("persists real settings and applies the FPS toggle after reload", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
@@ -448,7 +471,7 @@ async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   await expect(scorePanel.getByText("Collateral Chaos")).toBeVisible();
 }
 
-async function waitForPerfLog(): Promise<PerfLogPayload> {
+async function waitForPerfLog(reason?: string): Promise<PerfLogPayload> {
   const latestPath = perfLatestPath();
   await expect
     .poll(
@@ -456,7 +479,7 @@ async function waitForPerfLog(): Promise<PerfLogPayload> {
         try {
           await access(latestPath);
           const payload = JSON.parse(await readFile(latestPath, "utf8")) as PerfLogPayload;
-          return payload.href.includes("perfFull") && payload.summary.frameCount > 0;
+          return payload.href.includes("perfFull") && payload.summary.frameCount > 0 && (!reason || payload.reason === reason);
         } catch {
           return false;
         }
