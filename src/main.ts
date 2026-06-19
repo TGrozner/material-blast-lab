@@ -38,7 +38,8 @@ import {
 } from "./settings";
 import { ExplosionSystem, ParticleSystem } from "./vfx";
 import { GameUI } from "./ui";
-import { graphicTexture } from "./visualAssets";
+import { graphicTexture, preloadGraphicTextures } from "./visualAssets";
+import { registerDowntownMayhemServiceWorker } from "./serviceWorker";
 
 const DEFAULT_AIM_POINT = new THREE.Vector3(0, 0.16, -3.4);
 const CHAIN_DEBRIS_MIN_SPEED = 1.85;
@@ -4274,6 +4275,7 @@ let rapierReady: Promise<unknown> | null = null;
 let startToken = 0;
 
 async function boot(): Promise<void> {
+  registerDowntownMayhemServiceWorker();
   activeShell?.dispose();
   const shell = new AppShell({
     startLevel: (levelIndex) => {
@@ -4282,6 +4284,7 @@ async function boot(): Promise<void> {
   });
   activeShell = shell;
   shell.showMenu();
+  void preloadGraphicTextures();
 
   if (import.meta.hot) {
     import.meta.hot.dispose(() => {

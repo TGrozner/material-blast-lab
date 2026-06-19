@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "assets:prepare": "node scripts/prepare-textures.mjs && node scripts/prebake-geometry.mjs",
+    "prebuild": "npm run assets:prepare",
+    "postbuild": "node scripts/write-service-worker.mjs",
     "dev": "vite",
     "test": "npm run test:unit && npm run test:smoke",
     "test:unit": "vitest run --config vitest.config.ts",

@@ -12,6 +12,7 @@ import {
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { PhysicsWorld, type ScoreRole, type TrafficRoute } from "./physics";
 import type { ArcadeBonusThreshold } from "./arcade";
+import { CITY_GROUND_GEOMETRY_BATCHES, type PrebakedGroundGeometryBatch } from "./generated/cityGroundGeometry";
 import { decalAtlasTile, materialAtlasTile } from "./visualAssets";
 
 type TriggerType = "transformer" | "springPad" | "shockCanister";
@@ -2590,6 +2591,12 @@ export function relayRenderMaterial(type: TriggerType): THREE.Material {
 }
 
 function addCityGround(context: LevelContext): void {
+  if (CITY_GROUND_GEOMETRY_BATCHES.length > 0) {
+    addPrebakedGroundPanels(context, CITY_GROUND_GEOMETRY_BATCHES);
+    addRoadDecals(context);
+    return;
+  }
+
   const panels: GroundPanelSpec[] = [];
   const addGroundPanel = (
     name: string,
@@ -2650,6 +2657,25 @@ function addCityGround(context: LevelContext): void {
   }
   flushGroundPanels(context, panels);
   addRoadDecals(context);
+}
+
+function addPrebakedGroundPanels(context: LevelContext, batches: readonly PrebakedGroundGeometryBatch[]): void {
+  for (const batch of batches) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(batch.positions, 3));
+    geometry.setAttribute("normal", new THREE.Float32BufferAttribute(batch.normals, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(batch.uvs, 2));
+    geometry.setIndex(Array.from(batch.indices));
+    geometry.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geometry, panelRenderMaterial(batch.color, batch.opacity, batch.layer));
+    mesh.name = batch.name;
+    mesh.castShadow = false;
+    mesh.receiveShadow = batch.opacity >= 1;
+    mesh.renderOrder = groundPanelRenderOrder(batch.layer);
+    mesh.userData.disposeMaterial = false;
+    context.addDecoration(mesh);
+  }
 }
 
 function addHorizontalRoadPanels(
