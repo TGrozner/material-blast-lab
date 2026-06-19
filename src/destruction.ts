@@ -10,13 +10,14 @@ const IMMEDIATE_DEBRIS_FRAGMENT_VISUALS = 3;
 const PRIMARY_PHYSICAL_FRAGMENT_LIMIT = 8;
 const SECONDARY_PHYSICAL_FRAGMENT_LIMIT = 3;
 const MIN_PHYSICAL_FRAGMENT_VOLUME = 0.012;
-const MAX_VISUAL_ONLY_FRAGMENTS = 420;
-const VISUAL_FRAGMENT_MIN_LIFE_SECONDS = 2.6;
-const VISUAL_FRAGMENT_MAX_LIFE_SECONDS = 4.6;
-const VISUAL_FRAGMENT_SETTLE_SPEED_SQ = 0.08;
+const MAX_VISUAL_ONLY_FRAGMENTS = 320;
+const VISUAL_FRAGMENT_MIN_LIFE_SECONDS = 2.2;
+const VISUAL_FRAGMENT_MAX_LIFE_SECONDS = 4;
+const VISUAL_FRAGMENT_SETTLE_MIN_AGE_SECONDS = 0.35;
+const VISUAL_FRAGMENT_SETTLE_SPEED_SQ = 0.18;
 const VISUAL_FRAGMENT_GRAVITY = 8.4;
-const VISUAL_FRAGMENT_LINEAR_DAMPING = 0.82;
-const VISUAL_FRAGMENT_ANGULAR_DAMPING = 0.84;
+const VISUAL_FRAGMENT_LINEAR_DAMPING = 1.05;
+const VISUAL_FRAGMENT_ANGULAR_DAMPING = 1.1;
 const VISUAL_FRAGMENT_BOUNCE = 0.18;
 const FRAGMENT_INSTANCE_BUCKET_CAPACITY = 512;
 const FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE = 48;
@@ -828,7 +829,7 @@ export class DestructionSystem {
       fragment.rotation.multiply(this.scratchVisualRotationDelta).normalize();
       fragment.visualProxy.sync(fragment.position, fragment.rotation);
       updated += 1;
-      if (fragment.ageSeconds > 0.55 && fragment.velocity.lengthSq() < VISUAL_FRAGMENT_SETTLE_SPEED_SQ) {
+      if (fragment.ageSeconds > VISUAL_FRAGMENT_SETTLE_MIN_AGE_SECONDS && fragment.velocity.lengthSq() < VISUAL_FRAGMENT_SETTLE_SPEED_SQ) {
         fragment.moving = false;
       }
     }

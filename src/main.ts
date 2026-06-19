@@ -44,8 +44,10 @@ const DEFAULT_AIM_POINT = new THREE.Vector3(0, 0.16, -3.4);
 const CHAIN_DEBRIS_MIN_SPEED = 1.85;
 const CHAIN_IMPACT_COOLDOWN_MS = 220;
 const CHAIN_IMPACT_MAX_PER_FRAME = 14;
+const CHAIN_IMPACT_VFX_MAX_PER_FRAME = 4;
 const CHAIN_COLLISION_DRAIN_MAX_PER_FRAME = 192;
 const SURFACE_IMPACT_MAX_PER_FRAME = 6;
+const SURFACE_IMPACT_VFX_MAX_PER_FRAME = 2;
 const SURFACE_COLLISION_MAX_PER_FRAME = 160;
 const FRACTURE_PROCESS_MAX_PER_FRAME = 3;
 const FRACTURE_PROCESS_TIME_BUDGET_MS = 4.8;
@@ -2002,7 +2004,9 @@ class Game {
     this.timer.update();
     const frameDelta = this.timer.getDelta();
     const delta = Math.min(frameDelta, 0.05);
-    perfMonitor.beginFrame(frameDelta * 1000, this.physics.getRuntimeStats());
+    if (perfMonitor.isEnabled()) {
+      perfMonitor.beginFrame(frameDelta * 1000, this.physics.getRuntimeStats());
+    }
     try {
       this.updateFps(frameDelta);
       this.physics.flushStagedVisualActivations();
@@ -3364,12 +3368,13 @@ class Game {
         result: secondary,
         powerScale: profile.powerScale,
         sizeScale: profile.sizeScale,
+        densityScale: 0.66,
         hitMaterialId: object.materialId,
         role: "secondary"
       });
       this.particles.spark(origin, profile.color, profile.projectileId === "ignite" ? 2.1 : 1.7);
       if (secondary.dustColors.length > 0) {
-        this.particles.cityDebrisSpray(origin, secondary.dustColors, 0.42 + secondary.fracturedBodies * 0.08);
+        this.particles.cityDebrisSpray(origin, secondary.dustColors, 0.3 + secondary.fracturedBodies * 0.045);
       }
       this.audio.playProjectileImpact({
         point: origin,
@@ -3468,6 +3473,7 @@ class Game {
         result,
         powerScale: 0.76,
         sizeScale: 0.82,
+        densityScale: 0.62,
         hitMaterialId: hazard.materialId,
         role: "ignition"
       });
@@ -3506,6 +3512,7 @@ class Game {
     }
 
     let impactsThisFrame = 0;
+    let impactVfxThisFrame = 0;
     let projectileImpactHandled = false;
     const chainCollisionsDrained = this.physics.drainCollisionEventsInto((collision) => {
       if (projectileImpactHandled || impactsThisFrame >= CHAIN_IMPACT_MAX_PER_FRAME) {
@@ -3578,9 +3585,14 @@ class Game {
       events.push(...this.applyExplosionResult(result));
       const points = Math.max(45, Math.round(damaged.weightedDamage * 0.85 + relativeSpeed * 8));
       events.push(...this.scoreTracker.addChainReaction(points, damaged.position, chainImpactLabel(damaged)));
-      this.particles.spark(origin, 0xffd25c, Math.min(1.4, 0.55 + relativeSpeed * 0.045));
-      if (result.dustColors.length > 0) {
-        this.particles.cityDebrisSpray(origin, result.dustColors, 0.35 + result.fracturedBodies * 0.04);
+      if (impactVfxThisFrame < CHAIN_IMPACT_VFX_MAX_PER_FRAME) {
+        this.particles.spark(origin, 0xffd25c, Math.min(1.4, 0.55 + relativeSpeed * 0.045));
+        if (result.dustColors.length > 0) {
+          this.particles.cityDebrisSpray(origin, result.dustColors, 0.35 + result.fracturedBodies * 0.04);
+        }
+        impactVfxThisFrame += 1;
+      } else {
+        perfMonitor.addCount("vfx.chainImpactSuppressed");
       }
       impactsThisFrame += 1;
     }, CHAIN_COLLISION_DRAIN_MAX_PER_FRAME);
@@ -3598,6 +3610,7 @@ class Game {
     processedObjectIds.clear();
     let surfaceCollisionsChecked = 0;
     let impactsThisFrame = 0;
+    let impactVfxThisFrame = 0;
     const surfaceImpactsDrained = this.physics.drainSurfaceCollisionEventsInto((surfaceImpact) => {
       if (surfaceCollisionsChecked >= SURFACE_COLLISION_MAX_PER_FRAME || impactsThisFrame >= SURFACE_IMPACT_MAX_PER_FRAME) {
         return;
@@ -3642,8 +3655,11 @@ class Game {
       events.push(...this.applyExplosionResult(result));
       const points = Math.max(22, Math.round(damaged.weightedDamage * 0.45 + impactSpeed * 6));
       events.push(...this.scoreTracker.addChainReaction(points, damaged.position, groundImpactLabel(damaged)));
-      if (result.dustColors.length > 0) {
+      if (impactVfxThisFrame < SURFACE_IMPACT_VFX_MAX_PER_FRAME && result.dustColors.length > 0) {
         this.particles.cityDebrisSpray(origin, result.dustColors, 0.22 + result.fracturedBodies * 0.045);
+        impactVfxThisFrame += 1;
+      } else if (result.dustColors.length > 0) {
+        perfMonitor.addCount("vfx.surfaceImpactSuppressed");
       }
       impactsThisFrame += 1;
     }, SURFACE_COLLISION_MAX_PER_FRAME);
@@ -3723,12 +3739,13 @@ class Game {
         result: cluster,
         powerScale: 0.58 * active.powerScale,
         sizeScale: 0.52 * active.sizeScale,
+        densityScale: 0.68,
         hitMaterialId: "foam",
         impactDirection: forward,
         role: "secondary"
       });
       if (cluster.dustColors.length > 0) {
-        this.particles.cityDebrisSpray(clusterOrigin, cluster.dustColors, 0.24 + cluster.fracturedBodies * 0.035);
+        this.particles.cityDebrisSpray(clusterOrigin, cluster.dustColors, 0.18 + cluster.fracturedBodies * 0.025);
       }
       events.push(...this.applyExplosionResult(cluster, 1, 0));
     }

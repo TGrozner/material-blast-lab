@@ -68,6 +68,7 @@ export interface ExplosionFxContext {
   result?: ExplosionResult;
   powerScale?: number;
   sizeScale?: number;
+  densityScale?: number;
   hitMaterialId?: MaterialId;
   impactDirection?: THREE.Vector3;
   role?: "primary" | "secondary" | "ignition";
@@ -378,6 +379,7 @@ export class ParticleSystem {
     const startedAt = perfMonitor.timeStart();
     const profile = explosionProfile(context.projectileId, context.hitMaterialId);
     const impactScale = this.explosionScale(context);
+    const particleScale = impactScale * this.explosionParticleDensity(context);
     const visualRadius = radius * THREE.MathUtils.clamp(0.95 + impactScale * 0.08 + profile.shockBias * 0.08, 0.9, 1.28);
     const coreOrigin = this.explosionCoreOrigin.set(origin.x, origin.y + 0.35 + Math.min(0.85, radius * 0.06), origin.z);
     const dustColor = averageColorInto(this.explosionDustColor, dustColors, DEFAULT_DUST_COLOR);
@@ -392,24 +394,24 @@ export class ParticleSystem {
     this.spawnSprite(coreOrigin, CORE_TEXTURE, profile.coreColor, visualRadius * 0.34, visualRadius * 1.15, 0.74, 0.34, 0.42, THREE.AdditiveBlending);
     this.spawnSprite(this.offsetOrigin(coreOrigin, 0, 0.16, 0), CORE_TEXTURE, profile.edgeColor, visualRadius * 0.16, visualRadius * 0.9, 0.34, 0.42, 0.16, THREE.AdditiveBlending);
 
-    const fireAmount = impactScale * (0.75 + profile.fireBias);
-    const smokeAmount = impactScale * (0.8 + profile.smokeBias);
-    const streakAmount = impactScale * (0.85 + profile.streakBias);
+    const fireAmount = particleScale * (0.75 + profile.fireBias);
+    const smokeAmount = particleScale * (0.8 + profile.smokeBias);
+    const streakAmount = particleScale * (0.85 + profile.streakBias);
     this.spawnBurst(origin, Math.round(108 * fireAmount), profile.hotColor, 0.82, 0.052, 17 * impactScale, 0.82, 0.06, THREE.AdditiveBlending);
     this.spawnBurst(origin, Math.round(58 * fireAmount), profile.coreColor, 0.48, 0.038, 22 * impactScale, 0.5, 0.04, THREE.AdditiveBlending);
     this.spawnBurst(origin, Math.round(42 * streakAmount), profile.emberColor, 0.5, 0.026, 31 * impactScale, 0.74, 0.03, THREE.AdditiveBlending);
     this.spawnBurst(origin, Math.round(92 * smokeAmount), dustColor, 1.38, 0.075, 4.6 * impactScale, 1.55, 0.32);
     this.spawnBurst(coreOrigin, Math.round(64 * smokeAmount), smokeColor, 2.25, 0.13, 2.5 * impactScale, 1.05, 0.55);
     this.spawnPressureWave(origin, visualRadius, profile.shockColor, context.role === "primary" ? 0.5 : 0.34, impactScale);
-    this.spawnDirectionalBlast(origin, normalizedImpactDirectionInto(this.responseDirection, context.impactDirection), visualRadius, profile, dustColor, impactScale);
+    this.spawnDirectionalBlast(origin, normalizedImpactDirectionInto(this.responseDirection, context.impactDirection), visualRadius, profile, dustColor, particleScale);
     this.spawnStreaks(origin, visualRadius, profile.streakColor, Math.round(14 * streakAmount), 0.52);
     this.spawnSmokePuffs(coreOrigin, visualRadius, smokeColor, smokeAmount);
 
     if (profile.fireBias > 0.2 || context.projectileId === "ignite") {
-      this.fireBurst(origin, 0.75 * impactScale + profile.fireBias);
+      this.fireBurst(origin, 0.75 * particleScale + profile.fireBias);
     }
-    this.spawnProjectileSignature(origin, coreOrigin, visualRadius, profile, context, impactScale);
-    this.spawnMaterialResponse(origin, visualRadius, context, profile, dustColor, impactScale);
+    this.spawnProjectileSignature(origin, coreOrigin, visualRadius, profile, context, particleScale);
+    this.spawnMaterialResponse(origin, visualRadius, context, profile, dustColor, particleScale);
     perfMonitor.addTiming("vfx.explode", startedAt);
   }
 
@@ -1438,6 +1440,11 @@ export class ParticleSystem {
     );
     const roleBoost = context.role === "primary" ? 0.18 : context.role === "ignition" ? 0.08 : -0.04;
     return THREE.MathUtils.clamp(0.82 + fractureBoost + bodyBoost + damageBoost + roleBoost + (context.powerScale ?? 1) * 0.08 + (context.sizeScale ?? 1) * 0.08, 0.72, 1.85);
+  }
+
+  private explosionParticleDensity(context: ExplosionFxContext): number {
+    const roleDensity = context.role === "secondary" ? 0.72 : context.role === "ignition" ? 0.62 : 1;
+    return THREE.MathUtils.clamp(context.densityScale ?? roleDensity, 0.45, 1);
   }
 
   private qualityDensity(): number {
