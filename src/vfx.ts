@@ -275,17 +275,49 @@ export class ParticleSystem {
 
   keepPoolPipelinesResident(): void {
     for (const burst of this.burstPool) {
-      this.parkBurstForPipeline(burst);
+      this.parkBurstForPipeline(burst, true);
     }
     for (const sprite of this.spritePool) {
-      this.parkSpriteForPipeline(sprite);
+      this.parkSpriteForPipeline(sprite, true);
     }
     for (const streak of this.streakPool) {
-      this.parkStreakForPipeline(streak);
+      this.parkStreakForPipeline(streak, true);
     }
     for (const wave of this.pressureWavePool) {
-      this.parkPressureWaveForPipeline(wave);
+      this.parkPressureWaveForPipeline(wave, true);
     }
+  }
+
+  hidePooledEffects(): void {
+    for (const burst of this.burstPool) {
+      this.parkBurstForPipeline(burst, false);
+    }
+    for (const sprite of this.spritePool) {
+      this.parkSpriteForPipeline(sprite, false);
+    }
+    for (const streak of this.streakPool) {
+      this.parkStreakForPipeline(streak, false);
+    }
+    for (const wave of this.pressureWavePool) {
+      this.parkPressureWaveForPipeline(wave, false);
+    }
+  }
+
+  getVisiblePooledEffectCount(): number {
+    let visible = 0;
+    for (const burst of this.burstPool) {
+      visible += visibleSceneObjectCount(this.scene, burst.points);
+    }
+    for (const sprite of this.spritePool) {
+      visible += visibleSceneObjectCount(this.scene, sprite.sprite);
+    }
+    for (const streak of this.streakPool) {
+      visible += visibleSceneObjectCount(this.scene, streak.lines);
+    }
+    for (const wave of this.pressureWavePool) {
+      visible += visibleSceneObjectCount(this.scene, wave.mesh);
+    }
+    return visible;
   }
 
   clearTransientEffects(): void {
@@ -570,6 +602,8 @@ export class ParticleSystem {
     fx.sprite.position.copy(origin);
     fx.sprite.scale.set(startSize, startSize, 1);
     fx.sprite.renderOrder = blending === THREE.AdditiveBlending ? 8 : 5;
+    fx.sprite.visible = true;
+    fx.sprite.frustumCulled = false;
     fx.life = 0;
     fx.maxLife = maxLife;
     fx.maxOpacity = opacity;
@@ -666,6 +700,8 @@ export class ParticleSystem {
     wave.mesh.rotation.x = -Math.PI * 0.5;
     wave.mesh.rotation.z = Math.random() * Math.PI * 2;
     wave.mesh.scale.set(radius * 0.16, radius * 0.16, 1);
+    wave.mesh.visible = true;
+    wave.mesh.frustumCulled = false;
     wave.life = 0;
     wave.maxLife = THREE.MathUtils.lerp(0.24, 0.44, THREE.MathUtils.clamp(intensity, 0, 1));
     wave.startRadius = radius * 0.16;
@@ -1162,6 +1198,8 @@ export class ParticleSystem {
     streak.positionAttribute.needsUpdate = true;
     streak.lines.position.copy(origin);
     streak.lines.scale.setScalar(1);
+    streak.lines.visible = true;
+    streak.lines.frustumCulled = false;
     addToSceneIfNeeded(this.scene, streak.lines);
     this.streaks.push(streak);
   }
@@ -1244,7 +1282,7 @@ export class ParticleSystem {
   private releaseBurst(burst: ParticleBurst): void {
     burst.count = 0;
     if (this.burstPool.length < ParticleSystem.maxBurstPool) {
-      this.parkBurstForPipeline(burst);
+      this.parkBurstForPipeline(burst, false);
       this.burstPool.push(burst);
       return;
     }
@@ -1253,7 +1291,7 @@ export class ParticleSystem {
 
   private releaseSprite(sprite: FxSprite): void {
     if (this.spritePool.length < ParticleSystem.maxSpritePool) {
-      this.parkSpriteForPipeline(sprite);
+      this.parkSpriteForPipeline(sprite, false);
       this.spritePool.push(sprite);
       return;
     }
@@ -1263,7 +1301,7 @@ export class ParticleSystem {
   private releaseStreak(streak: StreakBurst): void {
     streak.count = 0;
     if (this.streakPool.length < ParticleSystem.maxStreakPool) {
-      this.parkStreakForPipeline(streak);
+      this.parkStreakForPipeline(streak, false);
       this.streakPool.push(streak);
       return;
     }
@@ -1272,7 +1310,7 @@ export class ParticleSystem {
 
   private releasePressureWave(wave: PressureWave): void {
     if (this.pressureWavePool.length < ParticleSystem.maxPressureWavePool) {
-      this.parkPressureWaveForPipeline(wave);
+      this.parkPressureWaveForPipeline(wave, false);
       this.pressureWavePool.push(wave);
       return;
     }
@@ -1301,7 +1339,7 @@ export class ParticleSystem {
     wave.material.dispose();
   }
 
-  private parkBurstForPipeline(burst: ParticleBurst): void {
+  private parkBurstForPipeline(burst: ParticleBurst, visible: boolean): void {
     burst.count = 0;
     burst.life = 0;
     burst.material.opacity = 1;
@@ -1316,24 +1354,24 @@ export class ParticleSystem {
       burst.colorAttribute.needsUpdate = true;
     }
     burst.geometry.setDrawRange(0, burst.capacity > 0 ? 1 : 0);
-    burst.points.visible = true;
+    burst.points.visible = visible;
     burst.points.frustumCulled = false;
     burst.points.position.set(0, VFX_POOL_PARK_Y, 0);
-    addToSceneIfNeeded(this.scene, burst.points);
+    attachOrDetachPooledObject(this.scene, burst.points, visible);
   }
 
-  private parkSpriteForPipeline(sprite: FxSprite): void {
+  private parkSpriteForPipeline(sprite: FxSprite, visible: boolean): void {
     sprite.life = 0;
     sprite.material.opacity = 1;
     sprite.material.rotation = 0;
-    sprite.sprite.visible = true;
+    sprite.sprite.visible = visible;
     sprite.sprite.frustumCulled = false;
     sprite.sprite.position.set(0, VFX_POOL_PARK_Y, 0);
     sprite.sprite.scale.set(0.05, 0.05, 1);
-    addToSceneIfNeeded(this.scene, sprite.sprite);
+    attachOrDetachPooledObject(this.scene, sprite.sprite, visible);
   }
 
-  private parkStreakForPipeline(streak: StreakBurst): void {
+  private parkStreakForPipeline(streak: StreakBurst, visible: boolean): void {
     streak.count = 0;
     streak.life = 0;
     streak.material.opacity = 1;
@@ -1347,21 +1385,21 @@ export class ParticleSystem {
       streak.positionAttribute.needsUpdate = true;
     }
     streak.geometry.setDrawRange(0, streak.capacity > 0 ? 2 : 0);
-    streak.lines.visible = true;
+    streak.lines.visible = visible;
     streak.lines.frustumCulled = false;
     streak.lines.position.set(0, VFX_POOL_PARK_Y, 0);
     streak.lines.scale.setScalar(1);
-    addToSceneIfNeeded(this.scene, streak.lines);
+    attachOrDetachPooledObject(this.scene, streak.lines, visible);
   }
 
-  private parkPressureWaveForPipeline(wave: PressureWave): void {
+  private parkPressureWaveForPipeline(wave: PressureWave, visible: boolean): void {
     wave.life = 0;
     wave.material.opacity = 1;
-    wave.mesh.visible = true;
+    wave.mesh.visible = visible;
     wave.mesh.frustumCulled = false;
     wave.mesh.position.set(0, VFX_POOL_PARK_Y, 0);
     wave.mesh.scale.set(0.05, 0.05, 1);
-    addToSceneIfNeeded(this.scene, wave.mesh);
+    attachOrDetachPooledObject(this.scene, wave.mesh, visible);
   }
 
   private trimBursts(): void {
@@ -1816,6 +1854,28 @@ function addToSceneIfNeeded(scene: THREE.Scene, object: THREE.Object3D): void {
   if (object.parent !== scene) {
     scene.add(object);
   }
+}
+
+function attachOrDetachPooledObject(scene: THREE.Scene, object: THREE.Object3D, visible: boolean): void {
+  if (visible) {
+    addToSceneIfNeeded(scene, object);
+    return;
+  }
+  object.parent?.remove(object);
+}
+
+function visibleSceneObjectCount(scene: THREE.Scene, object: THREE.Object3D): number {
+  if (!object.visible) {
+    return 0;
+  }
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (current === scene) {
+      return 1;
+    }
+    current = current.parent;
+  }
+  return 0;
 }
 
 function takeUnordered<T>(items: T[], index: number): T {

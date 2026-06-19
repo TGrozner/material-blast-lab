@@ -95,6 +95,15 @@ export class CameraRig {
     this.shakeTime = Math.max(this.shakeTime, duration);
   }
 
+  resetTransientMotion(): void {
+    this.camera.position.sub(this.previousShake);
+    this.previousShake.set(0, 0, 0);
+    this.spectacleYaw = 0;
+    this.shakeTime = 0;
+    this.shakeDuration = 0;
+    this.shakeMagnitude = 0;
+  }
+
   update(deltaSeconds: number): void {
     this.camera.position.sub(this.previousShake);
     this.previousShake.set(0, 0, 0);

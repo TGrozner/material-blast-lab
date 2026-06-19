@@ -393,6 +393,14 @@ export class GameUI {
     this.showScreen("play");
   }
 
+  hideScorePanel(): void {
+    this.scoreWasVisible = false;
+    this.renderedScore = null;
+    this.scorePanel.classList.remove("is-visible");
+    this.scorePanel.innerHTML = "";
+    this.root.classList.remove("has-results");
+  }
+
   showHomeScreen(): void {
     this.showScreen("home");
   }

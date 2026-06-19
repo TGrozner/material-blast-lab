@@ -162,6 +162,11 @@ interface DowntownMayhemRenderStats {
   programs: number;
   visibleMeshes: number;
   visibleMaterials: number;
+  visiblePooledVfxObjects: number;
+  fragmentInstanceBuckets: number;
+  fragmentInstanceVisibleBuckets: number;
+  fragmentInstanceWarmupBuckets: number;
+  fragmentInstanceOverflowBuckets: number;
 }
 
 interface DowntownMayhemDebugApi {
@@ -1866,7 +1871,12 @@ class Game {
     textures: 0,
     programs: 0,
     visibleMeshes: 0,
-    visibleMaterials: 0
+    visibleMaterials: 0,
+    visiblePooledVfxObjects: 0,
+    fragmentInstanceBuckets: 0,
+    fragmentInstanceVisibleBuckets: 0,
+    fragmentInstanceWarmupBuckets: 0,
+    fragmentInstanceOverflowBuckets: 0
   };
 
   constructor(settings: GameSettings, rendererBundle: DowntownMayhemRendererBundle, private readonly options: GameOptions = {}) {
@@ -2162,6 +2172,7 @@ class Game {
     const visibleMaterials = new Set<THREE.Material>();
     let visibleMeshes = 0;
     const physicsStats = this.physics.getRuntimeStats();
+    const fragmentStats = this.destruction.getFragmentInstanceStats();
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || !object.visible) {
         return;
@@ -2194,7 +2205,12 @@ class Game {
       textures: this.renderer.info.memory.textures,
       programs: rendererProgramCount(this.renderer),
       visibleMeshes,
-      visibleMaterials: visibleMaterials.size
+      visibleMaterials: visibleMaterials.size,
+      visiblePooledVfxObjects: this.particles.getVisiblePooledEffectCount(),
+      fragmentInstanceBuckets: fragmentStats.buckets,
+      fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
+      fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
+      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets
     };
     this.renderStatsFrame += 1;
     return { ...this.lastRenderStats };
@@ -2202,6 +2218,7 @@ class Game {
 
   private captureFastRenderStats(): DowntownMayhemRenderStats {
     const physicsStats = this.physics.getRuntimeStats();
+    const fragmentStats = this.destruction.getFragmentInstanceStats();
     this.lastRenderStats = {
       ...this.lastRenderStats,
       frame: this.renderStatsFrame,
@@ -2223,7 +2240,12 @@ class Game {
       points: this.renderer.info.render.points,
       geometries: this.renderer.info.memory.geometries,
       textures: this.renderer.info.memory.textures,
-      programs: rendererProgramCount(this.renderer)
+      programs: rendererProgramCount(this.renderer),
+      visiblePooledVfxObjects: this.particles.getVisiblePooledEffectCount(),
+      fragmentInstanceBuckets: fragmentStats.buckets,
+      fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
+      fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
+      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets
     };
     this.renderStatsFrame += 1;
     return { ...this.lastRenderStats };
@@ -2387,6 +2409,7 @@ class Game {
     this.projectiles.clearActive();
     this.destruction.clearQueuedFractures();
     this.destruction.clearVisualFragments();
+    this.destruction.pruneFragmentInstanceBuckets();
     this.chainImpactCooldowns.clear();
     this.surfaceImpactCooldowns.clear();
     this.triggeredHazards.clear();
@@ -2405,6 +2428,8 @@ class Game {
     this.scorePopups.clear();
     this.slowMotionTimer = 0;
     this.hitStopTimer = 0;
+    this.aimTrafficAccumulator = 0;
+    this.cameraRig.resetTransientMotion();
     const level = this.currentLevel();
     this.cannon.setBasePosition(level.cannonPosition);
     this.positionCannonBattery(level.cannonPosition);
@@ -2498,6 +2523,7 @@ class Game {
       this.destruction.parkFragmentVisualWarmupPreview();
       this.physics.clearFrozenRubbleWarmupObjects();
       this.particles.clearTransientEffects();
+      this.particles.hidePooledEffects();
       this.disposeRenderWarmupGroup();
       restoreFrustumCulling();
     }
@@ -2635,6 +2661,11 @@ class Game {
           stableFrames = 0;
         }
       }
+      this.destruction.parkFragmentVisualWarmupPreview();
+      this.particles.clearTransientEffects();
+      this.particles.hidePooledEffects();
+      this.destruction.flushFragmentInstanceBounds();
+      this.physics.flushInstancedRenderBounds();
       const finishedAt = performance.now();
       this.renderWarmupState = {
         ...this.renderWarmupState,
@@ -2673,6 +2704,7 @@ class Game {
       };
       this.status = "Renderer warmup failed; impact may stutter.";
     } finally {
+      this.particles.hidePooledEffects();
       restoreFrustumCulling();
     }
   }
@@ -2682,12 +2714,6 @@ class Game {
     this.renderWarmupToken = token;
     this.disposeRenderWarmupGroup();
     this.renderWarmupPersistentObjects.length = 0;
-    const group = this.createRenderWarmupGroup();
-    this.renderWarmupGroup = group;
-    const warmupCameras = createRenderWarmupCameras(this.cameraRig.camera);
-    const runtimeWarmupObjectIds = this.createRuntimeFragmentWarmupObjects();
-    const runtimeFragmentPipelineWarmupObjectIds = this.destruction.createRuntimeFragmentPipelineWarmupObjects();
-    const restoreFrustumCulling = disableSceneFrustumCullingForWarmup(this.scene);
     const smokeMode = isSmokeWarmupMode();
     const brutalPasses = smokeMode ? 1 : RESET_WARMUP_BRUTAL_PASSES;
     const framesPerBrutalPass = smokeMode ? 2 : RESET_WARMUP_FRAMES_PER_BRUTAL_PASS;
@@ -2696,9 +2722,14 @@ class Game {
     const postCleanupEffectPasses = smokeMode ? 1 : RESET_WARMUP_POST_CLEANUP_EFFECT_PASSES;
     const postCleanupEffectFrames = smokeMode ? 2 : RESET_WARMUP_POST_CLEANUP_EFFECT_FRAMES;
     const settleFrames = smokeMode ? SMOKE_RESET_WARMUP_SETTLE_FRAMES : RESET_WARMUP_SETTLE_FRAMES;
+    let group: THREE.Group | null = null;
+    let warmupCameras: THREE.PerspectiveCamera[] = [];
+    let restoreFrustumCulling: (() => void) | null = null;
     let frames = 0;
     let renderWarmupGroupDisposed = false;
     const startedAt = performance.now();
+    const runtimeWarmupObjectIds: number[] = [];
+    const runtimeFragmentPipelineWarmupObjectIds: number[] = [];
     const updateWarmupState = (): void => {
       this.renderWarmupState = {
         ...this.renderWarmupState,
@@ -2714,6 +2745,13 @@ class Game {
       }
       this.disposeRenderWarmupGroup();
       renderWarmupGroupDisposed = true;
+    };
+    const restoreWarmupFrustumCulling = (): void => {
+      if (!restoreFrustumCulling) {
+        return;
+      }
+      restoreFrustumCulling();
+      restoreFrustumCulling = null;
     };
     const cleanupTransientWarmup = (preserveParticlePools = false): void => {
       this.destruction.parkFragmentVisualWarmupPreview();
@@ -2756,6 +2794,12 @@ class Game {
     this.status = "Preparing reset renderer pipelines.";
     this.options.updateLoadingStatus?.("Cleaning reset effects");
     try {
+      group = this.createRenderWarmupGroup();
+      this.renderWarmupGroup = group;
+      warmupCameras = createRenderWarmupCameras(this.cameraRig.camera);
+      runtimeWarmupObjectIds.push(...this.createRuntimeFragmentWarmupObjects());
+      runtimeFragmentPipelineWarmupObjectIds.push(...this.destruction.createRuntimeFragmentPipelineWarmupObjects());
+      restoreFrustumCulling = disableSceneFrustumCullingForWarmup(this.scene);
       this.particles.clearTransientEffects();
       this.destruction.clearQueuedFractures();
       this.destruction.clearVisualFragments();
@@ -2798,7 +2842,7 @@ class Game {
       }
 
       cleanupTransientWarmup(true);
-      restoreFrustumCulling();
+      restoreWarmupFrustumCulling();
       this.options.updateLoadingStatus?.("Settling reset renderer");
       for (let pass = 0; pass < postCleanupEffectPasses; pass += 1) {
         this.destruction.showFragmentVisualWarmupPreview();
@@ -2827,6 +2871,11 @@ class Game {
           return;
         }
       }
+      this.destruction.parkFragmentVisualWarmupPreview();
+      this.particles.clearTransientEffects();
+      this.particles.hidePooledEffects();
+      this.destruction.flushFragmentInstanceBounds();
+      this.physics.flushInstancedRenderBounds();
       const finishedAt = performance.now();
       this.renderWarmupState = {
         ...this.renderWarmupState,
@@ -2865,7 +2914,8 @@ class Game {
       this.status = "Reset renderer warmup failed; next impact may stutter.";
     } finally {
       cleanupTransientWarmup(true);
-      restoreFrustumCulling();
+      this.particles.hidePooledEffects();
+      restoreWarmupFrustumCulling();
     }
   }
 
@@ -4053,20 +4103,20 @@ class Game {
     this.options.showLoading?.(level.name, status);
     try {
       this.loadLevel();
-      this.ui.showPlayScreen();
+      this.ui.hideScorePanel();
       if (reuseWarmup) {
         this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
         this.status = `${level.name}: ${level.objective}`;
-        this.updateHud();
         this.options.updateLoadingStatus?.("Preparing reset renderer pipelines");
         await this.warmResetRuntimePipelines();
-        this.updateHud();
-        this.options.updateLoadingStatus?.("Ready");
       } else {
         this.scheduleRenderWarmup();
         this.options.updateLoadingStatus?.("Warming renderer pipelines");
         await this.waitForRenderWarmup();
       }
+      this.ui.showPlayScreen();
+      this.updateHud();
+      this.options.updateLoadingStatus?.("Ready");
       perfMonitor.clear();
       this.perfDiskLogger?.flush("level-reload-ready");
     } finally {

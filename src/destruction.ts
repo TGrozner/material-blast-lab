@@ -110,6 +110,7 @@ interface FragmentInstanceBucket {
   tileZ: number;
   overflowIndex: number;
   keepResident: boolean;
+  warmupResident: boolean;
   hiddenMatrix: THREE.Matrix4;
 }
 
@@ -155,6 +156,13 @@ interface VisualOnlyFragment {
 export interface QueuedFractureStats {
   processed: number;
   remaining: number;
+}
+
+export interface FragmentInstanceStats {
+  buckets: number;
+  visibleBuckets: number;
+  warmupBuckets: number;
+  overflowBuckets: number;
 }
 
 const MAX_FRACTURES_PER_EXPLOSION = 26;
@@ -293,6 +301,59 @@ class FragmentInstanceRenderer {
     this.dirtyBuckets.clear();
     perfMonitor.addCount("render.fragmentInstanceBoundsUpdated", updated);
     perfMonitor.addTiming("render.fragmentInstanceBounds", startedAt);
+  }
+
+  pruneEmptyBuckets(): number {
+    let pruned = 0;
+    for (const [key, bucket] of Array.from(this.buckets.entries())) {
+      this.shrinkBucketHighWater(bucket);
+      this.refreshBucketDrawState(bucket);
+      if (bucket.keepResident || bucket.warmupResident || bucket.activeCount > 0 || bucket.highWater > 0) {
+        continue;
+      }
+      this.dirtyBuckets.delete(bucket);
+      bucket.mesh.parent?.remove(bucket.mesh);
+      this.buckets.delete(key);
+      const familyKey = fragmentBucketFamilyKey(bucket.groupKey, bucket.tileX, bucket.tileZ);
+      const family = this.bucketFamilies.get(familyKey);
+      if (family) {
+        const familyIndex = family.indexOf(bucket);
+        if (familyIndex >= 0) {
+          family.splice(familyIndex, 1);
+        }
+        if (family.length === 0) {
+          this.bucketFamilies.delete(familyKey);
+        }
+      }
+      pruned += 1;
+    }
+    if (pruned > 0) {
+      perfMonitor.addCount("render.fragmentInstanceBucketsPruned", pruned);
+    }
+    return pruned;
+  }
+
+  getStats(): FragmentInstanceStats {
+    let visibleBuckets = 0;
+    let warmupBuckets = 0;
+    let overflowBuckets = 0;
+    for (const bucket of this.buckets.values()) {
+      if (bucket.mesh.visible && bucket.mesh.count > 0) {
+        visibleBuckets += 1;
+      }
+      if (bucket.keepResident || bucket.warmupResident) {
+        warmupBuckets += 1;
+      }
+      if (bucket.overflowIndex > 0) {
+        overflowBuckets += 1;
+      }
+    }
+    return {
+      buckets: this.buckets.size,
+      visibleBuckets,
+      warmupBuckets,
+      overflowBuckets
+    };
   }
 
   acquire(
@@ -458,7 +519,7 @@ class FragmentInstanceRenderer {
       this.writeMatrix(slot, matrix);
       return slot;
     }
-    const nextBucket = this.bucketForGroup(slot.groupKey, metadata.material, metadata.name, tileX, tileZ, false, moveMetric);
+    const nextBucket = this.bucketForGroup(slot.groupKey, metadata.material, metadata.name, tileX, tileZ, false, false, moveMetric);
     const nextSlot = this.acquireSlot(nextBucket, "render.fragmentInstanceMigratedSlotReuse");
     if (!nextSlot) {
       this.writeMatrix(slot, matrix);
@@ -505,6 +566,7 @@ class FragmentInstanceRenderer {
       0,
       0,
       true,
+      true,
       "render.fragmentInstanceWarmupBucketMiss"
     );
   }
@@ -516,6 +578,7 @@ class FragmentInstanceRenderer {
       `${material.name || "fragment detail"} instanced fragment details`,
       0,
       0,
+      true,
       true,
       "render.fragmentDetailWarmupBucketMiss"
     );
@@ -530,6 +593,7 @@ class FragmentInstanceRenderer {
       fragmentInstanceTileCoordinate(position.x),
       fragmentInstanceTileCoordinate(position.z),
       false,
+      false,
       missMetric
     );
   }
@@ -542,6 +606,7 @@ class FragmentInstanceRenderer {
       fragmentInstanceTileCoordinate(position.x),
       fragmentInstanceTileCoordinate(position.z),
       false,
+      false,
       missMetric
     );
   }
@@ -553,6 +618,7 @@ class FragmentInstanceRenderer {
     tileX: number,
     tileZ: number,
     keepResident: boolean,
+    warmupResident: boolean,
     missMetric: string
   ): FragmentInstanceBucket {
     this.bucketMetadata.set(groupKey, { material, name });
@@ -566,12 +632,17 @@ class FragmentInstanceRenderer {
     if (available) {
       if (keepResident) {
         available.keepResident = true;
+        available.warmupResident = true;
         this.refreshBucketDrawState(available);
+      }
+      if (warmupResident) {
+        available.warmupResident = true;
       }
       return available;
     }
     perfMonitor.addCount(missMetric);
-    const bucket = this.createBucket(groupKey, material, name, tileX, tileZ, family.length, keepResident);
+    const overflowIndex = family.reduce((nextIndex, bucket) => Math.max(nextIndex, bucket.overflowIndex + 1), 0);
+    const bucket = this.createBucket(groupKey, material, name, tileX, tileZ, overflowIndex, keepResident, warmupResident);
     family.push(bucket);
     return bucket;
   }
@@ -583,7 +654,8 @@ class FragmentInstanceRenderer {
     tileX: number,
     tileZ: number,
     overflowIndex: number,
-    keepResident: boolean
+    keepResident: boolean,
+    warmupResident: boolean
   ): FragmentInstanceBucket {
     const key = fragmentBucketKey(groupKey, tileX, tileZ, overflowIndex);
     const mesh = new THREE.InstancedMesh(FRAGMENT_POOL_BOX_GEOMETRY, material, FRAGMENT_INSTANCE_BUCKET_CAPACITY);
@@ -613,6 +685,7 @@ class FragmentInstanceRenderer {
       tileZ,
       overflowIndex,
       keepResident,
+      warmupResident,
       hiddenMatrix
     };
     this.buckets.set(key, bucket);
@@ -674,6 +747,7 @@ class FragmentInstanceRenderer {
       tileX,
       tileZ,
       false,
+      true,
       "render.fragmentInstanceSpatialWarmupBucketMiss"
     );
     this.writeWarmupSlot(bucket, 0, bucket.hiddenMatrix);
@@ -785,6 +859,14 @@ export class DestructionSystem {
 
   flushFragmentInstanceBounds(): void {
     this.fragmentInstances.flushBounds();
+  }
+
+  pruneFragmentInstanceBuckets(): number {
+    return this.fragmentInstances.pruneEmptyBuckets();
+  }
+
+  getFragmentInstanceStats(): FragmentInstanceStats {
+    return this.fragmentInstances.getStats();
   }
 
   updateVisualFragments(deltaSeconds: number): void {

@@ -1320,6 +1320,8 @@ export class PhysicsWorld {
     for (const object of this.getDynamicObjects()) {
       this.removeObject(object.id);
     }
+    this.accumulator = 0;
+    this.rubbleFreezeElapsed = 0;
     this.debrisQueue.length = 0;
     this.debrisQueueHead = 0;
     this.clearStagedVisualActivationQueue();
