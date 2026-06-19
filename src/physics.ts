@@ -1402,6 +1402,10 @@ export class PhysicsWorld {
     return activated;
   }
 
+  getStagedVisualActivationBacklog(): number {
+    return this.stagedVisualActivationQueue.length - this.stagedVisualActivationQueueHead;
+  }
+
   wakeAll(): void {
     for (const object of this.objects.values()) {
       object.body.wakeUp();

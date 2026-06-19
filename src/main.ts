@@ -102,12 +102,19 @@ const RENDER_WARMUP_POST_CLEANUP_EFFECT_PASSES = 2;
 const RENDER_WARMUP_POST_CLEANUP_EFFECT_FRAMES = 8;
 const RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES = 72;
 const RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES = 260;
+const RENDER_WARMUP_MAX_DURATION_MS = 6_000;
+const RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS = 3_000;
 const RESET_WARMUP_BRUTAL_PASSES = 2;
 const RESET_WARMUP_FRAMES_PER_BRUTAL_PASS = 5;
 const RESET_WARMUP_SYNTHETIC_DESTRUCTION_PASSES = 2;
 const RESET_WARMUP_SYNTHETIC_DESTRUCTION_FRAMES = 5;
 const RESET_WARMUP_FRACTURE_PROCESS_MAX_PER_FRAME = 16;
 const RESET_WARMUP_FRACTURE_PROCESS_TIME_BUDGET_MS = 4;
+const RESET_WARMUP_STAGED_VISUAL_ACTIVATIONS_PER_FRAME = 24;
+const RESET_WARMUP_STAGED_VISUAL_ACTIVATION_TIME_BUDGET_MS = 0.55;
+const RESET_WARMUP_STAGED_VISUAL_ACTIVATION_MAX_PASSES = 48;
+const RESET_WARMUP_MAX_DURATION_MS = 6_000;
+const RESET_WARMUP_POST_CLEANUP_MAX_DURATION_MS = 2_500;
 const RESET_WARMUP_POST_CLEANUP_EFFECT_PASSES = 1;
 const RESET_WARMUP_POST_CLEANUP_EFFECT_FRAMES = 5;
 const RESET_WARMUP_SETTLE_FRAMES = 24;
@@ -199,6 +206,9 @@ interface SyntheticDestructionWarmupOptions {
   framesPerPass?: number;
   fractureProcessMaxPerFrame?: number;
   fractureProcessTimeBudgetMs?: number;
+  stagedVisualActivationMaxPerFrame?: number;
+  stagedVisualActivationTimeBudgetMs?: number;
+  deadlineAt?: number;
   statusPrefix?: string;
 }
 
@@ -411,6 +421,15 @@ function addInstancedWarmupVariants(group: THREE.Group, root: THREE.Object3D, la
 
 function renderWarmupYield(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function nextTaskYield(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitForDomPaint(): Promise<void> {
+  await renderWarmupYield();
+  await nextTaskYield();
 }
 
 function createRenderWarmupCameras(sourceCamera: THREE.PerspectiveCamera): THREE.PerspectiveCamera[] {
@@ -2569,6 +2588,7 @@ class Game {
       let frames = 0;
       let stableFrames = 0;
       let lastProgramCount = rendererProgramCount(this.renderer);
+      const warmupDeadline = performance.now() + RENDER_WARMUP_MAX_DURATION_MS;
       const updateWarmupState = (): void => {
         this.renderWarmupState = {
           ...this.renderWarmupState,
@@ -2591,12 +2611,12 @@ class Game {
         updateWarmupState();
         return true;
       };
-      for (let pass = 0; pass < RENDER_WARMUP_BRUTAL_PASSES; pass += 1) {
+      for (let pass = 0; pass < RENDER_WARMUP_BRUTAL_PASSES && performance.now() < warmupDeadline; pass += 1) {
         this.status = `Preparing renderer pipelines before impact (${pass + 1}/${RENDER_WARMUP_BRUTAL_PASSES}).`;
         this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
         this.destruction.showFragmentVisualWarmupPreview();
         this.playRenderWarmupEffects(pass);
-        for (let frame = 0; frame < RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS; frame += 1) {
+        for (let frame = 0; frame < RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS && performance.now() < warmupDeadline; frame += 1) {
           if (!(await renderWarmupFrame())) {
             return;
           }
@@ -2604,10 +2624,14 @@ class Game {
         lastProgramCount = rendererProgramCount(this.renderer);
         stableFrames = 0;
       }
-      if (!(await this.runSyntheticDestructionWarmup(token, renderWarmupFrame))) {
+      if (
+        performance.now() < warmupDeadline &&
+        !(await this.runSyntheticDestructionWarmup(token, renderWarmupFrame, { deadlineAt: warmupDeadline }))
+      ) {
         return;
       }
       while (
+        performance.now() < warmupDeadline &&
         frames < RENDER_WARMUP_MAX_FRAMES &&
         (frames < RENDER_WARMUP_MIN_FRAMES || stableFrames < RENDER_WARMUP_STABLE_FRAMES)
       ) {
@@ -2625,10 +2649,19 @@ class Game {
       cleanupTransientWarmup(false, true, false);
       restoreFrustumCulling();
       this.status = "Preparing renderer pipelines before impact (runtime cascade pools).";
-      for (let pass = 0; pass < RENDER_WARMUP_POST_CLEANUP_EFFECT_PASSES; pass += 1) {
+      const postCleanupDeadline = performance.now() + RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS;
+      for (
+        let pass = 0;
+        pass < RENDER_WARMUP_POST_CLEANUP_EFFECT_PASSES && performance.now() < postCleanupDeadline;
+        pass += 1
+      ) {
         this.destruction.showFragmentVisualWarmupPreview();
         this.playRenderWarmupEffects(RENDER_WARMUP_BRUTAL_PASSES + pass);
-        for (let frame = 0; frame < RENDER_WARMUP_POST_CLEANUP_EFFECT_FRAMES; frame += 1) {
+        for (
+          let frame = 0;
+          frame < RENDER_WARMUP_POST_CLEANUP_EFFECT_FRAMES && performance.now() < postCleanupDeadline;
+          frame += 1
+        ) {
           if (!(await renderWarmupFrame())) {
             return;
           }
@@ -2647,6 +2680,7 @@ class Game {
       stableFrames = 0;
       let postCleanupFrames = 0;
       while (
+        performance.now() < postCleanupDeadline &&
         postCleanupFrames < RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES &&
         stableFrames < RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES
       ) {
@@ -2716,20 +2750,21 @@ class Game {
     this.disposeRenderWarmupGroup();
     this.renderWarmupPersistentObjects.length = 0;
     const smokeMode = isSmokeWarmupMode();
-    const fastSmokeResetWarmup = smokeMode && !shouldIncludeFullPerfDiskReport();
+    const fastResetWarmup = !shouldIncludeFullPerfDiskReport();
     const brutalPasses = smokeMode ? 1 : RESET_WARMUP_BRUTAL_PASSES;
-    const framesPerBrutalPass = fastSmokeResetWarmup ? 1 : smokeMode ? 2 : RESET_WARMUP_FRAMES_PER_BRUTAL_PASS;
-    const syntheticPasses = fastSmokeResetWarmup ? 0 : smokeMode ? 1 : RESET_WARMUP_SYNTHETIC_DESTRUCTION_PASSES;
-    const syntheticFrames = fastSmokeResetWarmup ? 0 : smokeMode ? 2 : RESET_WARMUP_SYNTHETIC_DESTRUCTION_FRAMES;
-    const postCleanupEffectPasses = fastSmokeResetWarmup ? 0 : smokeMode ? 1 : RESET_WARMUP_POST_CLEANUP_EFFECT_PASSES;
-    const postCleanupEffectFrames = fastSmokeResetWarmup ? 0 : smokeMode ? 2 : RESET_WARMUP_POST_CLEANUP_EFFECT_FRAMES;
-    const settleFrames = fastSmokeResetWarmup ? 1 : smokeMode ? SMOKE_RESET_WARMUP_SETTLE_FRAMES : RESET_WARMUP_SETTLE_FRAMES;
+    const framesPerBrutalPass = fastResetWarmup ? 1 : smokeMode ? 2 : RESET_WARMUP_FRAMES_PER_BRUTAL_PASS;
+    const syntheticPasses = fastResetWarmup ? 0 : smokeMode ? 1 : RESET_WARMUP_SYNTHETIC_DESTRUCTION_PASSES;
+    const syntheticFrames = fastResetWarmup ? 0 : smokeMode ? 2 : RESET_WARMUP_SYNTHETIC_DESTRUCTION_FRAMES;
+    const postCleanupEffectPasses = fastResetWarmup ? 0 : smokeMode ? 1 : RESET_WARMUP_POST_CLEANUP_EFFECT_PASSES;
+    const postCleanupEffectFrames = fastResetWarmup ? 0 : smokeMode ? 2 : RESET_WARMUP_POST_CLEANUP_EFFECT_FRAMES;
+    const settleFrames = fastResetWarmup ? 1 : smokeMode ? SMOKE_RESET_WARMUP_SETTLE_FRAMES : RESET_WARMUP_SETTLE_FRAMES;
     let group: THREE.Group | null = null;
     let warmupCameras: THREE.PerspectiveCamera[] = [];
     let restoreFrustumCulling: (() => void) | null = null;
     let frames = 0;
     let renderWarmupGroupDisposed = false;
     const startedAt = performance.now();
+    const resetWarmupDeadline = startedAt + RESET_WARMUP_MAX_DURATION_MS;
     const runtimeWarmupObjectIds: number[] = [];
     const runtimeFragmentPipelineWarmupObjectIds: number[] = [];
     const updateWarmupState = (): void => {
@@ -2783,6 +2818,26 @@ class Game {
       updateWarmupState();
       return true;
     };
+    const drainStagedVisualActivations = async (): Promise<boolean> => {
+      let passes = 0;
+      while (
+        performance.now() < resetWarmupDeadline &&
+        this.physics.getStagedVisualActivationBacklog() > 0 &&
+        passes < RESET_WARMUP_STAGED_VISUAL_ACTIVATION_MAX_PASSES
+      ) {
+        this.physics.flushStagedVisualActivations(
+          RESET_WARMUP_STAGED_VISUAL_ACTIVATIONS_PER_FRAME,
+          RESET_WARMUP_STAGED_VISUAL_ACTIVATION_TIME_BUDGET_MS
+        );
+        this.destruction.flushFragmentInstanceBounds();
+        this.physics.flushInstancedRenderBounds();
+        passes += 1;
+        if (!(await renderWarmupFrame())) {
+          return false;
+        }
+      }
+      return true;
+    };
     this.renderWarmupState = {
       phase: "warming",
       token,
@@ -2798,14 +2853,13 @@ class Game {
     try {
       group = this.createRenderWarmupGroup();
       this.renderWarmupGroup = group;
-      warmupCameras = fastSmokeResetWarmup ? [this.cameraRig.camera] : createRenderWarmupCameras(this.cameraRig.camera);
+      warmupCameras = fastResetWarmup ? [this.cameraRig.camera] : createRenderWarmupCameras(this.cameraRig.camera);
       runtimeWarmupObjectIds.push(...this.createRuntimeFragmentWarmupObjects());
       runtimeFragmentPipelineWarmupObjectIds.push(...this.destruction.createRuntimeFragmentPipelineWarmupObjects());
       restoreFrustumCulling = disableSceneFrustumCullingForWarmup(this.scene);
       this.particles.clearTransientEffects();
       this.destruction.clearQueuedFractures();
       this.destruction.clearVisualFragments();
-      this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
       this.destruction.parkFragmentVisualWarmupPreview();
       this.particles.keepPoolPipelinesResident();
       this.destruction.flushFragmentInstanceBounds();
@@ -2815,22 +2869,27 @@ class Game {
       this.options.updateLoadingStatus?.("Preparing reset renderer pipelines");
       this.destruction.showFragmentVisualWarmupPreview();
       this.playRenderWarmupEffects(0);
+      if (!(await drainStagedVisualActivations())) {
+        return;
+      }
       for (const camera of warmupCameras) {
         await this.renderer.compileAsync(this.scene, camera);
       }
-      for (let pass = 0; pass < brutalPasses; pass += 1) {
+      for (let pass = 0; pass < brutalPasses && performance.now() < resetWarmupDeadline; pass += 1) {
         this.status = `Preparing reset renderer pipelines (${pass + 1}/${brutalPasses}).`;
         this.options.updateLoadingStatus?.(`Preparing reset renderer pipelines ${pass + 1}/${brutalPasses}`);
-        this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+        if (!(await drainStagedVisualActivations())) {
+          return;
+        }
         this.destruction.showFragmentVisualWarmupPreview();
         this.playRenderWarmupEffects(pass);
-        for (let frame = 0; frame < framesPerBrutalPass; frame += 1) {
+        for (let frame = 0; frame < framesPerBrutalPass && performance.now() < resetWarmupDeadline; frame += 1) {
           if (!(await renderWarmupFrame())) {
             return;
           }
         }
       }
-      if (syntheticPasses > 0) {
+      if (syntheticPasses > 0 && performance.now() < resetWarmupDeadline) {
         this.options.updateLoadingStatus?.("Rehearsing reset destruction");
         if (
           !(await this.runSyntheticDestructionWarmup(token, renderWarmupFrame, {
@@ -2838,6 +2897,9 @@ class Game {
             framesPerPass: syntheticFrames,
             fractureProcessMaxPerFrame: RESET_WARMUP_FRACTURE_PROCESS_MAX_PER_FRAME,
             fractureProcessTimeBudgetMs: RESET_WARMUP_FRACTURE_PROCESS_TIME_BUDGET_MS,
+            stagedVisualActivationMaxPerFrame: RESET_WARMUP_STAGED_VISUAL_ACTIVATIONS_PER_FRAME,
+            stagedVisualActivationTimeBudgetMs: RESET_WARMUP_STAGED_VISUAL_ACTIVATION_TIME_BUDGET_MS,
+            deadlineAt: resetWarmupDeadline,
             statusPrefix: "Preparing reset renderer pipelines"
           }))
         ) {
@@ -2848,10 +2910,11 @@ class Game {
       cleanupTransientWarmup(true);
       restoreWarmupFrustumCulling();
       this.options.updateLoadingStatus?.("Settling reset renderer");
-      for (let pass = 0; pass < postCleanupEffectPasses; pass += 1) {
+      const postCleanupDeadline = performance.now() + RESET_WARMUP_POST_CLEANUP_MAX_DURATION_MS;
+      for (let pass = 0; pass < postCleanupEffectPasses && performance.now() < postCleanupDeadline; pass += 1) {
         this.destruction.showFragmentVisualWarmupPreview();
         this.playRenderWarmupEffects(brutalPasses + pass);
-        for (let frame = 0; frame < postCleanupEffectFrames; frame += 1) {
+        for (let frame = 0; frame < postCleanupEffectFrames && performance.now() < postCleanupDeadline; frame += 1) {
           if (!(await renderWarmupFrame())) {
             return;
           }
@@ -2870,7 +2933,7 @@ class Game {
       this.particles.keepPoolPipelinesResident();
       this.destruction.flushFragmentInstanceBounds();
       this.physics.flushInstancedRenderBounds();
-      for (let frame = 0; frame < settleFrames; frame += 1) {
+      for (let frame = 0; frame < settleFrames && performance.now() < postCleanupDeadline; frame += 1) {
         if (!(await renderWarmupFrame())) {
           return;
         }
@@ -3041,10 +3104,13 @@ class Game {
     const framesPerPass = options.framesPerPass ?? RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS;
     const fractureProcessMaxPerFrame = options.fractureProcessMaxPerFrame ?? 24;
     const fractureProcessTimeBudgetMs = options.fractureProcessTimeBudgetMs ?? 8;
+    const stagedVisualActivationMaxPerFrame = options.stagedVisualActivationMaxPerFrame ?? Number.POSITIVE_INFINITY;
+    const stagedVisualActivationTimeBudgetMs = options.stagedVisualActivationTimeBudgetMs ?? 0;
+    const deadlineAt = options.deadlineAt ?? Number.POSITIVE_INFINITY;
     const statusPrefix = options.statusPrefix ?? "Preparing renderer pipelines before impact";
     const objectIds = this.createSyntheticDestructionWarmupObjects();
     try {
-      for (let pass = 0; pass < passes; pass += 1) {
+      for (let pass = 0; pass < passes && performance.now() < deadlineAt; pass += 1) {
         this.status = `${statusPrefix} (destruction ${pass + 1}/${passes}).`;
         const origin = RENDER_WARMUP_SYNTHETIC_ORIGIN.clone().add(new THREE.Vector3(pass * 1.35, pass * 0.16, -pass * 0.95));
         const projectileId = (Object.keys(PROJECTILES) as ProjectileId[])[pass % Object.keys(PROJECTILES).length];
@@ -3062,9 +3128,9 @@ class Game {
         this.particles.cityDebrisSpray(origin.clone().add(new THREE.Vector3(0.25, 0.08, 0)), result.dustColors, 2.6);
         this.particles.fireBurst(origin.clone().add(new THREE.Vector3(0.55, 0.1, -0.35)), 2.05);
         this.particles.spark(origin.clone().add(new THREE.Vector3(-0.45, 0.12, 0.18)), 0xffd25c, 2.4);
-        for (let frame = 0; frame < framesPerPass; frame += 1) {
+        for (let frame = 0; frame < framesPerPass && performance.now() < deadlineAt; frame += 1) {
           this.destruction.processQueuedFractures(fractureProcessMaxPerFrame, fractureProcessTimeBudgetMs);
-          this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+          this.physics.flushStagedVisualActivations(stagedVisualActivationMaxPerFrame, stagedVisualActivationTimeBudgetMs);
           if (!(await renderWarmupFrame())) {
             return false;
           }
@@ -3073,9 +3139,9 @@ class Game {
           }
         }
       }
-      while (this.destruction.getQueuedFractureCount() > 0) {
+      while (this.destruction.getQueuedFractureCount() > 0 && performance.now() < deadlineAt) {
         this.destruction.processQueuedFractures(fractureProcessMaxPerFrame, fractureProcessTimeBudgetMs);
-        this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+        this.physics.flushStagedVisualActivations(stagedVisualActivationMaxPerFrame, stagedVisualActivationTimeBudgetMs);
         if (!(await renderWarmupFrame())) {
           return false;
         }
@@ -3083,7 +3149,7 @@ class Game {
           return false;
         }
       }
-      this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+      this.physics.flushStagedVisualActivations(stagedVisualActivationMaxPerFrame, stagedVisualActivationTimeBudgetMs);
       return true;
     } finally {
       this.clearRuntimeWarmupObjects(objectIds);
@@ -4105,11 +4171,15 @@ class Game {
     const reuseWarmup = options.reuseWarmup === true && this.canReuseCurrentLevelWarmup();
     this.perfDiskLogger?.flush("level-reload-start");
     this.options.showLoading?.(level.name, status);
+    await waitForDomPaint();
     try {
       this.loadLevel();
       this.ui.hideScorePanel();
       if (reuseWarmup) {
-        this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
+        this.physics.flushStagedVisualActivations(
+          RESET_WARMUP_STAGED_VISUAL_ACTIVATIONS_PER_FRAME,
+          RESET_WARMUP_STAGED_VISUAL_ACTIVATION_TIME_BUDGET_MS
+        );
         this.status = `${level.name}: ${level.objective}`;
         this.options.updateLoadingStatus?.("Preparing reset renderer pipelines");
         await this.warmResetRuntimePipelines();
@@ -4311,6 +4381,7 @@ async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number)
   activeGame = null;
   delete window.__DOWNTOWN_MAYHEM_DEBUG__;
   shell.showLoading(level.name, "Initializing physics engine");
+  await waitForDomPaint();
 
   try {
     await ensureRapierReady();
@@ -4326,6 +4397,7 @@ async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number)
     }
 
     shell.updateLoadingStatus("Building destructible district");
+    await waitForDomPaint();
     const game = new Game(settings, rendererBundle, {
       initialLevelIndex: levelIndex,
       onMainMenu: () => returnToMainMenu(shell),
