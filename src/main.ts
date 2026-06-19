@@ -341,6 +341,23 @@ function isSmokeWarmupMode(): boolean {
   }
 }
 
+function shouldBlockOnRenderWarmup(): boolean {
+  try {
+    const search = new URLSearchParams(globalThis.location?.search ?? "");
+    return search.has("smoke") || search.has("fullWarmup");
+  } catch {
+    return false;
+  }
+}
+
+function shouldRunFullWarmupDiagnostic(): boolean {
+  try {
+    return new URLSearchParams(globalThis.location?.search ?? "").has("fullWarmup");
+  } catch {
+    return false;
+  }
+}
+
 function renderWarmupFragmentSize(materialId: MaterialId): THREE.Vector3 {
   switch (materialId) {
     case "glass":
@@ -1959,7 +1976,12 @@ class Game {
     this.loadLevel();
     this.audio.preload();
     this.resize();
-    this.scheduleRenderWarmup();
+    if (shouldBlockOnRenderWarmup()) {
+      this.scheduleRenderWarmup();
+    } else {
+      this.markCurrentLevelWarmupReady();
+      this.renderWarmupState = this.createImmediateReadyWarmupState(performance.now());
+    }
     this.perfDiskLogger?.start();
     window.addEventListener("resize", this.handleResize);
     window.visualViewport?.addEventListener("resize", this.handleResize);
@@ -2422,9 +2444,7 @@ class Game {
     return mesh;
   }
 
-  private loadLevel(): void {
-    this.physics.clearDynamic();
-    this.clearLevelDecorations();
+  private resetLevelRuntimeState(level: TestChamber): void {
     this.invalidateAimSurfaceTargets();
     this.projectiles.clearActive();
     this.destruction.clearQueuedFractures();
@@ -2450,12 +2470,20 @@ class Game {
     this.hitStopTimer = 0;
     this.aimTrafficAccumulator = 0;
     this.cameraRig.resetTransientMotion();
-    const level = this.currentLevel();
     this.cannon.setBasePosition(level.cannonPosition);
     this.positionCannonBattery(level.cannonPosition);
     this.aimPoint.copy(level.defaultAimPoint ?? DEFAULT_AIM_POINT);
     this.aimMarkerPoint.set(this.aimPoint.x, AIM_FALLBACK_SURFACE_Y, this.aimPoint.z);
     this.aimSurfaceNormal.copy(AIM_SURFACE_NORMAL);
+    this.status = `${level.name}: ${level.objective}`;
+    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
+  }
+
+  private loadLevel(): void {
+    const level = this.currentLevel();
+    this.physics.clearDynamic();
+    this.clearLevelDecorations();
+    this.resetLevelRuntimeState(level);
     level.setup({
       physics: this.physics,
       materials: this.materials,
@@ -2464,12 +2492,24 @@ class Game {
     this.physics.batchStaticDetails();
     this.invalidateAimSurfaceTargets();
     setOptionalShadowMapFlag(this.renderer, "needsUpdate", true);
-    this.status = `${level.name}: ${level.objective}`;
-    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
   }
 
   waitForRenderWarmup(): Promise<void> {
     return this.renderWarmupPromise ?? Promise.resolve();
+  }
+
+  private createImmediateReadyWarmupState(startedAt: number): RenderWarmupState {
+    return {
+      phase: "ready",
+      token: this.renderWarmupToken,
+      startedAt,
+      finishedAt: startedAt,
+      durationMs: 0,
+      programs: rendererProgramCount(this.renderer),
+      geometries: this.renderer.info.memory.geometries,
+      frames: 0,
+      bodyCountAfterCleanup: this.physics.getDynamicBodyCount()
+    };
   }
 
   private scheduleRenderWarmup(): void {
@@ -2750,7 +2790,7 @@ class Game {
     this.disposeRenderWarmupGroup();
     this.renderWarmupPersistentObjects.length = 0;
     const smokeMode = isSmokeWarmupMode();
-    const fastResetWarmup = !shouldIncludeFullPerfDiskReport();
+    const fastResetWarmup = !shouldRunFullWarmupDiagnostic();
     const brutalPasses = smokeMode ? 1 : RESET_WARMUP_BRUTAL_PASSES;
     const framesPerBrutalPass = fastResetWarmup ? 1 : smokeMode ? 2 : RESET_WARMUP_FRAMES_PER_BRUTAL_PASS;
     const syntheticPasses = fastResetWarmup ? 0 : smokeMode ? 1 : RESET_WARMUP_SYNTHETIC_DESTRUCTION_PASSES;
@@ -4169,13 +4209,14 @@ class Game {
     void this.renderer.setAnimationLoop(null);
     const level = this.currentLevel();
     const reuseWarmup = options.reuseWarmup === true && this.canReuseCurrentLevelWarmup();
+    const blockOnWarmup = shouldBlockOnRenderWarmup();
     this.perfDiskLogger?.flush("level-reload-start");
     this.options.showLoading?.(level.name, status);
     await waitForDomPaint();
     try {
       this.loadLevel();
       this.ui.hideScorePanel();
-      if (reuseWarmup) {
+      if (reuseWarmup && blockOnWarmup) {
         this.physics.flushStagedVisualActivations(
           RESET_WARMUP_STAGED_VISUAL_ACTIVATIONS_PER_FRAME,
           RESET_WARMUP_STAGED_VISUAL_ACTIVATION_TIME_BUDGET_MS
@@ -4183,10 +4224,16 @@ class Game {
         this.status = `${level.name}: ${level.objective}`;
         this.options.updateLoadingStatus?.("Preparing reset renderer pipelines");
         await this.warmResetRuntimePipelines();
-      } else {
+      } else if (blockOnWarmup) {
         this.scheduleRenderWarmup();
         this.options.updateLoadingStatus?.("Warming renderer pipelines");
         await this.waitForRenderWarmup();
+      } else {
+        this.renderWarmupToken += 1;
+        this.renderWarmupPromise = null;
+        this.markCurrentLevelWarmupReady();
+        this.renderWarmupState = this.createImmediateReadyWarmupState(performance.now());
+        this.options.updateLoadingStatus?.("Ready");
       }
       this.ui.showPlayScreen();
       this.updateHud();
@@ -4358,6 +4405,9 @@ async function boot(): Promise<void> {
   activeShell = shell;
   shell.showMenu();
   void preloadGraphicTextures();
+  void ensureRapierReady().catch((error: unknown) => {
+    console.warn("Downtown Mayhem: physics engine preload failed.", error);
+  });
 
   if (import.meta.hot) {
     import.meta.hot.dispose(() => {
