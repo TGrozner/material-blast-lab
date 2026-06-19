@@ -845,7 +845,6 @@ export class PhysicsWorld {
       clone.name = `${object.label} support release warmup`;
       clone.visible = true;
       clone.matrixAutoUpdate = true;
-      cloneWarmupOwnedMeshResources(clone);
       clone.traverse((child) => {
         child.visible = true;
         child.frustumCulled = false;
@@ -2514,31 +2513,6 @@ function disposeMeshTree(root: THREE.Mesh): void {
       }
     }
   });
-}
-
-function cloneWarmupOwnedMeshResources(root: THREE.Object3D): void {
-  root.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) {
-      return;
-    }
-
-    const geometry = child.geometry.clone();
-    geometry.userData = { ...child.geometry.userData, renderWarmupOwned: true, sharedGeometry: false };
-    child.geometry = geometry;
-
-    if (Array.isArray(child.material)) {
-      child.material = child.material.map(cloneWarmupOwnedMaterial);
-    } else {
-      child.material = cloneWarmupOwnedMaterial(child.material);
-    }
-    child.userData.disposeMaterial = true;
-  });
-}
-
-function cloneWarmupOwnedMaterial(material: THREE.Material): THREE.Material {
-  const clone = material.clone();
-  clone.userData = { ...material.userData, renderWarmupOwned: true };
-  return clone;
 }
 
 const boxGeometryCache = new Map<string, THREE.BoxGeometry>();
