@@ -8,8 +8,21 @@ import { type RandomSource, randomInt, randomRange, randomUnitVector } from "./r
 const IMMEDIATE_PRIMARY_FRAGMENT_VISUALS = 6;
 const IMMEDIATE_DEBRIS_FRAGMENT_VISUALS = 3;
 const FRAGMENT_INSTANCE_BUCKET_CAPACITY = 512;
-const FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE = 12;
+const FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE = 48;
+const FRAGMENT_INSTANCE_MIN_TILE = -3;
+const FRAGMENT_INSTANCE_MAX_TILE = 3;
+const FRAGMENT_INSTANCE_MIGRATION_HYSTERESIS_TILES = 1;
 const FRAGMENT_INSTANCE_BUCKET_CENTER_Y = 7.5;
+const FRAGMENT_INSTANCE_BUCKET_HALF_Y = 56;
+const FRAGMENT_INSTANCE_BUCKET_BOUND_RADIUS = Math.hypot(
+  FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE * (FRAGMENT_INSTANCE_MIGRATION_HYSTERESIS_TILES + 0.5),
+  FRAGMENT_INSTANCE_BUCKET_HALF_Y,
+  FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE * (FRAGMENT_INSTANCE_MIGRATION_HYSTERESIS_TILES + 0.5)
+);
+const FRAGMENT_INSTANCE_SPATIAL_WARMUP_TILES = Array.from(
+  { length: FRAGMENT_INSTANCE_MAX_TILE - FRAGMENT_INSTANCE_MIN_TILE + 1 },
+  (_, index) => FRAGMENT_INSTANCE_MIN_TILE + index
+);
 const FRAGMENT_INSTANCE_WARMUP_PREVIEW_COUNT = 192;
 const RUNTIME_FRAGMENT_PIPELINE_WARMUP_PER_MATERIAL = 28;
 const MAX_QUEUED_FRACTURES = 260;
@@ -181,6 +194,7 @@ class FragmentInstanceRenderer {
         }
       }
     }
+    this.warmupSpatialBuckets(objects);
     this.showWarmupPreview();
     return objects;
   }
@@ -241,7 +255,6 @@ class FragmentInstanceRenderer {
     let updated = 0;
     for (const bucket of this.dirtyBuckets) {
       if (bucket.mesh.visible && bucket.mesh.count > 0) {
-        bucket.mesh.computeBoundingSphere();
         bucket.mesh.frustumCulled = true;
         updated += 1;
       } else {
@@ -396,7 +409,10 @@ class FragmentInstanceRenderer {
     const tileX = fragmentInstanceTileCoordinate(position.x);
     const tileZ = fragmentInstanceTileCoordinate(position.z);
     const bucket = slot.bucket;
-    if (bucket.tileX === tileX && bucket.tileZ === tileZ) {
+    if (
+      Math.abs(bucket.tileX - tileX) <= FRAGMENT_INSTANCE_MIGRATION_HYSTERESIS_TILES &&
+      Math.abs(bucket.tileZ - tileZ) <= FRAGMENT_INSTANCE_MIGRATION_HYSTERESIS_TILES
+    ) {
       this.writeMatrix(slot, matrix);
       return slot;
     }
@@ -426,7 +442,6 @@ class FragmentInstanceRenderer {
     const bucket = slot.bucket;
     bucket.mesh.setMatrixAt(slot.index, matrix);
     bucket.mesh.instanceMatrix.needsUpdate = true;
-    this.markBucketDirty(bucket);
   }
 
   private acquireSlot(bucket: FragmentInstanceBucket, reuseMetric: string): FragmentInstanceSlot | null {
@@ -540,6 +555,7 @@ class FragmentInstanceRenderer {
     mesh.castShadow = false;
     mesh.receiveShadow = true;
     mesh.frustumCulled = true;
+    mesh.boundingSphere = fragmentBucketBoundingSphere(tileX, tileZ);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = keepResident ? 1 : 0;
     mesh.visible = keepResident;
@@ -579,6 +595,57 @@ class FragmentInstanceRenderer {
     this.markBucketDirty(bucket);
   }
 
+  private warmupSpatialBuckets(objects: THREE.Object3D[]): void {
+    for (const tileX of FRAGMENT_INSTANCE_SPATIAL_WARMUP_TILES) {
+      for (const tileZ of FRAGMENT_INSTANCE_SPATIAL_WARMUP_TILES) {
+        for (const materialId of this.materials.order) {
+          const material = this.materials.get(materialId);
+          this.warmupSpatialBucket(
+            objects,
+            fragmentMainGroupKey(materialId),
+            this.materials.getRenderMaterial(materialId),
+            `${material.name} instanced fragments`,
+            tileX,
+            tileZ
+          );
+          for (const part of fragmentDecorationParts({ materialId, size: fragmentInstanceWarmupSize(materialId) })) {
+            this.warmupSpatialBucket(
+              objects,
+              fragmentDetailGroupKey(part.material),
+              part.material,
+              `${part.material.name || "fragment detail"} instanced fragment details`,
+              tileX,
+              tileZ
+            );
+          }
+        }
+      }
+    }
+  }
+
+  private warmupSpatialBucket(
+    objects: THREE.Object3D[],
+    groupKey: string,
+    material: THREE.Material,
+    name: string,
+    tileX: number,
+    tileZ: number
+  ): void {
+    const bucket = this.bucketForGroup(
+      groupKey,
+      material,
+      name,
+      tileX,
+      tileZ,
+      false,
+      "render.fragmentInstanceSpatialWarmupBucketMiss"
+    );
+    this.writeWarmupSlot(bucket, 0, bucket.hiddenMatrix);
+    if (!objects.includes(bucket.mesh)) {
+      objects.push(bucket.mesh);
+    }
+  }
+
   private parkWarmupSlot(bucket: FragmentInstanceBucket): void {
     this.writeWarmupSlot(bucket, 0, bucket.hiddenMatrix);
   }
@@ -597,7 +664,6 @@ class FragmentInstanceRenderer {
   }
 
   private markBucketDirty(bucket: FragmentInstanceBucket): void {
-    bucket.mesh.frustumCulled = false;
     this.dirtyBuckets.add(bucket);
   }
 }
@@ -1400,7 +1466,13 @@ function fragmentDetailGroupKey(material: THREE.Material): string {
 }
 
 function fragmentInstanceTileCoordinate(value: number): number {
-  return Math.floor((value + FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE * 0.5) / FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE);
+  return Math.max(
+    FRAGMENT_INSTANCE_MIN_TILE,
+    Math.min(
+      FRAGMENT_INSTANCE_MAX_TILE,
+      Math.floor((value + FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE * 0.5) / FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE)
+    )
+  );
 }
 
 function fragmentBucketFamilyKey(groupKey: string, tileX: number, tileZ: number): string {
@@ -1423,6 +1495,17 @@ function fragmentBucketHiddenMatrix(
     tileZ * FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE
   );
   return new THREE.Matrix4().compose(scratchPosition, new THREE.Quaternion(), hiddenScale);
+}
+
+function fragmentBucketBoundingSphere(tileX: number, tileZ: number): THREE.Sphere {
+  return new THREE.Sphere(
+    new THREE.Vector3(
+      tileX * FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE,
+      FRAGMENT_INSTANCE_BUCKET_CENTER_Y,
+      tileZ * FRAGMENT_INSTANCE_SPATIAL_TILE_SIZE
+    ),
+    FRAGMENT_INSTANCE_BUCKET_BOUND_RADIUS
+  );
 }
 
 function shouldFragmentDriveChain(
