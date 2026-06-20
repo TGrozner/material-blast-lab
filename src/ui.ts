@@ -376,6 +376,7 @@ export class GameUI {
     );
     this.root.classList.toggle("is-post-shot", postShot);
     this.root.classList.toggle("can-finish-run", state.canFinishRun && !state.score);
+    this.root.classList.toggle("has-shot-available", state.shotAvailable && !state.score);
 
     if (this.activeProjectileId !== state.projectileId) {
       for (const [id, button] of this.projectileButtons) {
@@ -1616,6 +1617,9 @@ function installStyles(): void {
       }
 
       .hud.is-post-shot[data-screen="play"] .hud__topbar {
+        left: auto;
+        width: auto;
+        gap: 0;
         min-height: 42px;
         padding: 5px 7px;
         background: rgba(7, 11, 17, 0.58);
@@ -1737,6 +1741,10 @@ function installStyles(): void {
         grid-template-columns: minmax(0, 1fr);
         gap: 5px;
         order: 19;
+      }
+
+      .hud.has-shot-available[data-screen="play"] .hud__utility {
+        display: none;
       }
 
       .hud__utility button,

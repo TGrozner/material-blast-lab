@@ -15,6 +15,11 @@ const MAX_ACTIVE_POPUPS = 12;
 const MAX_CHAIN_POPUPS_PER_PUSH = 1;
 const MAX_NON_CHAIN_POPUPS_PER_PUSH = 3;
 const MIN_POPUP_POINTS = 12;
+const MOBILE_VIEWPORT_MAX_WIDTH = 520;
+const MOBILE_MAX_POPUPS_PER_PUSH = 2;
+const MOBILE_MAX_ACTIVE_POPUPS = 6;
+const MOBILE_MAX_NON_CHAIN_POPUPS_PER_PUSH = 1;
+const MOBILE_MIN_POPUP_POINTS = 18;
 
 export class ScorePopupLayer {
   private readonly root: HTMLDivElement;
@@ -50,11 +55,16 @@ export class ScorePopupLayer {
       this.showChainMeter(topChain);
     }
 
+    const compact = this.isCompactViewport();
+    const maxPopupsPerPush = compact ? MOBILE_MAX_POPUPS_PER_PUSH : MAX_POPUPS_PER_PUSH;
+    const maxActivePopups = compact ? MOBILE_MAX_ACTIVE_POPUPS : MAX_ACTIVE_POPUPS;
+    const maxNonChainPopupsPerPush = compact ? MOBILE_MAX_NON_CHAIN_POPUPS_PER_PUSH : MAX_NON_CHAIN_POPUPS_PER_PUSH;
+    const minPopupPoints = compact ? MOBILE_MIN_POPUP_POINTS : MIN_POPUP_POINTS;
     let added = 0;
     let chainAdded = 0;
     let nonChainAdded = 0;
     for (const event of sorted) {
-      if (added >= MAX_POPUPS_PER_PUSH || Math.abs(event.points) < MIN_POPUP_POINTS) {
+      if (added >= maxPopupsPerPush || Math.abs(event.points) < minPopupPoints) {
         continue;
       }
       if (event.kind === "chain") {
@@ -63,7 +73,7 @@ export class ScorePopupLayer {
         }
         chainAdded += 1;
       } else {
-        if (nonChainAdded >= MAX_NON_CHAIN_POPUPS_PER_PUSH) {
+        if (nonChainAdded >= maxNonChainPopupsPerPush) {
           continue;
         }
         nonChainAdded += 1;
@@ -84,7 +94,7 @@ export class ScorePopupLayer {
       });
       added += 1;
     }
-    this.trimPopups();
+    this.trimPopups(maxActivePopups);
   }
 
   update(deltaSeconds: number, camera: THREE.Camera): void {
@@ -148,11 +158,15 @@ export class ScorePopupLayer {
     this.chainMeter.textContent = `${event.label}  +${event.points}`;
   }
 
-  private trimPopups(): void {
-    while (this.popups.length > MAX_ACTIVE_POPUPS) {
+  private trimPopups(maxActivePopups: number): void {
+    while (this.popups.length > maxActivePopups) {
       const popup = this.popups.shift();
       popup?.element.remove();
     }
+  }
+
+  private isCompactViewport(): boolean {
+    return this.viewportWidth <= MOBILE_VIEWPORT_MAX_WIDTH;
   }
 
   private setChainMeterVisible(visible: boolean): void {
@@ -274,12 +288,15 @@ function installScorePopupStyles(): void {
 
     @media (max-width: 520px) {
       .score-popup {
-        padding: 4px 6px;
-        font-size: 11px;
+        max-width: min(78vw, 270px);
+        overflow: hidden;
+        padding: 3px 6px;
+        font-size: 10px;
+        text-overflow: ellipsis;
       }
 
       .score-popup--cascade {
-        font-size: 12px;
+        font-size: 11px;
       }
 
       .chain-meter {
