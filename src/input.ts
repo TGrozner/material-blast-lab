@@ -53,8 +53,11 @@ export class InputController {
       this.pendingAimFrame = null;
     }
     this.callbacks.aim(this.pointerFromEvent(event));
-    if (event.button === 0 && event.pointerType === "mouse") {
-      this.callbacks.fire();
+    if (event.button === 0) {
+      if (event.pointerType === "mouse") {
+        this.callbacks.fire();
+      }
+      this.callbacks.finishRun();
     }
   };
 

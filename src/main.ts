@@ -120,8 +120,9 @@ const RENDER_WARMUP_SYNTHETIC_ORIGIN = new THREE.Vector3(72, 1.2, 72);
 const RENDER_WARMUP_SYNTHETIC_DESTRUCTION_ZONE = "render-warmup-destruction";
 const AIM_TRAFFIC_STEP_SECONDS = 1 / 24;
 const AIM_TRAFFIC_MAX_ACCUMULATED_SECONDS = 0.12;
-const NIGHT_SKY_RADIUS = 118;
-const MOON_DIRECTION = new THREE.Vector3(-0.2, 0.24, -0.95).normalize();
+const DAY_SKY_RADIUS = 118;
+const SUN_DIRECTION = new THREE.Vector3(-0.28, 0.28, -0.92).normalize();
+const PREMIUM_DAYLIGHT_RENDER_ORDER = 6;
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
 
 interface BurningHazard {
@@ -342,7 +343,7 @@ function configureDowntownMayhemRenderer(renderer: DowntownMayhemRenderer, setti
   setOptionalShadowMapFlag(renderer, "autoUpdate", false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 1.12;
   renderer.setPixelRatio(effectiveGraphicsPixelRatio(graphicsPixelRatioCap(settings.graphicsQuality)));
 }
 
@@ -504,85 +505,115 @@ function createRenderWarmupCameras(sourceCamera: THREE.PerspectiveCamera): THREE
   return cameras;
 }
 
-function createNightSkyDome(): THREE.Group {
+function createDaySkyDome(textureRegistry: THREE.Texture[]): THREE.Group {
   const group = new THREE.Group();
-  group.name = "Moonlit night sky";
+  group.name = "Warm daytime sky";
 
+  const skyTexture = createDaySkyTexture();
+  textureRegistry.push(skyTexture);
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(NIGHT_SKY_RADIUS, 32, 16),
+    new THREE.SphereGeometry(DAY_SKY_RADIUS, 32, 16),
     new THREE.MeshBasicMaterial({
-      map: createNightSkyTexture(),
+      map: skyTexture,
       side: THREE.BackSide,
       depthWrite: false,
       fog: false
     })
   );
-  sky.name = "Deep blue night sky gradient";
+  sky.name = "Soft blue daytime sky gradient";
   sky.renderOrder = -100;
   group.add(sky);
 
-  const stars = createStarField();
-  group.add(stars);
-
-  const moonPosition = MOON_DIRECTION.clone().multiplyScalar(NIGHT_SKY_RADIUS * 0.72);
+  const sunPosition = SUN_DIRECTION.clone().multiplyScalar(DAY_SKY_RADIUS * 0.72);
+  const haloTexture = createSunHaloTexture();
+  textureRegistry.push(haloTexture);
   const halo = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      map: createMoonHaloTexture(),
-      color: 0x9fc8ff,
+      map: haloTexture,
+      color: 0xffe4a6,
       transparent: true,
-      opacity: 0.38,
+      opacity: 0.72,
       depthWrite: false,
       blending: THREE.AdditiveBlending
     })
   );
-  halo.name = "Cold moon halo";
-  halo.position.copy(moonPosition);
-  halo.scale.set(24, 24, 1);
+  halo.name = "Warm sun halo";
+  halo.position.copy(sunPosition);
+  halo.scale.set(50, 50, 1);
   halo.renderOrder = -40;
   group.add(halo);
 
-  const moon = new THREE.Sprite(
+  const sunTexture = createSunTexture();
+  textureRegistry.push(sunTexture);
+  const sun = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      map: createMoonTexture(),
-      color: 0xe9f5ff,
+      map: sunTexture,
+      color: 0xffdd84,
       transparent: true,
-      opacity: 0.98,
-      depthWrite: false
+      opacity: 1,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
     })
   );
-  moon.name = "Textured moon";
-  moon.position.copy(moonPosition.clone().multiplyScalar(0.995));
-  moon.scale.set(7.2, 7.2, 1);
-  moon.renderOrder = -35;
-  group.add(moon);
+  sun.name = "Soft midday sun";
+  sun.position.copy(sunPosition.clone().multiplyScalar(0.995));
+  sun.scale.set(13.5, 13.5, 1);
+  sun.renderOrder = -35;
+  group.add(sun);
 
   return group;
 }
 
-function createNightSkyTexture(): THREE.CanvasTexture {
+function createDaySkyTexture(): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
   canvas.height = 512;
   const context = canvas.getContext("2d");
   if (!context) {
-    throw new Error("Unable to create night sky texture context");
+    throw new Error("Unable to create daytime sky texture context");
   }
 
   const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, "#02040d");
-  gradient.addColorStop(0.4, "#050d20");
-  gradient.addColorStop(0.76, "#09172a");
-  gradient.addColorStop(1, "#0d2030");
+  gradient.addColorStop(0, "#2d9bf4");
+  gradient.addColorStop(0.38, "#76caff");
+  gradient.addColorStop(0.72, "#c5efff");
+  gradient.addColorStop(1, "#f6d8a7");
   context.fillStyle = gradient;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
-  const cityGlow = context.createRadialGradient(canvas.width * 0.55, canvas.height * 1.08, 24, canvas.width * 0.55, canvas.height * 1.08, canvas.width * 0.58);
-  cityGlow.addColorStop(0, "rgba(88, 144, 190, 0.18)");
-  cityGlow.addColorStop(0.45, "rgba(30, 66, 108, 0.12)");
-  cityGlow.addColorStop(1, "rgba(3, 8, 18, 0)");
-  context.fillStyle = cityGlow;
+  const horizonGlow = context.createRadialGradient(
+    canvas.width * 0.48,
+    canvas.height * 1.08,
+    24,
+    canvas.width * 0.48,
+    canvas.height * 1.08,
+    canvas.width * 0.64
+  );
+  horizonGlow.addColorStop(0, "rgba(255, 236, 184, 0.48)");
+  horizonGlow.addColorStop(0.46, "rgba(255, 226, 160, 0.2)");
+  horizonGlow.addColorStop(1, "rgba(118, 190, 255, 0)");
+  context.fillStyle = horizonGlow;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
+  const sunWash = context.createRadialGradient(
+    canvas.width * 0.28,
+    canvas.height * 0.22,
+    16,
+    canvas.width * 0.28,
+    canvas.height * 0.22,
+    canvas.width * 0.42
+  );
+  sunWash.addColorStop(0, "rgba(255, 246, 206, 0.58)");
+  sunWash.addColorStop(0.36, "rgba(255, 214, 120, 0.26)");
+  sunWash.addColorStop(1, "rgba(255, 224, 149, 0)");
+  context.fillStyle = sunWash;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  paintCloud(context, 150, 128, 1.25, 0.2);
+  paintCloud(context, 378, 96, 0.92, 0.16);
+  paintCloud(context, 724, 146, 1.5, 0.18);
+  paintCloud(context, 884, 216, 1.08, 0.13);
+
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.minFilter = THREE.LinearFilter;
@@ -590,43 +621,104 @@ function createNightSkyTexture(): THREE.CanvasTexture {
   return texture;
 }
 
-function createMoonTexture(): THREE.CanvasTexture {
+function createGroundSunlightTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to create ground sunlight texture context");
+  }
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const wash = context.createRadialGradient(170, 132, 20, 196, 166, 470);
+  wash.addColorStop(0, "rgba(255, 244, 190, 0.34)");
+  wash.addColorStop(0.42, "rgba(255, 213, 118, 0.16)");
+  wash.addColorStop(1, "rgba(255, 198, 96, 0)");
+  context.fillStyle = wash;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.save();
+  context.translate(230, 258);
+  context.rotate(-0.25);
+  for (let index = -2; index <= 2; index += 1) {
+    const x = index * 118;
+    const band = context.createLinearGradient(x - 42, -260, x + 78, 260);
+    band.addColorStop(0, "rgba(255, 255, 255, 0)");
+    band.addColorStop(0.42, "rgba(255, 241, 176, 0.08)");
+    band.addColorStop(0.5, "rgba(255, 229, 138, 0.18)");
+    band.addColorStop(0.58, "rgba(255, 241, 176, 0.08)");
+    band.addColorStop(1, "rgba(255, 255, 255, 0)");
+    context.fillStyle = band;
+    context.fillRect(x - 46, -320, 124, 640);
+  }
+  context.restore();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  return texture;
+}
+
+function createContactShadowTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to create contact shadow texture context");
+  }
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const shadow = context.createRadialGradient(256, 256, 24, 256, 256, 236);
+  shadow.addColorStop(0, "rgba(0, 0, 0, 0.36)");
+  shadow.addColorStop(0.46, "rgba(0, 0, 0, 0.2)");
+  shadow.addColorStop(1, "rgba(0, 0, 0, 0)");
+  context.fillStyle = shadow;
+  context.save();
+  context.scale(1, 0.58);
+  context.beginPath();
+  context.arc(256, 438, 236, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  return texture;
+}
+
+function paintCloud(context: CanvasRenderingContext2D, x: number, y: number, scale: number, opacity: number): void {
+  const cloud = context.createRadialGradient(x, y, 4, x, y, 92 * scale);
+  cloud.addColorStop(0, `rgba(255, 255, 255, ${opacity})`);
+  cloud.addColorStop(0.48, `rgba(255, 255, 255, ${opacity * 0.58})`);
+  cloud.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.fillStyle = cloud;
+  context.beginPath();
+  context.ellipse(x, y, 128 * scale, 32 * scale, -0.08, 0, Math.PI * 2);
+  context.fill();
+}
+
+function createSunTexture(): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 256;
   const context = canvas.getContext("2d");
   if (!context) {
-    throw new Error("Unable to create moon texture context");
+    throw new Error("Unable to create sun texture context");
   }
 
-  const body = context.createRadialGradient(100, 78, 18, 128, 128, 108);
+  const body = context.createRadialGradient(96, 82, 4, 128, 128, 116);
   body.addColorStop(0, "rgba(255, 255, 255, 1)");
-  body.addColorStop(0.52, "rgba(220, 236, 245, 0.98)");
-  body.addColorStop(0.86, "rgba(147, 177, 197, 0.92)");
-  body.addColorStop(1, "rgba(70, 92, 116, 0)");
+  body.addColorStop(0.34, "rgba(255, 245, 198, 1)");
+  body.addColorStop(0.74, "rgba(255, 199, 68, 0.98)");
+  body.addColorStop(1, "rgba(255, 145, 24, 0)");
   context.fillStyle = body;
   context.beginPath();
-  context.arc(128, 128, 106, 0, Math.PI * 2);
+  context.arc(128, 128, 112, 0, Math.PI * 2);
   context.fill();
-
-  const craters = [
-    [86, 112, 13, 0.14],
-    [142, 82, 10, 0.11],
-    [162, 148, 18, 0.12],
-    [110, 166, 9, 0.1],
-    [183, 106, 7, 0.12],
-    [122, 123, 6, 0.09]
-  ] as const;
-  for (const [x, y, radius, opacity] of craters) {
-    const crater = context.createRadialGradient(x - radius * 0.28, y - radius * 0.35, radius * 0.18, x, y, radius);
-    crater.addColorStop(0, `rgba(255, 255, 255, ${opacity * 0.65})`);
-    crater.addColorStop(0.58, `rgba(70, 88, 108, ${opacity})`);
-    crater.addColorStop(1, "rgba(20, 30, 44, 0)");
-    context.fillStyle = crater;
-    context.beginPath();
-    context.arc(x, y, radius, 0, Math.PI * 2);
-    context.fill();
-  }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -635,19 +727,19 @@ function createMoonTexture(): THREE.CanvasTexture {
   return texture;
 }
 
-function createMoonHaloTexture(): THREE.CanvasTexture {
+function createSunHaloTexture(): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 256;
   const context = canvas.getContext("2d");
   if (!context) {
-    throw new Error("Unable to create moon halo texture context");
+    throw new Error("Unable to create sun halo texture context");
   }
   const glow = context.createRadialGradient(128, 128, 4, 128, 128, 126);
-  glow.addColorStop(0, "rgba(255, 255, 255, 0.72)");
-  glow.addColorStop(0.18, "rgba(164, 212, 255, 0.34)");
-  glow.addColorStop(0.54, "rgba(80, 136, 220, 0.12)");
-  glow.addColorStop(1, "rgba(4, 10, 24, 0)");
+  glow.addColorStop(0, "rgba(255, 255, 255, 0.8)");
+  glow.addColorStop(0.18, "rgba(255, 230, 158, 0.42)");
+  glow.addColorStop(0.56, "rgba(255, 183, 80, 0.14)");
+  glow.addColorStop(1, "rgba(255, 183, 80, 0)");
   context.fillStyle = glow;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -656,43 +748,6 @@ function createMoonHaloTexture(): THREE.CanvasTexture {
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   return texture;
-}
-
-function createStarField(): THREE.Points {
-  const count = 96;
-  const positions = new Float32Array(count * 3);
-  const colors = new Float32Array(count * 3);
-  const color = new THREE.Color();
-  for (let index = 0; index < count; index += 1) {
-    const u = ((index * 37) % count) / count;
-    const v = ((index * 97) % count) / count;
-    const theta = u * Math.PI * 2;
-    const y = 0.16 + v * 0.72;
-    const radius = Math.sqrt(Math.max(0, 1 - y * y)) * NIGHT_SKY_RADIUS * 0.86;
-    positions[index * 3] = Math.cos(theta) * radius;
-    positions[index * 3 + 1] = y * NIGHT_SKY_RADIUS * 0.86;
-    positions[index * 3 + 2] = Math.sin(theta) * radius;
-    color.setHSL(0.57 + ((index % 9) - 4) * 0.004, 0.38, 0.72 + (index % 5) * 0.035);
-    colors[index * 3] = color.r;
-    colors[index * 3 + 1] = color.g;
-    colors[index * 3 + 2] = color.b;
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  const material = new THREE.PointsMaterial({
-    size: 0.16,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.76,
-    depthWrite: false,
-    fog: false
-  });
-  const stars = new THREE.Points(geometry, material);
-  stars.name = "Sparse cold stars";
-  stars.frustumCulled = false;
-  stars.renderOrder = -70;
-  return stars;
 }
 
 type AppShellScreen = "menu" | "settings" | "loading";
@@ -1886,7 +1941,9 @@ class Game {
   private readonly arenaObjects: THREE.Object3D[] = [];
   private readonly cannonBatteryObjects: THREE.Object3D[] = [];
   private readonly levelDecorations: THREE.Object3D[] = [];
+  private readonly premiumSceneTextures: THREE.Texture[] = [];
   private renderWarmupGroup: THREE.Group | null = null;
+  private sunKeyLight: THREE.DirectionalLight | null = null;
   private readonly renderWarmupPersistentObjects: THREE.Object3D[] = [];
   private readonly handleResize = () => this.resize();
   private readonly handleBeforeUnload = () => this.input.dispose();
@@ -1969,8 +2026,8 @@ class Game {
     this.renderer.domElement.dataset.rendererBackend = this.rendererBackend;
     app.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(0x050811);
-    this.scene.fog = new THREE.Fog(0x07111c, 34, 92);
+    this.scene.background = new THREE.Color(0xa8dcff);
+    this.scene.fog = new THREE.Fog(0xd9eef2, 66, 148);
     this.timer.connect(document);
 
     this.rng = new SeededRandom(this.runSeed);
@@ -2007,7 +2064,7 @@ class Game {
       nextLevel: () => this.nextLevel()
     });
 
-    this.scene.add(createNightSkyDome());
+    this.scene.add(createDaySkyDome(this.premiumSceneTextures));
     this.configureLights();
     this.applySettings();
     this.buildArena();
@@ -2103,6 +2160,11 @@ class Game {
       disposeObject(object, disposedMaterials);
     }
     this.cannonBatteryObjects.length = 0;
+    this.scene.environment = null;
+    for (const texture of this.premiumSceneTextures) {
+      texture.dispose();
+    }
+    this.premiumSceneTextures.length = 0;
     this.ui.dispose();
     this.physics.world.free();
     this.renderer.dispose();
@@ -2372,41 +2434,42 @@ class Game {
   }
 
   private configureLights(): void {
-    const ambient = new THREE.HemisphereLight(0x9fc8ff, 0x151b24, 0.58);
+    const ambient = new THREE.HemisphereLight(0xc9efff, 0xe2c287, 0.84);
     this.scene.add(ambient);
 
-    const moonKey = new THREE.DirectionalLight(0xc7e2ff, 1.55);
-    moonKey.position.copy(MOON_DIRECTION.clone().multiplyScalar(18));
-    moonKey.castShadow = false;
-    moonKey.shadow.mapSize.set(1024, 1024);
-    moonKey.shadow.camera.near = 1;
-    moonKey.shadow.camera.far = 70;
-    moonKey.shadow.camera.left = -24;
-    moonKey.shadow.camera.right = 24;
-    moonKey.shadow.camera.top = 24;
-    moonKey.shadow.camera.bottom = -24;
-    this.scene.add(moonKey);
+    const sunKey = new THREE.DirectionalLight(0xffedac, 3.15);
+    sunKey.position.copy(SUN_DIRECTION.clone().multiplyScalar(22));
+    sunKey.castShadow = this.settings.graphicsQuality === "cinematic";
+    sunKey.shadow.mapSize.set(1536, 1536);
+    sunKey.shadow.camera.near = 1;
+    sunKey.shadow.camera.far = 70;
+    sunKey.shadow.camera.left = -24;
+    sunKey.shadow.camera.right = 24;
+    sunKey.shadow.camera.top = 24;
+    sunKey.shadow.camera.bottom = -24;
+    this.sunKeyLight = sunKey;
+    this.scene.add(sunKey);
 
-    const rim = new THREE.DirectionalLight(0x6da8ff, 0.22);
-    rim.position.set(-7, 5, -8);
-    this.scene.add(rim);
+    const skyFill = new THREE.DirectionalLight(0x9fdbff, 0.24);
+    skyFill.position.set(7, 6, 8);
+    this.scene.add(skyFill);
   }
 
   private buildArena(): void {
     const floorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x15191d,
+      color: 0x2e342f,
       roughness: 0.82,
       metalness: 0.08,
       map: graphicTexture("arenaFloor", { repeat: [7, 11], anisotropy: 8 })
     });
     const wallMaterial = new THREE.MeshStandardMaterial({
-      color: 0x1e2730,
+      color: 0x525d5f,
       roughness: 0.72,
       metalness: 0.05,
       map: graphicTexture("arenaWall", { repeat: [5, 1], anisotropy: 8 })
     });
     const cannonDeckMaterial = new THREE.MeshStandardMaterial({
-      color: 0x27313a,
+      color: 0x3c4443,
       roughness: 0.76,
       metalness: 0.08,
       map: graphicTexture("cannonDeck", { repeat: [2.2, 1.6], anisotropy: 8 })
@@ -2454,6 +2517,86 @@ class Game {
       this.cannonBatteryObjects.push(curb);
     }
 
+    this.addPremiumDaylightBakes();
+  }
+
+  private trackPremiumSceneTexture<T extends THREE.Texture>(texture: T): T {
+    this.premiumSceneTextures.push(texture);
+    return texture;
+  }
+
+  private addPremiumDaylightBakes(): void {
+    const sunlightTexture = this.trackPremiumSceneTexture(createGroundSunlightTexture());
+    const sunlightMaterial = new THREE.MeshBasicMaterial({
+      map: sunlightTexture,
+      transparent: true,
+      opacity: 0.58,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false
+    });
+    this.addArenaDecalPlane(
+      "Premium baked sunlight across the boulevard",
+      new THREE.Vector3(-0.5, 0.024, 6.2),
+      new THREE.Vector2(40, 60),
+      sunlightMaterial,
+      -0.04,
+      PREMIUM_DAYLIGHT_RENDER_ORDER
+    );
+
+    const shadowTexture = this.trackPremiumSceneTexture(createContactShadowTexture());
+    const cityShadowMaterial = new THREE.MeshBasicMaterial({
+      map: shadowTexture,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      toneMapped: false
+    });
+    this.addArenaDecalPlane(
+      "Soft city block contact shadow",
+      new THREE.Vector3(-0.2, 0.028, 5.2),
+      new THREE.Vector2(36, 34),
+      cityShadowMaterial,
+      0.08,
+      PREMIUM_DAYLIGHT_RENDER_ORDER + 1
+    );
+
+    const cannonShadowMaterial = new THREE.MeshBasicMaterial({
+      map: shadowTexture,
+      transparent: true,
+      opacity: 0.54,
+      depthWrite: false,
+      toneMapped: false
+    });
+    this.addArenaDecalPlane(
+      "Soft cannon platform contact shadow",
+      new THREE.Vector3(0, 2.886, 26.35),
+      new THREE.Vector2(9.8, 7.2),
+      cannonShadowMaterial,
+      -0.16,
+      PREMIUM_DAYLIGHT_RENDER_ORDER + 2
+    );
+
+  }
+
+  private addArenaDecalPlane(
+    label: string,
+    position: THREE.Vector3,
+    size: THREE.Vector2,
+    material: THREE.Material,
+    rotationZ: number,
+    renderOrder: number
+  ): THREE.Mesh {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size.x, size.y), material);
+    mesh.name = label;
+    mesh.position.copy(position);
+    mesh.rotation.set(-Math.PI / 2, 0, rotationZ);
+    mesh.renderOrder = renderOrder;
+    mesh.receiveShadow = false;
+    mesh.castShadow = false;
+    this.scene.add(mesh);
+    this.arenaObjects.push(mesh);
+    return mesh;
   }
 
   private positionCannonBattery(cannonPosition: THREE.Vector3): void {
@@ -4093,6 +4236,9 @@ class Game {
     this.particles.setFlashScale(this.settings.motionEffects ? 1 : 0);
     this.particles.setQuality(this.settings.graphicsQuality);
     this.renderer.shadowMap.enabled = this.settings.graphicsQuality === "cinematic";
+    if (this.sunKeyLight) {
+      this.sunKeyLight.castShadow = this.settings.graphicsQuality === "cinematic";
+    }
     setOptionalShadowMapFlag(this.renderer, "needsUpdate", true);
     this.resize();
   }

@@ -71,6 +71,9 @@ export class GameUI {
   private readonly fireButton: HTMLButtonElement;
   private readonly finishButton: HTMLButtonElement;
   private readonly finishHint: HTMLDivElement;
+  private readonly turnPrompt: HTMLButtonElement;
+  private readonly turnPromptTitle: HTMLElement;
+  private readonly turnPromptHint: HTMLElement;
   private readonly scorePanel: HTMLDivElement;
   private readonly homeLevelRail: HTMLDivElement;
   private readonly targetScoreValue: HTMLSpanElement;
@@ -152,6 +155,12 @@ export class GameUI {
         <div class="hud__finish-hint" data-role="finish-hint" hidden>Done watching? Press F or Enter, or click Score Now.</div>
         <div class="hud__status" data-role="status"></div>
       </section>
+
+      <button class="hud__turn-prompt" type="button" data-action="turn-finish" hidden>
+        <span>Turn in progress</span>
+        <strong data-role="turn-prompt-title">Watching mayhem</strong>
+        <em data-role="turn-prompt-hint">Score unlocks when the chain reactions settle.</em>
+      </button>
 
       <section class="hud__results" data-role="score" aria-live="polite"></section>
 
@@ -239,6 +248,9 @@ export class GameUI {
     this.fireButton = this.requireElement(".hud__fire");
     this.finishButton = this.requireElement("[data-action='finish-run']");
     this.finishHint = this.requireElement("[data-role='finish-hint']");
+    this.turnPrompt = this.requireElement("[data-action='turn-finish']");
+    this.turnPromptTitle = this.requireElement("[data-role='turn-prompt-title']");
+    this.turnPromptHint = this.requireElement("[data-role='turn-prompt-hint']");
     this.scorePanel = this.requireElement("[data-role='score']");
     this.homeLevelRail = this.requireElement("[data-role='home-levels']");
     this.targetScoreValue = this.requireElement("[data-role='target-score']");
@@ -271,6 +283,11 @@ export class GameUI {
 
     this.fireButton.addEventListener("click", () => this.callbacks.fire());
     this.finishButton.addEventListener("click", () => this.callbacks.finishRun());
+    this.turnPrompt.addEventListener("click", () => {
+      if (!this.turnPrompt.disabled) {
+        this.callbacks.finishRun();
+      }
+    });
     this.requireElement<HTMLButtonElement>("[data-action='reset']").addEventListener("click", () => this.callbacks.reset());
     this.requireElement<HTMLButtonElement>("[data-action='menu']").addEventListener("click", () => this.callbacks.openMainMenu());
     this.requireElement<HTMLButtonElement>("[data-action='settings']").addEventListener("click", () => this.showScreen("settings"));
@@ -343,6 +360,22 @@ export class GameUI {
     if (this.finishButton.disabled !== (finishHidden || blocked)) {
       this.finishButton.disabled = finishHidden || blocked;
     }
+    const postShot = !state.shotAvailable && !state.score;
+    const turnPromptHidden = !postShot || this.screen !== "play";
+    if (this.turnPrompt.hidden !== turnPromptHidden) {
+      this.turnPrompt.hidden = turnPromptHidden;
+    }
+    const turnPromptDisabled = !state.canFinishRun || blocked;
+    if (this.turnPrompt.disabled !== turnPromptDisabled) {
+      this.turnPrompt.disabled = turnPromptDisabled;
+    }
+    setText(this.turnPromptTitle, state.canFinishRun ? "Tap to score" : "Watching mayhem");
+    setText(
+      this.turnPromptHint,
+      state.canFinishRun ? "End the turn and show the result." : "Score unlocks when the chain reactions settle."
+    );
+    this.root.classList.toggle("is-post-shot", postShot);
+    this.root.classList.toggle("can-finish-run", state.canFinishRun && !state.score);
 
     if (this.activeProjectileId !== state.projectileId) {
       for (const [id, button] of this.projectileButtons) {
@@ -1100,6 +1133,66 @@ function installStyles(): void {
       opacity: 0.82;
     }
 
+    .hud__turn-prompt {
+      position: absolute;
+      left: var(--hud-safe-left);
+      right: var(--hud-safe-right);
+      bottom: var(--hud-safe-bottom);
+      display: none;
+      justify-items: start;
+      gap: 3px;
+      width: min(420px, calc(100vw - 32px));
+      min-height: 72px;
+      padding: 12px 14px;
+      border: 1px solid rgba(183, 255, 255, 0.7);
+      border-radius: 8px;
+      color: #051016;
+      background:
+        linear-gradient(180deg, rgba(170, 250, 255, 0.96), rgba(83, 214, 237, 0.94)),
+        rgba(121, 240, 255, 0.92);
+      box-shadow: 0 18px 42px rgba(20, 170, 210, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.58);
+      cursor: pointer;
+      pointer-events: auto;
+      text-align: left;
+      z-index: 6;
+    }
+
+    .hud__turn-prompt span,
+    .hud__turn-prompt em {
+      color: rgba(5, 16, 22, 0.68);
+      font-size: 10px;
+      font-style: normal;
+      font-weight: 900;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .hud__turn-prompt strong {
+      color: #051016;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .hud__turn-prompt em {
+      color: rgba(5, 16, 22, 0.74);
+      font-size: 11px;
+      text-transform: none;
+    }
+
+    .hud__turn-prompt:disabled {
+      color: #d7f9ff;
+      background: rgba(7, 11, 17, 0.72);
+      border-color: rgba(185, 245, 255, 0.18);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
+      cursor: default;
+    }
+
+    .hud__turn-prompt:disabled strong,
+    .hud__turn-prompt:disabled span,
+    .hud__turn-prompt:disabled em {
+      color: rgba(230, 250, 255, 0.76);
+    }
+
     .hud__status {
       min-height: 32px;
       padding: 8px;
@@ -1464,6 +1557,19 @@ function installStyles(): void {
         max-height: min(50svh, 430px);
       }
 
+      .hud.is-post-shot[data-screen="play"] .hud__command {
+        display: none;
+        pointer-events: none;
+      }
+
+      .hud.is-post-shot[data-screen="play"] .hud__turn-prompt:not([hidden]) {
+        display: grid;
+        left: var(--hud-safe-left-mobile);
+        right: var(--hud-safe-right-mobile);
+        bottom: var(--hud-safe-bottom-mobile);
+        width: auto;
+      }
+
       .hud__results {
         max-height: min(58svh, 500px);
       }
@@ -1509,6 +1615,13 @@ function installStyles(): void {
         padding: 7px 8px;
       }
 
+      .hud.is-post-shot[data-screen="play"] .hud__topbar {
+        min-height: 42px;
+        padding: 5px 7px;
+        background: rgba(7, 11, 17, 0.58);
+        backdrop-filter: blur(12px);
+      }
+
       .hud__brand {
         gap: 7px;
       }
@@ -1536,6 +1649,12 @@ function installStyles(): void {
         min-height: 38px;
         padding: 0 9px;
         font-size: 10px;
+      }
+
+      .hud.is-post-shot[data-screen="play"] .hud__brand-mark,
+      .hud.is-post-shot[data-screen="play"] .hud__brand strong,
+      .hud.is-post-shot[data-screen="play"] .hud__telemetry span {
+        display: none;
       }
 
       .hud__command {
@@ -1632,6 +1751,20 @@ function installStyles(): void {
         line-height: 1.15;
       }
 
+      .hud__turn-prompt {
+        min-height: 68px;
+        padding: 11px 12px;
+      }
+
+      .hud__turn-prompt strong {
+        font-size: 18px;
+      }
+
+      .hud__turn-prompt span,
+      .hud__turn-prompt em {
+        font-size: 10px;
+      }
+
       .hud__loadout-head {
         display: none;
       }
@@ -1672,6 +1805,16 @@ function installStyles(): void {
       .hud__results {
         max-height: min(74svh, 560px);
         padding: 10px;
+      }
+
+      .hud.has-results .hud__topbar {
+        display: none;
+      }
+
+      .hud.has-results .hud__results {
+        inset: auto var(--hud-safe-right-mobile) var(--hud-safe-bottom-mobile) var(--hud-safe-left-mobile);
+        max-height: min(82svh, 640px);
+        border-radius: 8px;
       }
 
       .hud__settings {

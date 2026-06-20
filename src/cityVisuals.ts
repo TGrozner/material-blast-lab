@@ -1139,11 +1139,36 @@ function colorMaterial(key: string, color: THREE.ColorRepresentation, roughness:
 function createMaterial(key: string): THREE.Material {
   switch (key) {
     case "cool_window":
-      return new THREE.MeshBasicMaterial({ color: 0x93f6ff, transparent: true, opacity: 0.78 });
+      return new THREE.MeshStandardMaterial({
+        color: 0x9fd4db,
+        transparent: true,
+        opacity: 0.56,
+        roughness: 0.24,
+        metalness: 0.18,
+        emissive: 0x123642,
+        emissiveIntensity: 0.08,
+        depthWrite: false
+      });
     case "warm_window":
-      return new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: 0.78 });
+      return new THREE.MeshStandardMaterial({
+        color: 0xdcc47e,
+        transparent: true,
+        opacity: 0.5,
+        roughness: 0.34,
+        metalness: 0.08,
+        emissive: 0x3d2705,
+        emissiveIntensity: 0.06,
+        depthWrite: false
+      });
     case "shop_glass":
-      return new THREE.MeshBasicMaterial({ color: 0xc6fcff, transparent: true, opacity: 0.55 });
+      return new THREE.MeshPhysicalMaterial({
+        color: 0xb5edf0,
+        transparent: true,
+        opacity: 0.4,
+        roughness: 0.12,
+        metalness: 0,
+        depthWrite: false
+      });
     case "hazard_facade":
       return new THREE.MeshStandardMaterial({ color: 0x7b3023, roughness: 0.72, metalness: 0.04, map: materialAtlasTile(4) });
     case "hazard_trim":
@@ -1175,7 +1200,7 @@ function createMaterial(key: string): THREE.Material {
     case "gas_nozzle":
       return new THREE.MeshStandardMaterial({ color: 0xd5c16a, roughness: 0.38, metalness: 0.62, map: materialAtlasTile(10) });
     case "neon_cyan":
-      return new THREE.MeshBasicMaterial({ color: 0x7ee8ff, transparent: true, opacity: 0.92 });
+      return new THREE.MeshStandardMaterial({ color: 0x79cbd4, roughness: 0.32, metalness: 0.18, emissive: 0x07323a, emissiveIntensity: 0.08 });
     case "roof_unit":
       return new THREE.MeshStandardMaterial({ color: 0x313a42, roughness: 0.48, metalness: 0.55, map: materialAtlasTile(10) });
     case "market_facade":
@@ -1235,11 +1260,11 @@ function createMaterial(key: string): THREE.Material {
     case "flatbed_deck":
       return new THREE.MeshStandardMaterial({ color: 0x262016, roughness: 0.74, metalness: 0.16, map: materialAtlasTile(14) });
     case "vehicle_lightbar":
-      return new THREE.MeshBasicMaterial({ color: 0xff5f8f, transparent: true, opacity: 0.9 });
+      return new THREE.MeshBasicMaterial({ color: 0xff7898, transparent: true, opacity: 0.46 });
     case "headlight":
-      return new THREE.MeshBasicMaterial({ color: 0xfff3b0, transparent: true, opacity: 0.9 });
+      return new THREE.MeshBasicMaterial({ color: 0xfff1c5, transparent: true, opacity: 0.58 });
     case "taillight":
-      return new THREE.MeshBasicMaterial({ color: 0xff334f, transparent: true, opacity: 0.92 });
+      return new THREE.MeshBasicMaterial({ color: 0xff5267, transparent: true, opacity: 0.54 });
     case "license_plate":
       return new THREE.MeshBasicMaterial({ color: 0xe8edf2, transparent: true, opacity: 0.88 });
     case "parking_stripe":

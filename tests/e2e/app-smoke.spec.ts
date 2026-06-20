@@ -126,6 +126,43 @@ test("renders the mobile city trial inside the initial body-count budget", async
   expect(consoleErrors).toEqual([]);
 });
 
+test("switches mobile to a frictionless post-shot turn prompt", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await bootTrial(page, MOBILE_VIEWPORT);
+  await expectRenderableCanvas(page);
+
+  await clickUi(fireButton(page));
+  await expect(page.locator(".hud")).toHaveClass(/is-post-shot/);
+  await expect(page.locator(".hud__command")).toBeHidden();
+  const turnPrompt = page.locator("[data-action='turn-finish']");
+  await expect(turnPrompt).toBeVisible();
+  await expect(turnPrompt).toContainText(/Watching mayhem|Tap to score/);
+  await expect(page.evaluate(mobilePostShotLayoutFailures)).resolves.toEqual([]);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("lets mobile tap the post-shot prompt to reveal the score", async ({ page }) => {
+  test.skip(!RUN_FULL_SIMULATION_SMOKE, "Set RUN_FULL_SIMULATION_SMOKE=true to run the full mobile score flow.");
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await bootTrial(page, MOBILE_VIEWPORT);
+  await expectRenderableCanvas(page);
+
+  await clickUi(fireButton(page));
+  const turnPrompt = page.locator("[data-action='turn-finish']");
+  await expect(turnPrompt).toBeVisible();
+  await expect(turnPrompt).toBeEnabled({ timeout: SCORE_REVEAL_TIMEOUT_MS });
+  await expect(turnPrompt).toContainText("Tap to score");
+  await clickUi(turnPrompt);
+  await expectFinalScore(page, "Normal Shell");
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("shows a clear three-level selector without free play", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
@@ -753,5 +790,35 @@ function mobileLayoutFailures(): string[] {
     }
   }
 
+  return failures;
+}
+
+function mobilePostShotLayoutFailures(): string[] {
+  const failures: string[] = [];
+  const prompt = document.querySelector("[data-action='turn-finish']");
+  const command = document.querySelector(".hud__command");
+  const topbar = document.querySelector(".hud__topbar");
+  if (!(prompt instanceof HTMLElement) || !(command instanceof HTMLElement) || !(topbar instanceof HTMLElement)) {
+    return ["missing post-shot mobile UI"];
+  }
+
+  const promptStyle = window.getComputedStyle(prompt);
+  const commandStyle = window.getComputedStyle(command);
+  if (promptStyle.display === "none" || promptStyle.visibility === "hidden") {
+    failures.push("turn prompt is not visible");
+  }
+  if (commandStyle.display !== "none") {
+    failures.push("command panel still visible after shot");
+  }
+
+  const promptRect = prompt.getBoundingClientRect();
+  const topbarRect = topbar.getBoundingClientRect();
+  if (promptRect.width < 320 || promptRect.height < 58) {
+    failures.push(`turn prompt target too small: ${Math.round(promptRect.width)}x${Math.round(promptRect.height)}`);
+  }
+  const aimSpace = promptRect.top - topbarRect.bottom;
+  if (aimSpace < 560) {
+    failures.push(`post-shot viewing space too small: ${Math.round(aimSpace)}px`);
+  }
   return failures;
 }

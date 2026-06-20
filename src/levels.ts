@@ -20,7 +20,6 @@ const panelRenderMaterials = new Map<string, THREE.Material>();
 const vehicleRenderMaterials = new Map<string, THREE.Material>();
 const sharedLevelMaterials = new Map<string, THREE.Material>();
 const sharedLevelBoxGeometries = new Map<string, THREE.BoxGeometry>();
-const sharedLevelPlaneGeometries = new Map<string, THREE.PlaneGeometry>();
 
 export interface LevelContext {
   physics: PhysicsWorld;
@@ -2940,7 +2939,7 @@ function roleRenderMaterial(materials: MaterialCatalog, materialId: MaterialId, 
     material.color.lerp(tint, 0.58);
     if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
       material.emissive = tint.clone().multiplyScalar(0.12);
-      material.emissiveIntensity = 0.7;
+      material.emissiveIntensity = 0.34;
     }
   }
   material.userData.sharedRoleRenderMaterial = true;
@@ -3668,18 +3667,6 @@ function sharedLevelBoxGeometry(width: number, height: number, depth: number): T
   return geometry;
 }
 
-function sharedLevelPlaneGeometry(width: number, height: number): THREE.PlaneGeometry {
-  const key = `${width.toFixed(3)}:${height.toFixed(3)}`;
-  const existing = sharedLevelPlaneGeometries.get(key);
-  if (existing) {
-    return existing;
-  }
-  const geometry = new THREE.PlaneGeometry(width, height);
-  geometry.userData.sharedGeometry = true;
-  sharedLevelPlaneGeometries.set(key, geometry);
-  return geometry;
-}
-
 function addStreetLight(context: LevelContext, x: number, z: number): void {
   const basePosition = alignCityObjectToRoadEdges(new THREE.Vector3(x, 0, z), new THREE.Vector3(0.48, 1.45, 0.42));
   const pole = context.physics.addDynamicBox({
@@ -3709,7 +3696,10 @@ function addStreetLight(context: LevelContext, x: number, z: number): void {
     "street-light-lamp",
     () => new THREE.MeshStandardMaterial({ color: 0x182026, roughness: 0.38, metalness: 0.58, map: materialAtlasTile(10) })
   );
-  const lensMaterial = sharedLevelMaterial("street-light-lens", () => new THREE.MeshBasicMaterial({ color: 0xffe29b, transparent: true, opacity: 0.95 }));
+  const lensMaterial = sharedLevelMaterial(
+    "street-light-lens",
+    () => new THREE.MeshStandardMaterial({ color: 0xc8a15a, roughness: 0.32, metalness: 0.18, emissive: 0x2c1903, emissiveIntensity: 0.04 })
+  );
   const arm = new THREE.Mesh(sharedLevelBoxGeometry(0.34, 0.045, 0.045), armMaterial);
   arm.name = "street light bracket";
   arm.position.set(0.17, 0.68, 0);
@@ -3728,31 +3718,6 @@ function addStreetLight(context: LevelContext, x: number, z: number): void {
   lens.userData.disposeMaterial = false;
   pole.mesh.add(lens);
 
-  const glowMaterial = sharedLevelMaterial(
-    "street-light-glow",
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: 0xffc86b,
-        transparent: true,
-        opacity: 0.28,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending
-      })
-  );
-  const glowPlane = new THREE.Mesh(sharedLevelPlaneGeometry(0.58, 0.32), glowMaterial);
-  glowPlane.name = "street light fake glow";
-  glowPlane.position.set(0.38, 0.58, 0);
-  glowPlane.rotation.x = -Math.PI * 0.5;
-  glowPlane.renderOrder = 3;
-  glowPlane.userData.disposeMaterial = false;
-  pole.mesh.add(glowPlane);
-
-  if (Math.abs(x) < 8 && z > -7 && z < 7) {
-    const glow = new THREE.PointLight(0xffc86b, 0.32, 3.2, 2);
-    glow.position.set(0.38, 0.58, 0);
-    pole.mesh.add(glow);
-  }
 }
 
 function addBillboard(context: LevelContext, x: number, z: number, color: THREE.ColorRepresentation): void {
@@ -3804,7 +3769,7 @@ function addBillboardFaceDetails(face: THREE.Mesh, color: THREE.ColorRepresentat
     () => new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.62, metalness: 0.42, map: materialAtlasTile(10) })
   );
   const stripeMaterial = sharedLevelMaterial(`billboard-stripe:${String(color)}`, () => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 }));
-  const glowMaterial = sharedLevelMaterial("billboard-glow", () => new THREE.MeshBasicMaterial({ color: 0xfff3b0, transparent: true, opacity: 0.74 }));
+  const glowMaterial = sharedLevelMaterial("billboard-glow", () => new THREE.MeshBasicMaterial({ color: 0xffd891, transparent: true, opacity: 0.24 }));
   const details: Array<[THREE.Mesh, string]> = [
     [new THREE.Mesh(sharedLevelBoxGeometry(1.38, 0.045, 0.03), frameMaterial), "billboard top rail"],
     [new THREE.Mesh(sharedLevelBoxGeometry(1.38, 0.045, 0.03), frameMaterial), "billboard bottom rail"],
