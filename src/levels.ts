@@ -2244,6 +2244,10 @@ function spawnCentralConstructionCrane(context: LevelContext): void {
   const anchor = new THREE.Vector3(-3.25, 0, 0.85);
   const supportGroupId = "central-construction-crane";
   const fallDirection = new THREE.Vector3(1, 0, -0.16);
+  const craneReleaseRadius = 16.4;
+  const craneReleaseHeight = 15.8;
+  const craneUpperReleaseHeight = 4.8;
+  const craneUpperReleaseLowerHeight = 13.2;
   const mastHeight = 1.08;
   const mastLevels = 11;
   const mastBottomY = 0.5;
@@ -2272,8 +2276,8 @@ function spawnCentralConstructionCrane(context: LevelContext): void {
     190,
     {
       supportGroupId,
-      supportReleaseRadius: 16.4,
-      supportReleaseHeight: 15.8,
+      supportReleaseRadius: craneReleaseRadius,
+      supportReleaseHeight: craneReleaseHeight,
       supportReleaseFallDirection: fallDirection,
       fractureResistance: 4.5
     }
@@ -2296,6 +2300,7 @@ function spawnCentralConstructionCrane(context: LevelContext): void {
       supportReleaseMassScale: 0.55
     }
   );
+  hideCranePhysicsCore(mastAssembly);
   decorateCraneMastAssembly(mastAssembly, { mastBottomY, mastHeight, mastLevels, assemblyCenterY });
 
   const boomCenterY = topY + 0.35;
@@ -2342,6 +2347,7 @@ function spawnCentralConstructionCrane(context: LevelContext): void {
       ]
     }
   );
+  hideCranePhysicsCore(boomAssembly);
   decorateCraneBoomAssembly(boomAssembly, {
     topY,
     boomCenterY,
@@ -2354,6 +2360,62 @@ function spawnCentralConstructionCrane(context: LevelContext): void {
     hookCenterY,
     hookSize
   });
+
+  addCraneWeakPoint(
+    context,
+    "Central construction crane base shear pins",
+    new THREE.Vector3(anchor.x, mastBottomY + 0.28, anchor.z),
+    new THREE.Vector3(0.74, 0.28, 0.74),
+    {
+      supportGroupId,
+      supportReleaseRadius: craneReleaseRadius,
+      supportReleaseHeight: craneReleaseHeight,
+      supportReleaseFallDirection: fallDirection,
+      scoreValue: 240
+    }
+  );
+  addCraneWeakPoint(
+    context,
+    "Central construction crane slewing ring weak point",
+    new THREE.Vector3(anchor.x, topY + 0.18, anchor.z),
+    new THREE.Vector3(0.88, 0.24, 0.88),
+    {
+      supportGroupId,
+      supportReleaseRadius: craneReleaseRadius,
+      supportReleaseHeight: craneUpperReleaseHeight,
+      supportReleaseLowerHeight: craneUpperReleaseLowerHeight,
+      supportReleaseFallDirection: fallDirection,
+      scoreValue: 340
+    }
+  );
+  addCraneWeakPoint(
+    context,
+    "Central construction crane boom heel weak point",
+    new THREE.Vector3(anchor.x + 1.12, topY + 0.36, anchor.z),
+    new THREE.Vector3(0.58, 0.26, 0.62),
+    {
+      supportGroupId,
+      supportReleaseRadius: craneReleaseRadius,
+      supportReleaseHeight: craneUpperReleaseHeight,
+      supportReleaseLowerHeight: craneUpperReleaseLowerHeight,
+      supportReleaseFallDirection: fallDirection,
+      scoreValue: 320
+    }
+  );
+  addCraneWeakPoint(
+    context,
+    "Central construction crane hoist trolley weak point",
+    new THREE.Vector3(anchor.x + hookX, topY + 0.18, anchor.z),
+    new THREE.Vector3(0.56, 0.24, 0.46),
+    {
+      supportGroupId,
+      supportReleaseRadius: craneReleaseRadius,
+      supportReleaseHeight: craneUpperReleaseHeight,
+      supportReleaseLowerHeight: craneUpperReleaseLowerHeight,
+      supportReleaseFallDirection: fallDirection,
+      scoreValue: 360
+    }
+  );
 
   const payload = addCranePart(
     context,
@@ -2372,8 +2434,15 @@ function spawnCentralConstructionCrane(context: LevelContext): void {
     260,
     {
       supportGroupId,
-      destructible: false,
-      canFracture: false,
+      scoreRole: "target",
+      zoneId: "central-construction-crane hazard-core",
+      destructible: true,
+      canFracture: true,
+      fractureResistance: 0.38,
+      supportReleaseRadius: craneReleaseRadius,
+      supportReleaseHeight: 7.4,
+      supportReleaseLowerHeight: 9.2,
+      supportReleaseFallDirection: fallDirection,
       supportReleaseImpulseScale: 0.18,
       supportReleaseTorqueScale: 0.1,
       supportReleaseMassScale: 4.8
@@ -2389,10 +2458,13 @@ interface CranePartOptions {
   supportGroupId?: string;
   supportReleaseRadius?: number;
   supportReleaseHeight?: number;
+  supportReleaseLowerHeight?: number;
   supportReleaseFallDirection?: THREE.Vector3;
   supportReleaseImpulseScale?: number;
   supportReleaseTorqueScale?: number;
   supportReleaseMassScale?: number;
+  scoreRole?: ScoreRole;
+  zoneId?: string;
   compoundColliders?: Array<{
     size: THREE.Vector3;
     offset: THREE.Vector3;
@@ -2422,11 +2494,12 @@ function addCranePart(
     size,
     compoundColliders: options.compoundColliders,
     category: "structure",
-    scoreRole: "neutral",
-    zoneId: "central-construction-crane",
+    scoreRole: options.scoreRole ?? "neutral",
+    zoneId: options.zoneId ?? "central-construction-crane",
     supportGroupId: options.supportGroupId,
     supportReleaseRadius: options.supportReleaseRadius,
     supportReleaseHeight: options.supportReleaseHeight,
+    supportReleaseLowerHeight: options.supportReleaseLowerHeight,
     supportReleaseFallDirection: options.supportReleaseFallDirection,
     supportReleaseImpulseScale: options.supportReleaseImpulseScale,
     supportReleaseTorqueScale: options.supportReleaseTorqueScale,
@@ -2443,15 +2516,90 @@ function addCranePart(
   return object.mesh;
 }
 
+interface CraneWeakPointOptions {
+  supportGroupId: string;
+  supportReleaseRadius: number;
+  supportReleaseHeight: number;
+  supportReleaseLowerHeight?: number;
+  supportReleaseFallDirection: THREE.Vector3;
+  scoreValue: number;
+}
+
+function addCraneWeakPoint(
+  context: LevelContext,
+  label: string,
+  position: THREE.Vector3,
+  size: THREE.Vector3,
+  options: CraneWeakPointOptions
+): THREE.Mesh {
+  const object = context.physics.addDynamicBox({
+    label,
+    material: context.materials.get("metal"),
+    renderMaterial: craneWeakPointMaterial(),
+    position,
+    size,
+    category: "structure",
+    scoreRole: "target",
+    zoneId: "central-construction-crane hazard-core",
+    supportGroupId: options.supportGroupId,
+    supportReleaseRadius: options.supportReleaseRadius,
+    supportReleaseHeight: options.supportReleaseHeight,
+    supportReleaseLowerHeight: options.supportReleaseLowerHeight,
+    supportReleaseFallDirection: options.supportReleaseFallDirection,
+    supportReleaseImpulseScale: 1.05,
+    supportReleaseTorqueScale: 1.16,
+    supportReleaseMassScale: 0.7,
+    canFracture: true,
+    destructible: true,
+    fractureResistance: 0.18,
+    bodyType: "fixed",
+    scoreValue: options.scoreValue,
+    chainSource: true,
+    restitution: 0.08
+  });
+  object.mesh.userData.disposeMaterial = false;
+  return object.mesh;
+}
+
+function craneWeakPointMaterial(): THREE.Material {
+  return sharedLevelMaterial(
+    "central-crane-weak-point",
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xff6b2e,
+        roughness: 0.36,
+        metalness: 0.46,
+        emissive: 0xff2a12,
+        emissiveIntensity: 0.48,
+        map: materialAtlasTile(10)
+      })
+  );
+}
+
 function craneYellowMaterial(): THREE.Material {
   return new THREE.MeshStandardMaterial({
-    color: 0xffbd3f,
-    roughness: 0.44,
-    metalness: 0.46,
-    emissive: 0x3a2200,
-    emissiveIntensity: 0.12,
+    color: 0xffc64a,
+    roughness: 0.38,
+    metalness: 0.36,
+    emissive: 0x6a3b00,
+    emissiveIntensity: 0.2,
     map: materialAtlasTile(10)
   });
+}
+
+function hideCranePhysicsCore(mesh: THREE.Mesh): void {
+  if (!Array.isArray(mesh.material)) {
+    mesh.material.dispose();
+  }
+  mesh.material = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false
+  });
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.userData.disposeMaterial = true;
 }
 
 function decorateCraneMastAssembly(
@@ -2463,10 +2611,55 @@ function decorateCraneMastAssembly(
     assemblyCenterY: number;
   }
 ): void {
+  const root = craneVisualRoot(mesh);
   const localY = (worldY: number) => worldY - config.assemblyCenterY;
+  const mastVisualHeight = config.mastLevels * config.mastHeight;
+  const mastVisualCenterY = localY(config.mastBottomY + mastVisualHeight * 0.5);
+  addCraneMergedVisualBoxes(
+    root,
+    "construction crane mast corner posts",
+    [
+      { size: new THREE.Vector3(0.055, mastVisualHeight, 0.055), position: new THREE.Vector3(-0.28, mastVisualCenterY, -0.28) },
+      { size: new THREE.Vector3(0.055, mastVisualHeight, 0.055), position: new THREE.Vector3(-0.28, mastVisualCenterY, 0.28) },
+      { size: new THREE.Vector3(0.055, mastVisualHeight, 0.055), position: new THREE.Vector3(0.28, mastVisualCenterY, -0.28) },
+      { size: new THREE.Vector3(0.055, mastVisualHeight, 0.055), position: new THREE.Vector3(0.28, mastVisualCenterY, 0.28) }
+    ],
+    craneYellowMaterial()
+  );
+  const braceParts: Array<{ size: THREE.Vector3; position: THREE.Vector3; rotation?: THREE.Euler }> = [];
   for (let level = 0; level < config.mastLevels; level += 1) {
     const y = localY(config.mastBottomY + level * config.mastHeight + config.mastHeight * 0.5);
-    decorateCraneMastBraces(mesh, y, config.mastHeight);
+    appendCraneMastBraceParts(braceParts, y, config.mastHeight);
+  }
+  addCraneMergedVisualBoxes(
+    root,
+    "construction crane mast braces",
+    braceParts,
+    new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.54, metalness: 0.58, map: materialAtlasTile(10) })
+  );
+}
+
+function appendCraneMastBraceParts(
+  parts: Array<{ size: THREE.Vector3; position: THREE.Vector3; rotation?: THREE.Euler }>,
+  localY: number,
+  height: number
+): void {
+  for (const rotationZ of [Math.PI * 0.22, -Math.PI * 0.22]) {
+    parts.push({
+      size: new THREE.Vector3(0.055, height * 1.04, 0.055),
+      position: new THREE.Vector3(0, localY, 0),
+      rotation: new THREE.Euler(0, 0, rotationZ)
+    });
+  }
+  for (const y of [localY - height * 0.48, localY + height * 0.48]) {
+    parts.push({
+      size: new THREE.Vector3(0.58, 0.05, 0.05),
+      position: new THREE.Vector3(0, y, 0)
+    });
+    parts.push({
+      size: new THREE.Vector3(0.05, 0.05, 0.58),
+      position: new THREE.Vector3(0, y, 0)
+    });
   }
 }
 
@@ -2485,44 +2678,45 @@ function decorateCraneBoomAssembly(
     hookSize: THREE.Vector3;
   }
 ): void {
+  const root = craneVisualRoot(mesh);
   const localY = (worldY: number) => worldY - config.boomCenterY;
   const cableTopY = config.topY + 0.28;
   const cableBottomY = config.hookCenterY + config.hookSize.y * 0.5 - 0.03;
   const cableHeight = cableTopY - cableBottomY;
   addCraneVisualBox(
-    mesh,
+    root,
     "construction crane slewing deck",
     new THREE.Vector3(0.9, 0.4, 0.9),
     craneYellowMaterial(),
     new THREE.Vector3(0, localY(config.topY + 0.2), 0)
   );
   const jib = addCraneVisualBox(
-    mesh,
+    root,
     "construction crane jib",
-    new THREE.Vector3(config.boomLength, 0.3, 0.38),
+    new THREE.Vector3(config.boomLength, 0.07, 0.1),
     craneYellowMaterial(),
     new THREE.Vector3(config.boomCenterX, localY(config.topY + 0.35), 0)
   );
   decorateCraneBoom(jib, config.boomLength);
 
   const counterJib = addCraneVisualBox(
-    mesh,
+    root,
     "construction crane counter-jib",
-    new THREE.Vector3(config.counterJibLength, 0.32, 0.46),
+    new THREE.Vector3(config.counterJibLength, 0.07, 0.12),
     craneYellowMaterial(),
     new THREE.Vector3(config.counterJibCenterX, localY(config.topY + 0.35), 0)
   );
   decorateCraneBoom(counterJib, config.counterJibLength);
 
   addCraneVisualBox(
-    mesh,
+    root,
     "construction crane counterweight",
     new THREE.Vector3(0.9, 0.9, 0.78),
     new THREE.MeshStandardMaterial({ color: 0x2f3539, roughness: 0.8, metalness: 0.08, map: materialAtlasTile(6) }),
     new THREE.Vector3(config.counterweightX, localY(config.topY + 0.04), 0)
   );
   addCraneVisualBox(
-    mesh,
+    root,
     "construction crane cab",
     new THREE.Vector3(0.88, 0.58, 0.58),
     new THREE.MeshStandardMaterial({
@@ -2537,53 +2731,29 @@ function decorateCraneBoomAssembly(
     new THREE.Vector3(0.68, localY(config.topY - 0.08), -0.48)
   );
   addCraneVisualBox(
-    mesh,
+    root,
+    "construction crane hoist trolley",
+    new THREE.Vector3(0.58, 0.2, 0.52),
+    new THREE.MeshStandardMaterial({ color: 0x20282d, roughness: 0.52, metalness: 0.68, map: materialAtlasTile(10) }),
+    new THREE.Vector3(config.hookX, localY(config.topY + 0.18), 0)
+  );
+  addCraneVisualBox(
+    root,
     "construction crane hoist cable",
     new THREE.Vector3(0.045, cableHeight, 0.045),
     new THREE.MeshStandardMaterial({ color: 0x11171b, roughness: 0.62, metalness: 0.64, map: materialAtlasTile(6) }),
     new THREE.Vector3(config.hookX, localY((cableTopY + cableBottomY) * 0.5), 0)
   );
-  addCraneVisualBox(
-    mesh,
-    "construction crane hook",
-    config.hookSize,
-    new THREE.MeshStandardMaterial({ color: 0x20282d, roughness: 0.48, metalness: 0.7, map: materialAtlasTile(10) }),
-    new THREE.Vector3(config.hookX, localY(config.hookCenterY), 0)
-  );
-}
-
-function decorateCraneMastBraces(mesh: THREE.Mesh, localY: number, height: number): void {
-  const braceMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.54, metalness: 0.58, map: materialAtlasTile(10) });
-  for (const rotationZ of [Math.PI * 0.22, -Math.PI * 0.22]) {
-    const brace = addCraneVisualBox(
-      mesh,
-      "construction crane mast brace",
-      new THREE.Vector3(0.055, height * 1.04, 0.055),
-      braceMaterial.clone(),
-      new THREE.Vector3(0, localY, 0)
-    );
-    brace.rotation.z = rotationZ;
-  }
-  for (const y of [localY - height * 0.48, localY + height * 0.48]) {
-    addCraneVisualBox(
-      mesh,
-      "construction crane mast cross rail",
-      new THREE.Vector3(0.58, 0.05, 0.05),
-      braceMaterial.clone(),
-      new THREE.Vector3(0, y, 0)
-    );
-    addCraneVisualBox(
-      mesh,
-      "construction crane mast side rail",
-      new THREE.Vector3(0.05, 0.05, 0.58),
-      braceMaterial.clone(),
-      new THREE.Vector3(0, y, 0)
-    );
-  }
+  decorateCraneHook(root, {
+    hookX: config.hookX,
+    hookCenterY: config.hookCenterY,
+    hookSize: config.hookSize,
+    localY
+  });
 }
 
 function addCraneVisualBox(
-  parent: THREE.Mesh,
+  parent: THREE.Object3D,
   name: string,
   size: THREE.Vector3,
   material: THREE.Material,
@@ -2599,10 +2769,40 @@ function addCraneVisualBox(
   return mesh;
 }
 
+function addCraneMergedVisualBoxes(
+  parent: THREE.Object3D,
+  name: string,
+  parts: Array<{ size: THREE.Vector3; position: THREE.Vector3; rotation?: THREE.Euler }>,
+  material: THREE.Material
+): THREE.Mesh | null {
+  const geometries = parts.map((part) => {
+    const geometry = new THREE.BoxGeometry(part.size.x, part.size.y, part.size.z);
+    const rotation = part.rotation ? new THREE.Quaternion().setFromEuler(part.rotation) : new THREE.Quaternion();
+    geometry.applyMatrix4(new THREE.Matrix4().compose(part.position, rotation, new THREE.Vector3(1, 1, 1)));
+    return geometry;
+  });
+  const geometry = mergeGeometries(geometries, false);
+  for (const partGeometry of geometries) {
+    partGeometry.dispose();
+  }
+  if (!geometry) {
+    material.dispose();
+    return null;
+  }
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = name;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData.disposeMaterial = true;
+  parent.add(mesh);
+  return mesh;
+}
+
 function decorateCraneBoom(mesh: THREE.Mesh, length: number): void {
   const railMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.54, metalness: 0.58, map: materialAtlasTile(10) });
+  const yellowRailMaterial = craneYellowMaterial();
   for (const y of [-0.17, 0.17]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.96, 0.045, 0.045), railMaterial.clone());
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.96, 0.055, 0.055), yellowRailMaterial.clone());
     rail.name = "construction crane boom rail";
     rail.position.y = y;
     rail.userData.disposeMaterial = true;
@@ -2620,7 +2820,34 @@ function decorateCraneBoom(mesh: THREE.Mesh, length: number): void {
   }
 }
 
+function decorateCraneHook(
+  parent: THREE.Object3D,
+  config: {
+    hookX: number;
+    hookCenterY: number;
+    hookSize: THREE.Vector3;
+    localY(worldY: number): number;
+  }
+): void {
+  const material = new THREE.MeshStandardMaterial({ color: 0x20282d, roughness: 0.48, metalness: 0.7, map: materialAtlasTile(10) });
+  addCraneMergedVisualBoxes(
+    parent,
+    "construction crane hook assembly",
+    [
+      {
+        size: new THREE.Vector3(config.hookSize.x * 1.08, config.hookSize.y * 0.78, config.hookSize.z * 1.55),
+        position: new THREE.Vector3(config.hookX, config.localY(config.hookCenterY + 0.06), 0)
+      },
+      { size: new THREE.Vector3(0.08, 0.34, 0.08), position: new THREE.Vector3(config.hookX, config.localY(config.hookCenterY - 0.14), 0) },
+      { size: new THREE.Vector3(0.3, 0.08, 0.08), position: new THREE.Vector3(config.hookX + 0.11, config.localY(config.hookCenterY - 0.32), 0) },
+      { size: new THREE.Vector3(0.08, 0.18, 0.08), position: new THREE.Vector3(config.hookX + 0.25, config.localY(config.hookCenterY - 0.24), 0) }
+    ],
+    material
+  );
+}
+
 function decorateCranePayload(mesh: THREE.Mesh, config: { size: THREE.Vector3; liftGap: number }): void {
+  const root = craneVisualRoot(mesh);
   const hazardMaterial = new THREE.MeshBasicMaterial({ color: 0xffb22e, transparent: true, opacity: 0.96 });
   const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xff4f38, transparent: true, opacity: 0.82 });
   const riggingMaterial = new THREE.MeshStandardMaterial({ color: 0x10161a, roughness: 0.54, metalness: 0.72, map: materialAtlasTile(6) });
@@ -2632,7 +2859,7 @@ function decorateCranePayload(mesh: THREE.Mesh, config: { size: THREE.Vector3; l
   const slingZ = config.size.z * 0.34;
 
   addCraneVisualBox(
-    mesh,
+    root,
     "crane payload spreader beam",
     new THREE.Vector3(config.size.x * 0.92, 0.08, 0.12),
     liftBarMaterial,
@@ -2646,21 +2873,21 @@ function decorateCranePayload(mesh: THREE.Mesh, config: { size: THREE.Vector3; l
     [slingX, slingZ]
   ] as const) {
     addCraneRiggingCable(
-      mesh,
+      root,
       "crane payload suspension sling",
       new THREE.Vector3(x, spreaderY, z),
       new THREE.Vector3(0, liftRingY, 0),
-      0.035,
+      0.045,
       riggingMaterial.clone()
     );
   }
 
   addCraneRiggingCable(
-    mesh,
+    root,
     "crane payload hook pendant",
     new THREE.Vector3(0, spreaderY + 0.02, 0),
     new THREE.Vector3(0, liftRingY + 0.16, 0),
-    0.045,
+    0.06,
     riggingMaterial.clone()
   );
 
@@ -2669,19 +2896,19 @@ function decorateCranePayload(mesh: THREE.Mesh, config: { size: THREE.Vector3; l
     stripe.name = "crane payload hazard stripe";
     stripe.position.set(0, 0.12, z);
     stripe.userData.disposeMaterial = true;
-    mesh.add(stripe);
+    root.add(stripe);
   }
   for (const x of [-0.42, 0, 0.42]) {
     const latch = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 1.16), glowMaterial.clone());
     latch.name = "crane payload armed latch";
     latch.position.set(x, 0.47, 0);
     latch.userData.disposeMaterial = true;
-    mesh.add(latch);
+    root.add(latch);
   }
 }
 
 function addCraneRiggingCable(
-  parent: THREE.Mesh,
+  parent: THREE.Object3D,
   name: string,
   from: THREE.Vector3,
   to: THREE.Vector3,
@@ -2703,6 +2930,30 @@ function addCraneRiggingCable(
   cable.receiveShadow = true;
   cable.userData.disposeMaterial = true;
   parent.add(cable);
+}
+
+function craneVisualRoot(parent: THREE.Mesh): THREE.Object3D {
+  if (isUnitScale(parent.scale)) {
+    return parent;
+  }
+  const userData = parent.userData as { craneVisualRoot?: THREE.Object3D };
+  let root = userData.craneVisualRoot;
+  if (!root) {
+    root = new THREE.Object3D();
+    root.name = `${parent.name || "crane part"} unscaled crane details`;
+    userData.craneVisualRoot = root;
+    parent.add(root);
+  }
+  root.scale.set(safeInverseScale(parent.scale.x), safeInverseScale(parent.scale.y), safeInverseScale(parent.scale.z));
+  return root;
+}
+
+function isUnitScale(scale: THREE.Vector3): boolean {
+  return Math.abs(scale.x - 1) < 0.000001 && Math.abs(scale.y - 1) < 0.000001 && Math.abs(scale.z - 1) < 0.000001;
+}
+
+function safeInverseScale(value: number): number {
+  return Math.abs(value) > 0.000001 ? 1 / value : 1;
 }
 
 function decorateRadioTowerSegment(mesh: THREE.Mesh, level: number, height: number): void {

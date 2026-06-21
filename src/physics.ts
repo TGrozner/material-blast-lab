@@ -147,6 +147,7 @@ export interface PhysicsObject {
   supportGroupId?: string;
   supportReleaseRadius?: number;
   supportReleaseHeight?: number;
+  supportReleaseLowerHeight?: number;
   supportReleaseFallDirection?: THREE.Vector3;
   supportReleaseImpulseScale?: number;
   supportReleaseTorqueScale?: number;
@@ -188,6 +189,7 @@ interface SupportReleaseConfig {
   groupId: string;
   radius: number;
   height: number;
+  lowerHeight: number;
   fallDirection: THREE.Vector3;
 }
 
@@ -298,6 +300,7 @@ interface DynamicBoxOptions {
   supportGroupId?: string;
   supportReleaseRadius?: number;
   supportReleaseHeight?: number;
+  supportReleaseLowerHeight?: number;
   supportReleaseFallDirection?: THREE.Vector3;
   supportReleaseImpulseScale?: number;
   supportReleaseTorqueScale?: number;
@@ -663,6 +666,7 @@ export class PhysicsWorld {
       supportGroupId: options.supportGroupId,
       supportReleaseRadius: options.supportReleaseRadius,
       supportReleaseHeight: options.supportReleaseHeight,
+      supportReleaseLowerHeight: options.supportReleaseLowerHeight,
       supportReleaseFallDirection: options.supportReleaseFallDirection?.clone(),
       supportReleaseImpulseScale: options.supportReleaseImpulseScale,
       supportReleaseTorqueScale: options.supportReleaseTorqueScale,
@@ -1424,7 +1428,7 @@ export class PhysicsWorld {
     const horizontalRadius = supportRelease?.radius ?? Math.max(1.05, Math.min(2.35, Math.max(source.dimensions.x, source.dimensions.z) * 2.8));
     const sameStackRadius = supportRelease?.radius ?? horizontalRadius * 1.2;
     const neighborRadius = supportRelease ? 0 : horizontalRadius * 0.72;
-    const minY = origin.y + Math.max(0.06, source.dimensions.y * 0.34);
+    const minY = supportRelease ? origin.y - supportRelease.lowerHeight : origin.y + Math.max(0.06, source.dimensions.y * 0.34);
     const maxY = origin.y + (supportRelease?.height ?? Math.max(2.4, source.dimensions.y * 6.4));
     let queued = 0;
 
@@ -2649,6 +2653,7 @@ function supportReleaseConfig(source: PhysicsObject): SupportReleaseConfig | nul
     groupId: source.supportGroupId,
     radius: source.supportReleaseRadius,
     height: source.supportReleaseHeight,
+    lowerHeight: Math.max(0, source.supportReleaseLowerHeight ?? 0),
     fallDirection
   };
 }
