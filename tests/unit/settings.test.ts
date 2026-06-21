@@ -14,7 +14,6 @@ describe("game settings", () => {
   test("defaults to the stable cinematic WebGL profile", () => {
     expect(DEFAULT_GAME_SETTINGS).toMatchObject({
       graphicsQuality: "cinematic",
-      rendererBackend: "webgl",
       antialias: true
     });
   });
@@ -41,7 +40,6 @@ describe("game settings", () => {
     const storage = memoryStorage();
     const settings = {
       graphicsQuality: "performance" as const,
-      rendererBackend: "webgl" as const,
       antialias: false,
       masterVolume: 0.35,
       cameraShake: 0.2,
@@ -52,7 +50,6 @@ describe("game settings", () => {
     expect(saveGameSettings(settings, storage)).toBe(true);
     expect(JSON.parse(storage.getItem(GAME_SETTINGS_STORAGE_KEY) ?? "{}")).toMatchObject({
       graphicsQuality: "performance",
-      rendererBackend: "webgl",
       antialias: false,
       masterVolume: 0.35,
       showFps: false

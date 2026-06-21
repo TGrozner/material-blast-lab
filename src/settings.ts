@@ -1,11 +1,9 @@
 export const GAME_SETTINGS_STORAGE_KEY = "downtown-mayhem:settings:v1";
 
 export type GraphicsQuality = "performance" | "balanced" | "cinematic";
-export type RendererBackendPreference = "auto" | "webgpu" | "webgl";
 
 export interface GameSettings {
   graphicsQuality: GraphicsQuality;
-  rendererBackend: RendererBackendPreference;
   antialias: boolean;
   masterVolume: number;
   cameraShake: number;
@@ -20,7 +18,6 @@ export interface SettingsStorage {
 
 export const DEFAULT_GAME_SETTINGS: GameSettings = {
   graphicsQuality: "cinematic",
-  rendererBackend: "webgl",
   antialias: true,
   masterVolume: 0.84,
   cameraShake: 0.78,
@@ -32,12 +29,6 @@ export const GRAPHICS_QUALITY_LABELS: Record<GraphicsQuality, string> = {
   performance: "Performance",
   balanced: "Balanced",
   cinematic: "Cinematic"
-};
-
-export const RENDERER_BACKEND_LABELS: Record<RendererBackendPreference, string> = {
-  auto: "Auto",
-  webgpu: "WebGPU",
-  webgl: "WebGL"
 };
 
 export function graphicsPixelRatioCap(quality: GraphicsQuality): number {
@@ -64,7 +55,6 @@ export function sanitizeGameSettings(value: unknown): GameSettings {
 
   return {
     graphicsQuality,
-    rendererBackend: readRendererBackendPreference(source.rendererBackend),
     antialias: readBoolean(source.antialias, DEFAULT_GAME_SETTINGS.antialias),
     masterVolume: readNumber(source.masterVolume, DEFAULT_GAME_SETTINGS.masterVolume, 0, 1),
     cameraShake: readNumber(source.cameraShake, DEFAULT_GAME_SETTINGS.cameraShake, 0, 1),
@@ -126,13 +116,6 @@ function readGraphicsQuality(value: unknown): GraphicsQuality {
     return value;
   }
   return DEFAULT_GAME_SETTINGS.graphicsQuality;
-}
-
-function readRendererBackendPreference(value: unknown): RendererBackendPreference {
-  if (value === "auto" || value === "webgpu" || value === "webgl") {
-    return value;
-  }
-  return DEFAULT_GAME_SETTINGS.rendererBackend;
 }
 
 function readNumber(value: unknown, fallback: number, min: number, max: number): number {

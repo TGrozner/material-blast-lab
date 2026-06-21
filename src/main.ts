@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import type WebGPURenderer from "three/src/renderers/webgpu/WebGPURenderer.js";
 import RAPIER from "@dimforge/rapier3d-compat";
 import {
   loadArcadeProgress,
@@ -29,10 +28,8 @@ import {
   DEFAULT_GAME_SETTINGS,
   effectiveGraphicsPixelRatio,
   GRAPHICS_QUALITY_LABELS,
-  RENDERER_BACKEND_LABELS,
   type GameSettings,
   type GraphicsQuality,
-  type RendererBackendPreference,
   graphicsPixelRatioCap,
   loadGameSettings,
   saveGameSettings,
@@ -106,18 +103,6 @@ const RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES = 72;
 const RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES = 260;
 const RENDER_WARMUP_MAX_DURATION_MS = 6_000;
 const RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS = 3_000;
-const FAST_RENDER_WARMUP_BRUTAL_PASSES = 1;
-const FAST_RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS = 4;
-const FAST_RENDER_WARMUP_MIN_FRAMES = 12;
-const FAST_RENDER_WARMUP_STABLE_FRAMES = 4;
-const FAST_RENDER_WARMUP_MAX_FRAMES = 36;
-const FAST_RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES = 1;
-const FAST_RENDER_WARMUP_POST_CLEANUP_EFFECT_PASSES = 1;
-const FAST_RENDER_WARMUP_POST_CLEANUP_EFFECT_FRAMES = 3;
-const FAST_RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES = 8;
-const FAST_RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES = 36;
-const FAST_RENDER_WARMUP_MAX_DURATION_MS = 2_600;
-const FAST_RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS = 1_200;
 const RENDER_WARMUP_SYNTHETIC_ORIGIN = new THREE.Vector3(72, 1.2, 72);
 const RENDER_WARMUP_SYNTHETIC_DESTRUCTION_ZONE = "render-warmup-destruction";
 const AIM_TRAFFIC_STEP_SECONDS = 1 / 24;
@@ -169,8 +154,7 @@ interface VolatileHazardProfile {
 interface DowntownMayhemRenderStats {
   frame: number;
   levelName: string;
-  rendererPreference: RendererBackendPreference;
-  rendererBackend: "webgpu" | "webgl2" | "webgl";
+  rendererBackend: ActualRendererBackend;
   bodyCount: number;
   dynamicBodyCount: number;
   awakeBodyCount: number;
@@ -248,7 +232,8 @@ interface RenderWarmupProfile {
   postCleanupMaxDurationMs: number;
 }
 
-type RenderWarmupMode = "none" | "smoke" | "fast" | "full";
+type RenderWarmupMode = "none" | "smoke" | "full";
+type ActualRendererBackend = "webgl2" | "webgl";
 
 const FULL_RENDER_WARMUP_PROFILE: RenderWarmupProfile = {
   label: "renderer pipelines",
@@ -267,40 +252,9 @@ const FULL_RENDER_WARMUP_PROFILE: RenderWarmupProfile = {
   postCleanupMaxDurationMs: RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS
 };
 
-const FAST_RENDER_WARMUP_PROFILE: RenderWarmupProfile = {
-  label: "renderer pipelines",
-  compileAllCameras: false,
-  brutalPasses: FAST_RENDER_WARMUP_BRUTAL_PASSES,
-  framesPerBrutalPass: FAST_RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS,
-  minFrames: FAST_RENDER_WARMUP_MIN_FRAMES,
-  stableFrames: FAST_RENDER_WARMUP_STABLE_FRAMES,
-  maxFrames: FAST_RENDER_WARMUP_MAX_FRAMES,
-  maxDurationMs: FAST_RENDER_WARMUP_MAX_DURATION_MS,
-  syntheticDestructionPasses: FAST_RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES,
-  postCleanupEffectPasses: FAST_RENDER_WARMUP_POST_CLEANUP_EFFECT_PASSES,
-  postCleanupEffectFrames: FAST_RENDER_WARMUP_POST_CLEANUP_EFFECT_FRAMES,
-  postCleanupStableFrames: FAST_RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES,
-  postCleanupMaxFrames: FAST_RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES,
-  postCleanupMaxDurationMs: FAST_RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS
-};
-
 interface DowntownMayhemRendererBundle {
-  renderer: DowntownMayhemRenderer;
-  preference: RendererBackendPreference;
-  backend: "webgpu" | "webgl2" | "webgl";
-}
-
-type DowntownMayhemRenderer = THREE.WebGLRenderer | WebGPURenderer;
-
-interface DowntownMayhemRendererBackend {
-  isWebGPUBackend?: boolean;
-  isWebGLBackend?: boolean;
-}
-
-interface DowntownMayhemGpuNavigator {
-  gpu?: {
-    requestAdapter(options?: { powerPreference?: "low-power" | "high-performance" }): Promise<unknown>;
-  };
+  renderer: THREE.WebGLRenderer;
+  backend: ActualRendererBackend;
 }
 
 declare global {
@@ -309,27 +263,7 @@ declare global {
   }
 }
 
-async function createDowntownMayhemRenderer(settings: GameSettings): Promise<DowntownMayhemRendererBundle> {
-  if (settings.rendererBackend === "webgpu" && (await canAttemptWebGpu())) {
-    try {
-      const { WebGPURenderer: WebGpuRenderer } = await import("three/webgpu");
-      const renderer = new WebGpuRenderer({
-        alpha: false,
-        antialias: settings.antialias,
-        powerPreference: "high-performance"
-      });
-      configureDowntownMayhemRenderer(renderer, settings);
-      await renderer.init();
-      return {
-        renderer,
-        preference: settings.rendererBackend,
-        backend: activeWebGpuRendererBackend(renderer)
-      };
-    } catch (error) {
-      console.warn("Downtown Mayhem: WebGPU renderer failed, falling back to WebGL.", error);
-    }
-  }
-
+function createDowntownMayhemRenderer(settings: GameSettings): DowntownMayhemRendererBundle {
   const renderer = new THREE.WebGLRenderer({
     alpha: false,
     antialias: settings.antialias,
@@ -338,27 +272,11 @@ async function createDowntownMayhemRenderer(settings: GameSettings): Promise<Dow
   configureDowntownMayhemRenderer(renderer, settings);
   return {
     renderer,
-    preference: settings.rendererBackend,
     backend: activeWebGlRendererBackend(renderer)
   };
 }
 
-async function canAttemptWebGpu(): Promise<boolean> {
-  if (typeof navigator === "undefined") {
-    return false;
-  }
-  const gpu = (navigator as Navigator & DowntownMayhemGpuNavigator).gpu;
-  if (!gpu) {
-    return false;
-  }
-  try {
-    return Boolean(await gpu.requestAdapter({ powerPreference: "high-performance" }));
-  } catch {
-    return false;
-  }
-}
-
-function configureDowntownMayhemRenderer(renderer: DowntownMayhemRenderer, settings: GameSettings): void {
+function configureDowntownMayhemRenderer(renderer: THREE.WebGLRenderer, settings: GameSettings): void {
   renderer.shadowMap.enabled = false;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   setOptionalShadowMapFlag(renderer, "autoUpdate", false);
@@ -368,27 +286,22 @@ function configureDowntownMayhemRenderer(renderer: DowntownMayhemRenderer, setti
   renderer.setPixelRatio(effectiveGraphicsPixelRatio(graphicsPixelRatioCap(settings.graphicsQuality)));
 }
 
-function activeWebGpuRendererBackend(renderer: WebGPURenderer): "webgpu" | "webgl2" {
-  const backend = renderer.backend as DowntownMayhemRendererBackend;
-  return backend.isWebGPUBackend ? "webgpu" : "webgl2";
-}
-
-function activeWebGlRendererBackend(renderer: THREE.WebGLRenderer): "webgl2" | "webgl" {
+function activeWebGlRendererBackend(renderer: THREE.WebGLRenderer): ActualRendererBackend {
   return renderer.capabilities.isWebGL2 ? "webgl2" : "webgl";
 }
 
-function rendererDrawCalls(renderer: DowntownMayhemRenderer): number {
+function rendererDrawCalls(renderer: THREE.WebGLRenderer): number {
   const renderInfo = renderer.info.render as typeof renderer.info.render & { calls?: number; drawCalls?: number };
   return renderInfo.drawCalls ?? renderInfo.calls ?? 0;
 }
 
-function rendererProgramCount(renderer: DowntownMayhemRenderer): number {
+function rendererProgramCount(renderer: THREE.WebGLRenderer): number {
   const memoryInfo = renderer.info.memory as typeof renderer.info.memory & { programs?: number };
   const rendererInfo = renderer.info as typeof renderer.info & { programs?: unknown[] };
   return memoryInfo.programs ?? rendererInfo.programs?.length ?? 0;
 }
 
-function setOptionalShadowMapFlag(renderer: DowntownMayhemRenderer, key: "autoUpdate" | "needsUpdate", value: boolean): void {
+function setOptionalShadowMapFlag(renderer: THREE.WebGLRenderer, key: "autoUpdate" | "needsUpdate", value: boolean): void {
   (renderer.shadowMap as typeof renderer.shadowMap & Partial<Record<typeof key, boolean>>)[key] = value;
 }
 
@@ -405,7 +318,7 @@ function createInitialRenderWarmupState(): RenderWarmupState {
   };
 }
 
-function currentRenderWarmupMode(rendererBackend: "webgpu" | "webgl2" | "webgl"): RenderWarmupMode {
+function currentRenderWarmupMode(): RenderWarmupMode {
   try {
     const search = new URLSearchParams(globalThis.location?.search ?? "");
     if (search.has("smoke")) {
@@ -414,9 +327,9 @@ function currentRenderWarmupMode(rendererBackend: "webgpu" | "webgl2" | "webgl")
     if (search.has("fullWarmup")) {
       return "full";
     }
-    return rendererBackend === "webgpu" ? "fast" : "none";
+    return "none";
   } catch {
-    return rendererBackend === "webgpu" ? "fast" : "none";
+    return "none";
   }
 }
 
@@ -792,7 +705,6 @@ class AppShell {
   private readonly motionEffectsInput: HTMLInputElement;
   private readonly showFpsInput: HTMLInputElement;
   private readonly qualityButtons = new Map<GraphicsQuality, HTMLButtonElement>();
-  private readonly rendererBackendButtons = new Map<RendererBackendPreference, HTMLButtonElement>();
 
   private screen: AppShellScreen = "menu";
   private busy = false;
@@ -865,15 +777,6 @@ class AppShell {
             </div>
           </div>
 
-          <div class="app-shell__setting-row app-shell__setting-row--stacked">
-            <span>Renderer</span>
-            <div class="app-shell__segmented" role="group" aria-label="Renderer backend">
-              <button type="button" data-renderer-backend="auto">Auto</button>
-              <button type="button" data-renderer-backend="webgpu">WebGPU</button>
-              <button type="button" data-renderer-backend="webgl">WebGL</button>
-            </div>
-          </div>
-
           <label class="app-shell__setting-row app-shell__setting-row--toggle">
             <span>Anti-aliasing</span>
             <input type="checkbox" data-setting="antialias" />
@@ -931,12 +834,6 @@ class AppShell {
       const quality = button.dataset.quality;
       if (quality === "performance" || quality === "balanced" || quality === "cinematic") {
         this.qualityButtons.set(quality, button);
-      }
-    }
-    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-renderer-backend]")) {
-      const rendererBackend = button.dataset.rendererBackend;
-      if (rendererBackend === "auto" || rendererBackend === "webgpu" || rendererBackend === "webgl") {
-        this.rendererBackendButtons.set(rendererBackend, button);
       }
     }
 
@@ -1023,11 +920,6 @@ class AppShell {
     const quality = target.dataset.quality;
     if (quality === "performance" || quality === "balanced" || quality === "cinematic") {
       this.updateSettings({ graphicsQuality: quality });
-      return;
-    }
-    const rendererBackend = target.dataset.rendererBackend;
-    if (rendererBackend === "auto" || rendererBackend === "webgpu" || rendererBackend === "webgl") {
-      this.updateSettings({ rendererBackend });
     }
   };
 
@@ -1118,11 +1010,6 @@ class AppShell {
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", String(active));
     }
-    for (const [rendererBackend, button] of this.rendererBackendButtons) {
-      const active = rendererBackend === this.settings.rendererBackend;
-      button.classList.toggle("is-active", active);
-      button.setAttribute("aria-pressed", String(active));
-    }
 
     this.antialiasInput.checked = this.settings.antialias;
     const volume = Math.round(this.settings.masterVolume * 100);
@@ -1159,7 +1046,6 @@ function setText(element: HTMLElement, value: string): void {
 function settingsRenderKey(settings: GameSettings): string {
   return [
     settings.graphicsQuality,
-    settings.rendererBackend,
     Number(settings.antialias),
     settings.masterVolume.toFixed(3),
     settings.cameraShake.toFixed(3),
@@ -1978,9 +1864,8 @@ function shouldIncludeFullPerfDiskReport(): boolean {
 }
 
 class Game {
-  private readonly renderer: DowntownMayhemRenderer;
-  private readonly rendererPreference: RendererBackendPreference;
-  private readonly rendererBackend: "webgpu" | "webgl2" | "webgl";
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly rendererBackend: ActualRendererBackend;
   private readonly scene = new THREE.Scene();
   private readonly materials = new MaterialCatalog();
   private readonly rng: SeededRandom;
@@ -2079,7 +1964,6 @@ class Game {
   private lastRenderStats: DowntownMayhemRenderStats = {
     frame: 0,
     levelName: "",
-    rendererPreference: "auto",
     rendererBackend: "webgl2",
     bodyCount: 0,
     dynamicBodyCount: 0,
@@ -2115,9 +1999,7 @@ class Game {
     this.settings = settings;
     this.gameMode = options.gameMode ?? DEFAULT_GAME_MODE;
     this.renderer = rendererBundle.renderer;
-    this.rendererPreference = rendererBundle.preference;
     this.rendererBackend = rendererBundle.backend;
-    this.renderer.domElement.dataset.rendererPreference = this.rendererPreference;
     this.renderer.domElement.dataset.rendererBackend = this.rendererBackend;
     app.appendChild(this.renderer.domElement);
 
@@ -2171,7 +2053,7 @@ class Game {
     this.loadLevel();
     this.audio.preload();
     this.resize();
-    this.prepareRenderWarmup(currentRenderWarmupMode(this.rendererBackend));
+    this.prepareRenderWarmup(currentRenderWarmupMode());
     this.perfDiskLogger?.start();
     window.addEventListener("resize", this.handleResize);
     window.visualViewport?.addEventListener("resize", this.handleResize);
@@ -2429,7 +2311,6 @@ class Game {
     this.lastRenderStats = {
       frame: this.renderStatsFrame,
       levelName: this.currentLevel().name,
-      rendererPreference: this.rendererPreference,
       rendererBackend: this.rendererBackend,
       bodyCount: physicsStats.bodyCount,
       dynamicBodyCount: physicsStats.dynamicBodyCount,
@@ -2466,7 +2347,6 @@ class Game {
       ...this.lastRenderStats,
       frame: this.renderStatsFrame,
       levelName: this.currentLevel().name,
-      rendererPreference: this.rendererPreference,
       rendererBackend: this.rendererBackend,
       bodyCount: physicsStats.bodyCount,
       dynamicBodyCount: physicsStats.dynamicBodyCount,
@@ -2872,7 +2752,7 @@ class Game {
     this.renderWarmupPromise =
       mode === "smoke"
         ? this.runSmokeRenderWarmup(token, group)
-        : this.runRenderWarmup(token, group, mode === "full" ? FULL_RENDER_WARMUP_PROFILE : FAST_RENDER_WARMUP_PROFILE);
+        : this.runRenderWarmup(token, group, FULL_RENDER_WARMUP_PROFILE);
   }
 
   private async runSmokeRenderWarmup(token: number, group: THREE.Group): Promise<void> {
@@ -4551,7 +4431,7 @@ class Game {
     this.levelReloadInProgress = true;
     void this.renderer.setAnimationLoop(null);
     const level = this.currentLevel();
-    const warmupMode = currentRenderWarmupMode(this.rendererBackend);
+    const warmupMode = currentRenderWarmupMode();
     this.perfDiskLogger?.flush("level-reload-start");
     this.options.showLoading?.(level.name, status);
     await waitForDomPaint();
@@ -4608,14 +4488,10 @@ class Game {
   }
 
   private updateSettings(patch: Partial<GameSettings>): void {
-    const previousRendererBackend = this.settings.rendererBackend;
     this.settings = sanitizeGameSettings({ ...this.settings, ...patch });
     this.applySettings();
     saveGameSettings(this.settings);
-    this.status =
-      previousRendererBackend !== this.settings.rendererBackend
-        ? `Renderer saved: ${this.settings.rendererBackend}. Reload to apply; active backend is ${this.rendererBackend}.`
-        : `Settings saved: ${settingsStatus(this.settings)}.`;
+    this.status = `Settings saved: ${settingsStatus(this.settings)}.`;
   }
 
   private resetSettings(): void {
@@ -5622,7 +5498,7 @@ function scoreStatus(score: ScoreBreakdown, result: ArcadeResult): string {
 }
 
 function settingsStatus(settings: GameSettings): string {
-  return `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]}, ${RENDERER_BACKEND_LABELS[settings.rendererBackend]} renderer, ${Math.round(settings.masterVolume * 100)}% volume, ${Math.round(settings.cameraShake * 100)}% shake`;
+  return `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]}, WebGL renderer, ${Math.round(settings.masterVolume * 100)}% volume, ${Math.round(settings.cameraShake * 100)}% shake`;
 }
 
 boot().catch((error: unknown) => {

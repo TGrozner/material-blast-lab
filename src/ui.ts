@@ -6,10 +6,8 @@ import { PROJECTILE_ORDER, PROJECTILES } from "./projectile";
 import type { ScoreBreakdown } from "./scoring";
 import {
   GRAPHICS_QUALITY_LABELS,
-  RENDERER_BACKEND_LABELS,
   type GameSettings,
-  type GraphicsQuality,
-  type RendererBackendPreference
+  type GraphicsQuality
 } from "./settings";
 
 interface UIState {
@@ -97,7 +95,6 @@ export class GameUI {
   private readonly showFpsInput: HTMLInputElement;
   private readonly projectileButtons = new Map<ProjectileId, HTMLButtonElement>();
   private readonly qualityButtons = new Map<GraphicsQuality, HTMLButtonElement>();
-  private readonly rendererBackendButtons = new Map<RendererBackendPreference, HTMLButtonElement>();
 
   private screen: UIScreen = "home";
   private scoreWasVisible = false;
@@ -208,15 +205,6 @@ export class GameUI {
             </div>
           </div>
 
-          <div class="hud__setting-row hud__setting-row--stacked">
-            <span>Renderer</span>
-            <div class="hud__segmented" role="group" aria-label="Renderer backend">
-              <button type="button" data-renderer-backend="auto">Auto</button>
-              <button type="button" data-renderer-backend="webgpu">WebGPU</button>
-              <button type="button" data-renderer-backend="webgl">WebGL</button>
-            </div>
-          </div>
-
           <label class="hud__setting-row hud__setting-row--toggle">
             <span>Anti-aliasing</span>
             <input type="checkbox" data-setting="antialias" />
@@ -317,13 +305,6 @@ export class GameUI {
       if (isGraphicsQuality(quality)) {
         this.qualityButtons.set(quality, button);
         button.addEventListener("click", () => this.callbacks.updateSettings({ graphicsQuality: quality }));
-      }
-    }
-    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-renderer-backend]")) {
-      const rendererBackend = button.dataset.rendererBackend;
-      if (isRendererBackendPreference(rendererBackend)) {
-        this.rendererBackendButtons.set(rendererBackend, button);
-        button.addEventListener("click", () => this.callbacks.updateSettings({ rendererBackend }));
       }
     }
     this.antialiasInput.addEventListener("change", () =>
@@ -538,16 +519,11 @@ export class GameUI {
     this.root.dataset.quality = settings.graphicsQuality;
     setText(
       this.settingsSummaryValue,
-      `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]} / ${RENDERER_BACKEND_LABELS[settings.rendererBackend]} renderer / AA ${settings.antialias ? "on" : "off"} / ${volume}% volume / ${shake}% shake`
+      `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]} / WebGL renderer / AA ${settings.antialias ? "on" : "off"} / ${volume}% volume / ${shake}% shake`
     );
 
     for (const [quality, button] of this.qualityButtons) {
       const active = quality === settings.graphicsQuality;
-      button.classList.toggle("is-active", active);
-      button.setAttribute("aria-pressed", String(active));
-    }
-    for (const [rendererBackend, button] of this.rendererBackendButtons) {
-      const active = rendererBackend === settings.rendererBackend;
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", String(active));
     }
@@ -596,7 +572,6 @@ function homeRenderKey(state: UIState): string {
 function settingsRenderKey(settings: GameSettings): string {
   return [
     settings.graphicsQuality,
-    settings.rendererBackend,
     Number(settings.antialias),
     settings.masterVolume.toFixed(3),
     settings.cameraShake.toFixed(3),
@@ -746,10 +721,6 @@ function setRangeValue(input: HTMLInputElement, value: number): void {
 
 function isGraphicsQuality(value: string | undefined): value is GraphicsQuality {
   return value === "performance" || value === "balanced" || value === "cinematic";
-}
-
-function isRendererBackendPreference(value: string | undefined): value is RendererBackendPreference {
-  return value === "auto" || value === "webgpu" || value === "webgl";
 }
 
 function setText(element: HTMLElement, value: string): void {

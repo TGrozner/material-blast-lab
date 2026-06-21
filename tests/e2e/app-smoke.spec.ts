@@ -18,7 +18,6 @@ const PERF_SMOKE_URL = "/?smoke=1&perfFull=1";
 const STABLE_VISUAL_NOW = 1_710_000_000_000;
 const SMOKE_PERFORMANCE_SETTINGS = {
   graphicsQuality: "performance",
-  rendererBackend: "webgl",
   antialias: false,
   masterVolume: 0,
   cameraShake: 0.2,
@@ -50,8 +49,7 @@ const PERF_SMOKE_BUDGET = {
 interface RenderStats {
   frame: number;
   levelName: string;
-  rendererPreference: "auto" | "webgpu" | "webgl";
-  rendererBackend: "webgpu" | "webgl2" | "webgl";
+  rendererBackend: "webgl2" | "webgl";
   bodyCount: number;
   drawCalls: number;
   triangles: number;
@@ -261,7 +259,7 @@ test("keeps the initial city render inside draw-call budgets and visually stable
   expect(consoleErrors).toEqual([]);
 });
 
-test("boots the auto renderer with a WebGPU or WebGL2 backend", async ({ page }) => {
+test("ignores stale renderer preferences and boots WebGL", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
 
@@ -269,7 +267,7 @@ test("boots the auto renderer with a WebGPU or WebGL2 backend", async ({ page })
     ({ key, settings }) => {
       localStorage.setItem(key, JSON.stringify(settings));
     },
-    { key: SETTINGS_STORAGE_KEY, settings: { ...SMOKE_PERFORMANCE_SETTINGS, rendererBackend: "auto" } }
+    { key: SETTINGS_STORAGE_KEY, settings: { ...SMOKE_PERFORMANCE_SETTINGS, rendererBackend: "legacy-renderer" } }
   );
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto(SMOKE_URL);
@@ -278,8 +276,7 @@ test("boots the auto renderer with a WebGPU or WebGL2 backend", async ({ page })
   await expectRenderableCanvas(page);
   const stats = await waitForRenderStats(page);
 
-  expect(stats.rendererPreference).toBe("auto");
-  expect(["webgpu", "webgl2", "webgl"]).toContain(stats.rendererBackend);
+  expect(["webgl2", "webgl"]).toContain(stats.rendererBackend);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -459,7 +456,6 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   await expect(page.locator("[data-role='shell-camera-shake']")).toHaveText("20%");
   await expect.poll(() => page.evaluate(readSavedSettings).catch(() => ({}))).toMatchObject({
     graphicsQuality: "performance",
-    rendererBackend: "webgl",
     antialias: false,
     masterVolume: 0.35,
     cameraShake: 0.2,
@@ -470,7 +466,6 @@ test("persists real settings and applies the FPS toggle after reload", async ({ 
   await page.reload();
   await openSettings(page);
   await expect(page.getByRole("button", { name: "Performance" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("button", { name: "WebGL" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("checkbox", { name: "Anti-aliasing" })).not.toBeChecked({ timeout: UI_READY_TIMEOUT_MS });
   await expect(page.locator("[data-role='shell-master-volume']")).toHaveText("35%");
   await expect(page.locator("[data-role='shell-camera-shake']")).toHaveText("20%");
