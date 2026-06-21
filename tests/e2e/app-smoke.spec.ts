@@ -192,6 +192,44 @@ test("shows a clear three-level selector without free play", async ({ page }) =>
   expect(consoleErrors).toEqual([]);
 });
 
+test("arms the RC crash run before launching on mobile", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await useSmokePerformanceSettings(page);
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await page.goto(SMOKE_URL);
+
+  await clickUi(page.locator("[data-mode='plane']"));
+  await clickUi(levelCard(page, "Hazard Junction"));
+  await expectLevelReady(page, "Hazard Junction");
+  await expectRenderableCanvas(page);
+  await expect(page.locator(".hud")).toHaveClass(/is-plane-mode/);
+  await expect(page.locator(".hud [data-role='mode-label']")).toHaveText("RC Crash Run");
+  await expect(page.locator(".hud [data-role='loadout-label']")).toHaveText("Vehicle");
+  await expect(page.locator(".hud [data-role='projectile']")).toHaveText("RC Plane");
+  await expect(fireButton(page)).toHaveText("START RUN");
+  await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
+  await expect(page.getByRole("button", { name: "Heavy" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "W" })).toHaveCount(0);
+  await expect(page.locator(".hud__plane-boost")).toBeHidden();
+  await expect(page.evaluate(mobilePlaneReadyLayoutFailures)).resolves.toEqual([]);
+
+  await clickUi(fireButton(page));
+  await expect(page.locator(".hud [data-role='shots']")).toHaveText("AIRBORNE");
+  await expect(page.locator(".hud")).toHaveClass(/is-plane-flying/);
+  await expect(page.locator(".hud__fire")).toBeHidden();
+  await expect(page.locator("[data-action='reset']")).toBeVisible();
+  await expect(page.locator(".hud__plane-boost")).toBeVisible();
+  await expect(page.evaluate(mobilePlaneFlightLayoutFailures)).resolves.toEqual([]);
+
+  await clickUi(page.locator("[data-action='reset']"));
+  await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
+  await expect(page.locator(".hud__plane-boost")).toBeHidden();
+  await expect(page.locator(".hud__command")).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
 test("keeps the initial city render inside draw-call budgets and visually stable", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
@@ -433,7 +471,7 @@ function trackRuntimeErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {
     const text = message.text();
-    if (message.type() === "error" && !isIgnoredGpuConsoleError(text)) {
+    if (message.type() === "error" && !isIgnoredBrowserBackendConsoleError(text)) {
       errors.push(text);
     }
   });
@@ -441,8 +479,12 @@ function trackRuntimeErrors(page: Page): string[] {
   return errors;
 }
 
-function isIgnoredGpuConsoleError(text: string): boolean {
-  return text.includes("THREE.WebGLProgram: Shader Error") || text.includes("THREE.THREE.WebGLProgram: Shader Error");
+function isIgnoredBrowserBackendConsoleError(text: string): boolean {
+  return (
+    text.includes("THREE.WebGLProgram: Shader Error") ||
+    text.includes("THREE.THREE.WebGLProgram: Shader Error") ||
+    text.includes("The AudioContext encountered an error from the audio device or the WebAudio renderer.")
+  );
 }
 
 async function bootTrial(page: Page, viewport: { width: number; height: number }): Promise<void> {
@@ -788,6 +830,109 @@ function mobileLayoutFailures(): string[] {
         failures.push(`${name} target too small: ${Math.round(rect.width)}x${Math.round(rect.height)}`);
       }
     }
+  }
+
+  return failures;
+}
+
+function mobilePlaneReadyLayoutFailures(): string[] {
+  const failures: string[] = [];
+  const isVisible = (element: Element): element is HTMLElement => {
+    if (!(element instanceof HTMLElement)) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+  };
+  const command = document.querySelector(".hud__command");
+  const topbar = document.querySelector(".hud__topbar");
+  const loadoutLabel = document.querySelector("[data-role='loadout-label']");
+  const fire = document.querySelector(".hud__fire");
+  if (
+    !(command instanceof HTMLElement) ||
+    !(topbar instanceof HTMLElement) ||
+    !(loadoutLabel instanceof HTMLElement) ||
+    !(fire instanceof HTMLElement)
+  ) {
+    return ["missing plane ready HUD"];
+  }
+
+  const commandStyle = window.getComputedStyle(command);
+  if (commandStyle.display === "none" || commandStyle.visibility === "hidden") {
+    failures.push("plane ready command panel is hidden");
+  }
+
+  const loadoutStyle = window.getComputedStyle(loadoutLabel);
+  if (loadoutStyle.visibility === "hidden" || loadoutLabel.textContent?.trim() !== "Vehicle") {
+    failures.push("plane loadout label is not visible as Vehicle");
+  }
+
+  if (document.querySelectorAll(".hud__projectile").length > 0 && Array.from(document.querySelectorAll(".hud__projectile")).some(isVisible)) {
+    failures.push("plane mode shows cannon projectile buttons");
+  }
+
+  const commandRect = command.getBoundingClientRect();
+  const topbarRect = topbar.getBoundingClientRect();
+  const fireRect = fire.getBoundingClientRect();
+  if (Math.ceil(commandRect.height) > 230) {
+    failures.push(`plane ready dock too tall: ${Math.ceil(commandRect.height)}px`);
+  }
+  if (command.scrollHeight > command.clientHeight + 1) {
+    failures.push("plane ready command panel scrolls");
+  }
+  if (topbarRect.bottom > commandRect.top - 16) {
+    failures.push("plane ready top bar and command panel leave too little flight view");
+  }
+  if (fireRect.width < 120 || fireRect.height < 44) {
+    failures.push(`plane start target too small: ${Math.round(fireRect.width)}x${Math.round(fireRect.height)}`);
+  }
+
+  return failures;
+}
+
+function mobilePlaneFlightLayoutFailures(): string[] {
+  const failures: string[] = [];
+  const isVisible = (element: Element): element is HTMLElement => {
+    if (!(element instanceof HTMLElement)) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+  };
+  const command = document.querySelector(".hud__command");
+  const boost = document.querySelector(".hud__plane-boost");
+  const fire = document.querySelector(".hud__fire");
+  const retry = document.querySelector("[data-action='reset']");
+  if (!(command instanceof HTMLElement) || !(boost instanceof HTMLElement) || !(fire instanceof HTMLElement) || !(retry instanceof HTMLElement)) {
+    return ["missing plane flight HUD"];
+  }
+
+  if (!isVisible(command)) {
+    failures.push("plane compact retry panel is not visible while airborne");
+  }
+  if (isVisible(fire)) {
+    failures.push("plane start button remains visible while airborne");
+  }
+  if (!isVisible(retry)) {
+    failures.push("plane retry button is not visible while airborne");
+  }
+  if (!isVisible(boost)) {
+    failures.push("plane boost button is not visible while airborne");
+  }
+
+  const commandRect = command.getBoundingClientRect();
+  const boostRect = boost.getBoundingClientRect();
+  if (commandRect.width > 220 || commandRect.height > 72) {
+    failures.push(`plane compact retry panel too large: ${Math.round(commandRect.width)}x${Math.round(commandRect.height)}`);
+  }
+  if (commandRect.top > window.innerHeight * 0.24 || commandRect.bottom > window.innerHeight * 0.34) {
+    failures.push("plane compact retry panel is not anchored near the top flight area");
+  }
+  if (boostRect.width < 88 || boostRect.height < 88) {
+    failures.push(`plane boost target too small: ${Math.round(boostRect.width)}x${Math.round(boostRect.height)}`);
+  }
+  if (boostRect.right < window.innerWidth * 0.62 || boostRect.bottom < window.innerHeight * 0.78) {
+    failures.push("plane boost target is not anchored to the lower-right flight area");
   }
 
   return failures;

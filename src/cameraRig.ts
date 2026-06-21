@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { effectiveGraphicsPixelRatio } from "./settings";
 
-type CameraMode = "cannon" | "projectile" | "spectacle";
+type CameraMode = "cannon" | "projectile" | "aircraft" | "spectacle";
 
 interface CameraRenderer {
   setPixelRatio(value?: number): void;
@@ -63,6 +63,22 @@ export class CameraRig {
     this.desiredPosition.copy(position).add(speedDirection.multiplyScalar(-5.6)).add(this.up.clone().multiplyScalar(2.35));
   }
 
+  followAircraft(position: THREE.Vector3, forward: THREE.Vector3, up: THREE.Vector3): void {
+    this.mode = "aircraft";
+    const speedDirection = forward.lengthSq() > 0.01 ? forward.clone().normalize() : new THREE.Vector3(0, 0, -1);
+    const stableUp = up.lengthSq() > 0.01 ? up.clone().normalize().lerp(this.up, 0.78).normalize() : this.up.clone();
+    const portrait = this.camera.aspect < 0.75;
+    const trailingDistance = portrait ? 8.8 : 7.1;
+    const lift = portrait ? 3.75 : 2.85;
+    const lookAhead = portrait ? 5.2 : 4.35;
+    this.desiredTarget.copy(position).add(speedDirection.clone().multiplyScalar(lookAhead)).add(this.up.clone().multiplyScalar(0.42));
+    this.desiredPosition
+      .copy(position)
+      .add(speedDirection.clone().multiplyScalar(-trailingDistance))
+      .add(stableUp.multiplyScalar(lift))
+      .add(this.up.clone().multiplyScalar(0.55));
+  }
+
   spectacle(point: THREE.Vector3): void {
     this.mode = "spectacle";
     this.desiredTarget.copy(point);
@@ -121,7 +137,7 @@ export class CameraRig {
       );
       this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-deltaSeconds * 2.15));
     } else {
-      const stiffness = this.mode === "projectile" ? 7.5 : 4.6;
+      const stiffness = this.mode === "projectile" ? 7.5 : this.mode === "aircraft" ? 5.9 : 4.6;
       this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-deltaSeconds * stiffness));
       this.currentTarget.lerp(this.desiredTarget, 1 - Math.exp(-deltaSeconds * stiffness));
     }

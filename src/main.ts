@@ -9,16 +9,18 @@ import {
   type ArcadeResult
 } from "./arcade";
 import { DestructionAudio } from "./audio";
+import { AircraftController } from "./aircraft";
 import { CameraRig } from "./cameraRig";
 import { Cannon } from "./cannon";
 import { decorateFragment } from "./cityVisuals";
 import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
+import { DEFAULT_GAME_MODE, GAME_MODES, isGameMode, type GameMode } from "./gameMode";
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
-import { PROJECTILES, ProjectileSystem, type ActiveProjectile, type ProjectileId } from "./projectile";
+import { PROJECTILES, ProjectileSystem, type ActiveProjectile, type ProjectileDefinition, type ProjectileId } from "./projectile";
 import { SeededRandom, createRunSeed, randomRange } from "./random";
 import { ShotRunState } from "./runState";
 import { ScorePopupLayer } from "./scorePopups";
@@ -124,6 +126,20 @@ const DAY_SKY_RADIUS = 118;
 const SUN_DIRECTION = new THREE.Vector3(-0.28, 0.28, -0.92).normalize();
 const PREMIUM_DAYLIGHT_RENDER_ORDER = 6;
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
+const AIRCRAFT_CRASH_PROJECTILE: ProjectileDefinition = {
+  ...PROJECTILES.slug,
+  name: "RC Crash Plane",
+  shortName: "RC Plane",
+  color: new THREE.Color(0xffcf5d),
+  impulse: 62,
+  blastRadius: 3.85,
+  fractureBoost: 1.18,
+  scoreModifier: 1.08,
+  description: "Fictional arcade RC plane crash profile."
+};
+const AIRCRAFT_COLLISION_RADIUS = 0.82;
+const AIRCRAFT_GROUND_CRASH_Y = 0.42;
+const AIRCRAFT_DIRECT_IMPACT_MIN_SPEED = 34;
 
 interface BurningHazard {
   id: number;
@@ -753,7 +769,7 @@ function createSunHaloTexture(): THREE.CanvasTexture {
 type AppShellScreen = "menu" | "settings" | "loading";
 
 interface AppShellCallbacks {
-  startLevel(levelIndex: number): void;
+  startLevel(levelIndex: number, gameMode: GameMode): void;
 }
 
 class AppShell {
@@ -777,6 +793,7 @@ class AppShell {
   private busy = false;
   private settings = loadGameSettings();
   private progress = loadArcadeProgress(ARCADE_LEVELS);
+  private selectedMode: GameMode = DEFAULT_GAME_MODE;
   private renderedLevelKey = "";
   private renderedSettingsKey = "";
 
@@ -807,7 +824,17 @@ class AppShell {
           <section class="app-shell__intro">
             <span>OBJECT DESTRUCTION RANGE</span>
             <h1>Downtown Mayhem</h1>
-            <p>Choose a district, wait through the renderer warmup, then fire the cannon with the frame spikes already paid for.</p>
+            <p>Choose a mode and district, wait through the renderer warmup, then make one spectacular arcade run count.</p>
+            <div class="app-shell__modes" role="group" aria-label="Game mode">
+              <button type="button" data-mode="cannon">
+                <strong>Cannon Trial</strong>
+                <span>Fire one arcade projectile.</span>
+              </button>
+              <button type="button" data-mode="plane">
+                <strong>RC Crash Run</strong>
+                <span>Pilot one fictional RC plane into the city.</span>
+              </button>
+            </div>
             <div class="app-shell__status" data-role="shell-status"></div>
           </section>
           <section class="app-shell__levels" data-role="shell-levels" aria-label="Districts"></section>
@@ -963,8 +990,15 @@ class AppShell {
     if (action === "start-arcade") {
       const levelIndex = Number(target.dataset.levelIndex ?? 0);
       if (Number.isFinite(levelIndex)) {
-        this.callbacks.startLevel(levelIndex);
+        this.callbacks.startLevel(levelIndex, this.selectedMode);
       }
+      return;
+    }
+    const mode = target.dataset.mode;
+    if (isGameMode(mode)) {
+      this.selectedMode = mode;
+      this.renderedLevelKey = "";
+      this.render();
       return;
     }
     if (action === "settings") {
@@ -1035,6 +1069,7 @@ class AppShell {
     const key = [
       this.progress.highestUnlockedLevel,
       this.progress.totalStars,
+      this.selectedMode,
       ...TEST_CHAMBERS.flatMap((level, index) => {
         const progress = this.progress.levels[level.id];
         return [index, level.name, level.objective, progress?.stars ?? 0, progress?.bestScore ?? 0, progress?.attempts ?? 0];
@@ -1055,10 +1090,15 @@ class AppShell {
           <span>${String(index + 1).padStart(2, "0")} / ${progressText}</span>
           <strong>${escapeShellHtml(level.name)}</strong>
           <em>${escapeShellHtml(level.objective)}</em>
-          <small>${locked ? "Earn 2 stars on the previous district" : `Best ${formatShellScore(bestScore)}`}</small>
+          <small>${locked ? "Earn 2 stars on the previous district" : `Start ${GAME_MODES[this.selectedMode].name} / Best ${formatShellScore(bestScore)}`}</small>
         </button>
       `;
     }).join("");
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
+      const active = button.dataset.mode === this.selectedMode;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
   }
 
   private renderSettings(): void {
@@ -1337,6 +1377,44 @@ function installAppShellStyles(): void {
       min-width: 0;
     }
 
+    .app-shell__modes {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      width: min(520px, 100%);
+    }
+
+    .app-shell__modes button {
+      display: grid;
+      gap: 5px;
+      min-height: 82px;
+      padding: 12px;
+      border: 1px solid rgba(185, 245, 255, 0.2);
+      border-radius: 7px;
+      color: #f8fdff;
+      background: rgba(255, 255, 255, 0.07);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .app-shell__modes button.is-active {
+      border-color: rgba(121, 240, 255, 0.84);
+      background: rgba(121, 240, 255, 0.14);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+
+    .app-shell__modes strong {
+      color: #ffffff;
+      font-size: 15px;
+      line-height: 1.05;
+    }
+
+    .app-shell__modes span {
+      color: #b8ccd6;
+      font-size: 12px;
+      line-height: 1.25;
+    }
+
     .app-shell__level-card {
       display: grid;
       gap: 8px;
@@ -1562,6 +1640,10 @@ function installAppShellStyles(): void {
         font-size: 14px;
       }
 
+      .app-shell__modes {
+        grid-template-columns: 1fr;
+      }
+
       .app-shell__level-card {
         min-height: 124px;
         padding: 13px;
@@ -1597,6 +1679,7 @@ function installAppShellStyles(): void {
 
 interface GameOptions {
   initialLevelIndex?: number;
+  gameMode?: GameMode;
   onMainMenu?: () => void;
   showLoading?: (levelName: string, status: string) => void;
   updateLoadingStatus?: (status: string) => void;
@@ -1903,6 +1986,7 @@ class Game {
   private readonly explosion: ExplosionSystem;
   private readonly cameraRig: CameraRig;
   private readonly cannon: Cannon;
+  private readonly aircraft: AircraftController;
   private readonly projectiles: ProjectileSystem;
   private readonly scoreTracker = new ShotScoreTracker();
   private readonly runState = new ShotRunState();
@@ -1919,8 +2003,11 @@ class Game {
   private readonly aimVisibleSurfaceTargets: THREE.Object3D[] = [];
   private readonly aimSurfaceHits: THREE.Intersection<THREE.Object3D>[] = [];
   private readonly projectileSegmentCandidates: PhysicsObject[] = [];
+  private readonly aircraftSegmentCandidates: PhysicsObject[] = [];
   private readonly projectileCurrentPosition = new THREE.Vector3();
   private readonly projectilePreviousPosition = new THREE.Vector3();
+  private readonly aircraftCurrentPosition = new THREE.Vector3();
+  private readonly aircraftPreviousPosition = new THREE.Vector3();
   private readonly chainSourcePosition = new THREE.Vector3();
   private readonly chainTargetPosition = new THREE.Vector3();
   private readonly chainTowardTarget = new THREE.Vector3();
@@ -1954,6 +2041,7 @@ class Game {
   private readonly burningHazards = new Map<number, BurningHazard>();
 
   private settings: GameSettings;
+  private readonly gameMode: GameMode;
   private selectedProjectile: ProjectileId = "slug";
   private powerScale = 1;
   private sizeScale = 1;
@@ -2019,6 +2107,7 @@ class Game {
     }
 
     this.settings = settings;
+    this.gameMode = options.gameMode ?? DEFAULT_GAME_MODE;
     this.renderer = rendererBundle.renderer;
     this.rendererPreference = rendererBundle.preference;
     this.rendererBackend = rendererBundle.backend;
@@ -2038,6 +2127,8 @@ class Game {
     this.explosion = new ExplosionSystem(this.particles);
     this.projectiles = new ProjectileSystem(this.physics, this.materials, this.rng);
     this.cannon = new Cannon(this.scene);
+    this.aircraft = new AircraftController();
+    this.scene.add(this.aircraft.getObject3D());
     this.scene.add(this.aimMarker);
     this.scorePopups = new ScorePopupLayer();
 
@@ -2050,6 +2141,7 @@ class Game {
       selectProjectile: (id) => this.selectProjectile(id),
       selectLevel: (index) => this.selectLevel(index),
       nextLevel: () => this.nextLevel(),
+      setPlaneBoost: (active) => this.setPlaneBoost(active),
       updateSettings: (patch) => this.updateSettings(patch),
       resetSettings: () => this.resetSettings()
     });
@@ -2063,6 +2155,7 @@ class Game {
       selectProjectile: (id) => this.selectProjectile(id),
       nextLevel: () => this.nextLevel()
     });
+    this.input.setMode(this.gameMode);
 
     this.scene.add(createDaySkyDome(this.premiumSceneTextures));
     this.configureLights();
@@ -2136,6 +2229,8 @@ class Game {
     this.particles.dispose();
     this.destruction.clearVisualFragments();
     this.projectiles.clearActive();
+    this.scene.remove(this.aircraft.getObject3D());
+    this.aircraft.dispose();
     this.physics.clearDynamic();
     this.physics.clearStatics();
     this.clearLevelDecorations();
@@ -2230,7 +2325,7 @@ class Game {
         this.scorePopups.push(fireEvents);
       }
       startedAt = perfMonitor.timeStart();
-      this.updatePhase();
+      this.updatePhase(simulationDelta * timeScale);
       perfMonitor.addTiming("game.updatePhase", startedAt);
       startedAt = perfMonitor.timeStart();
       this.destruction.processQueuedFractures(FRACTURE_PROCESS_MAX_PER_FRAME, FRACTURE_PROCESS_TIME_BUDGET_MS);
@@ -2283,9 +2378,11 @@ class Game {
   private updateHud(): void {
     const level = this.currentLevel();
     this.ui.update({
+      gameMode: this.gameMode,
       projectileId: this.selectedProjectile,
       projectile: PROJECTILES[this.selectedProjectile],
       shotAvailable: this.runState.shotAvailable,
+      isFlyingRun: this.gameMode === "plane" && this.runState.phase === "flight" && !this.aircraft.isCrashed(),
       canFinishRun: this.runState.phase === "spectacle" && !this.runState.score,
       bodyCount: this.physics.getDynamicBodyCount(),
       levelName: level.name,
@@ -2399,7 +2496,12 @@ class Game {
     }
   }
 
-  private updatePhase(): void {
+  private updatePhase(deltaSeconds: number): void {
+    if (this.gameMode === "plane") {
+      this.updateAircraftPhase(deltaSeconds);
+      return;
+    }
+
     const active = this.projectiles.getActive();
     if (this.runState.phase === "aim") {
       this.cannon.setTrajectoryVisible(true);
@@ -2423,6 +2525,32 @@ class Game {
       return;
     }
 
+    this.updateScoreReveal();
+  }
+
+  private updateAircraftPhase(deltaSeconds: number): void {
+    if (this.runState.phase === "aim") {
+      this.cameraRig.followAircraft(this.aircraft.getPosition(), this.aircraft.getForward(), this.aircraft.getUp());
+      this.status = this.aircraftReadyStatus();
+      return;
+    }
+
+    if (this.runState.phase === "flight" && !this.aircraft.isCrashed()) {
+      this.aircraft.update(this.input.getPlaneInput(), deltaSeconds);
+      this.cameraRig.followAircraft(this.aircraft.getPosition(), this.aircraft.getForward(), this.aircraft.getUp());
+      const impact = this.detectAircraftCrash();
+      if (impact) {
+        this.handleAircraftCrash(impact.point, impact.object);
+      } else {
+        this.status = this.aircraftFlightStatus();
+      }
+      return;
+    }
+
+    this.updateScoreReveal();
+  }
+
+  private updateScoreReveal(): void {
     const scoreRevealDecision = this.runState.evaluateScoreReveal(performance.now(), this.isSceneSettled());
     if (scoreRevealDecision === "waiting") {
       this.status = "Scoring active chain reactions...";
@@ -2648,12 +2776,25 @@ class Game {
     this.aimTrafficAccumulator = 0;
     this.cameraRig.resetTransientMotion();
     this.cannon.setBasePosition(level.cannonPosition);
+    this.cannon.group.visible = this.gameMode === "cannon";
+    this.cannon.setTrajectoryVisible(this.gameMode === "cannon");
     this.positionCannonBattery(level.cannonPosition);
+    for (const object of this.cannonBatteryObjects) {
+      object.visible = this.gameMode === "cannon";
+    }
     this.aimPoint.copy(level.defaultAimPoint ?? DEFAULT_AIM_POINT);
     this.aimMarkerPoint.set(this.aimPoint.x, AIM_FALLBACK_SURFACE_Y, this.aimPoint.z);
     this.aimSurfaceNormal.copy(AIM_SURFACE_NORMAL);
-    this.status = `${level.name}: ${level.objective}`;
-    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
+    if (this.gameMode === "plane") {
+      const start = aircraftStartPosition(level);
+      const target = level.cameraTarget.clone().add(new THREE.Vector3(0, 2.2, 0));
+      this.aircraft.reset(start, target.sub(start));
+      this.status = this.aircraftReadyStatus();
+    } else {
+      this.aircraft.setVisible(false);
+      this.status = `${level.name}: ${level.objective}`;
+      this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
+    }
   }
 
   private loadLevel(): void {
@@ -2748,6 +2889,10 @@ class Game {
       if (this.runState.phase === "aim" && this.runState.shotAvailable) {
         const level = this.currentLevel();
         this.status = `${level.name}: ${level.objective}`;
+      } else if (this.gameMode === "plane" && this.runState.phase === "flight") {
+        this.status = this.aircraftFlightStatus();
+      } else if (this.gameMode === "plane" && this.runState.phase === "aim") {
+        this.status = this.aircraftReadyStatus();
       }
     } catch (error) {
       if (this.disposed || token !== this.renderWarmupToken) {
@@ -2952,6 +3097,10 @@ class Game {
       if (this.runState.phase === "aim" && this.runState.shotAvailable) {
         const level = this.currentLevel();
         this.status = `${level.name}: ${level.objective}`;
+      } else if (this.gameMode === "plane" && this.runState.phase === "flight") {
+        this.status = this.aircraftFlightStatus();
+      } else if (this.gameMode === "plane" && this.runState.phase === "aim") {
+        this.status = this.aircraftReadyStatus();
       }
     } catch (error) {
       if (this.disposed || token !== this.renderWarmupToken) {
@@ -3367,6 +3516,10 @@ class Game {
     if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
+    if (this.gameMode === "plane") {
+      this.startAircraftRun();
+      return;
+    }
     if (this.renderWarmupState.phase === "warming") {
       this.status = "Renderer preparing impact shaders. Fire is armed in a moment.";
       this.audio.playUiReject();
@@ -3392,6 +3545,26 @@ class Game {
     this.cameraRig.shake(projectile.id === "gravity" ? 0.36 : 0.24, 0.48);
     this.runState.beginFlight();
     this.status = `${projectile.name} fired from the high battery.`;
+  }
+
+  private startAircraftRun(): void {
+    if (this.renderWarmupState.phase === "warming") {
+      this.status = "Renderer preparing impact shaders. RC run is armed in a moment.";
+      this.audio.playUiReject();
+      return;
+    }
+    if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
+      this.status = this.aircraft.isCrashed() ? "Retry to launch another RC crash run." : "RC Crash Run is already moving.";
+      return;
+    }
+    if (perfMonitor.isEnabled()) {
+      perfMonitor.clear();
+      this.perfDiskLogger?.flush("plane-run-start");
+    }
+    this.clearProjectileSpectacleFocus();
+    this.scoreTracker.beginShot(AIRCRAFT_CRASH_PROJECTILE);
+    this.runState.beginFlight();
+    this.status = this.aircraftFlightStatus();
   }
 
   private openMainMenu(): void {
@@ -3461,6 +3634,79 @@ class Game {
     return best ? { point: best.point, object: best.object } : null;
   }
 
+  private detectAircraftCrash(): { point: THREE.Vector3; object: PhysicsObject | null } | null {
+    const current = this.aircraftCurrentPosition.copy(this.aircraft.getPosition());
+    const previous = this.aircraftPreviousPosition.copy(this.aircraft.getPreviousPosition());
+    if (current.y <= AIRCRAFT_GROUND_CRASH_Y) {
+      return { point: current.clone().setY(0.08), object: null };
+    }
+
+    let best: { point: THREE.Vector3; object: PhysicsObject; distance: number } | null = null;
+    for (const object of this.physics.getSegmentCandidatesInto(
+      this.aircraftSegmentCandidates,
+      previous,
+      current,
+      AIRCRAFT_COLLISION_RADIUS + 0.42
+    )) {
+      if (object.category === "projectile" || object.isDebris || object.zoneId === "surface") {
+        continue;
+      }
+      const candidate = sweptImpactCandidate(AIRCRAFT_COLLISION_RADIUS, object, previous, current);
+      if (candidate && (!best || candidate.distance < best.distance)) {
+        best = candidate;
+      }
+    }
+
+    return best ? { point: best.point, object: best.object } : null;
+  }
+
+  private handleAircraftCrash(point: THREE.Vector3, hitObject: PhysicsObject | null): void {
+    if (this.aircraft.isCrashed() || this.runState.phase !== "flight") {
+      return;
+    }
+    const velocity = this.aircraft.getVelocity();
+    const speed = velocity.length();
+    const directionVector = speed > 0.01 ? velocity.clone().normalize() : this.aircraft.getForward();
+    const sourceObject = this.createAircraftImpactSource(point, directionVector, velocity);
+    this.aircraft.markCrashed();
+    this.input.setPlaneBoost(false);
+    this.clearProjectileSpectacleFocus();
+    this.resolveArcadeImpact({
+      point,
+      projectile: AIRCRAFT_CRASH_PROJECTILE,
+      sourceObject,
+      hitObject,
+      directionVector,
+      sourceSpeed: Math.max(AIRCRAFT_DIRECT_IMPACT_MIN_SPEED, speed * 1.55),
+      powerScale: THREE.MathUtils.clamp(0.92 + speed / 80, 1.02, 1.28),
+      sizeScale: 1.08,
+      cleanupSource: () => this.physics.removeObject(sourceObject.id),
+      statusName: "RC crash"
+    });
+  }
+
+  private createAircraftImpactSource(point: THREE.Vector3, direction: THREE.Vector3, velocity: THREE.Vector3): PhysicsObject {
+    const source = this.physics.addDynamicBox({
+      label: "RC crash impact proxy",
+      material: this.materials.get("metal"),
+      renderMaterial: this.materials.getRenderMaterial("metal"),
+      position: point.clone().add(direction.clone().multiplyScalar(-0.24)),
+      size: new THREE.Vector3(0.9, 0.28, 1.35),
+      rotation: this.aircraft.getObject3D().quaternion.clone(),
+      linearVelocity: velocity,
+      category: "projectile",
+      destructible: false,
+      canFracture: false,
+      isDebris: false,
+      scoreValue: 0,
+      collisionEvents: false,
+      ccd: false,
+      density: 0.9
+    });
+    source.mesh.visible = false;
+    return source;
+  }
+
   private handleImpact(point: THREE.Vector3, active: ActiveProjectile, hitObject: PhysicsObject | null): void {
     const projectile = active.definition;
     const direction = active.object.body.linvel();
@@ -3470,20 +3716,15 @@ class Game {
       return;
     }
 
-    if (hitObject && !hitObject.canFracture) {
-      const directImpulse = directionVector
-        .clone()
-        .multiplyScalar(projectile.impulse * active.powerScale * 0.22 / Math.max(0.8, this.materials.get(hitObject.materialId).massFactor));
-      hitObject.body.applyImpulse({ x: directImpulse.x, y: directImpulse.y, z: directImpulse.z }, true);
-      hitObject.body.applyTorqueImpulse({ x: directImpulse.z * 0.06, y: directImpulse.x * 0.06, z: directImpulse.y * 0.06 }, true);
-    }
-
-    const directResult =
-      hitObject && hitObject.destructible
-        ? this.destruction.impact(active.object, hitObject, point, speedOf(active.object) * directImpactScale(projectile.id))
-        : null;
-    this.projectiles.removeActive();
     if (projectile.id === "gravity") {
+      if (hitObject && !hitObject.canFracture) {
+        this.applyDirectImpactImpulse(projectile, hitObject, directionVector, active.powerScale);
+      }
+      const directResult =
+        hitObject && hitObject.destructible
+          ? this.destruction.impact(active.object, hitObject, point, speedOf(active.object) * directImpactScale(projectile.id))
+          : null;
+      this.projectiles.removeActive();
       const scoreEvents = directResult ? this.applyExplosionResult(directResult, 0, 0) : [];
       if (scoreEvents.length > 0) {
         this.scorePopups.push(scoreEvents);
@@ -3509,31 +3750,70 @@ class Game {
       return;
     }
 
-    const strength = projectile.impulse * active.powerScale * projectile.fractureBoost * residualBlastScale(projectile.id);
-    const radius = projectile.blastRadius * active.sizeScale * residualBlastRadiusScale(projectile.id);
-    const visualRadius = projectile.blastRadius * active.sizeScale * impactVisualRadiusScale(projectile.id);
+    this.resolveArcadeImpact({
+      point,
+      projectile,
+      sourceObject: active.object,
+      hitObject,
+      directionVector,
+      sourceSpeed: speedOf(active.object),
+      powerScale: active.powerScale,
+      sizeScale: active.sizeScale,
+      cleanupSource: () => this.projectiles.removeActive(),
+      specialActive: active,
+      statusName: projectile.name
+    });
+  }
+
+  private resolveArcadeImpact(options: {
+    point: THREE.Vector3;
+    projectile: ProjectileDefinition;
+    sourceObject: PhysicsObject;
+    hitObject: PhysicsObject | null;
+    directionVector: THREE.Vector3;
+    sourceSpeed: number;
+    powerScale: number;
+    sizeScale: number;
+    cleanupSource: () => void;
+    specialActive?: ActiveProjectile;
+    statusName: string;
+  }): void {
+    const { point, projectile, sourceObject, hitObject, directionVector, sourceSpeed, powerScale, sizeScale } = options;
+    if (hitObject && !hitObject.canFracture) {
+      this.applyDirectImpactImpulse(projectile, hitObject, directionVector, powerScale);
+    }
+
+    const directResult =
+      hitObject && hitObject.destructible
+        ? this.destruction.impact(sourceObject, hitObject, point, sourceSpeed * directImpactScale(projectile.id))
+        : null;
+    options.cleanupSource();
+
+    const strength = projectile.impulse * powerScale * projectile.fractureBoost * residualBlastScale(projectile.id);
+    const radius = projectile.blastRadius * sizeScale * residualBlastRadiusScale(projectile.id);
+    const visualRadius = projectile.blastRadius * sizeScale * impactVisualRadiusScale(projectile.id);
     const result = this.destruction.explode(point, strength, radius);
     this.audio.playProjectileImpact({
       point,
       projectileId: projectile.id,
       result,
-      powerScale: active.powerScale,
-      sizeScale: active.sizeScale,
+      powerScale,
+      sizeScale,
       hitMaterialId: hitObject?.materialId
     });
     this.focusSpectacleOn(point, result, 160, true);
     const scoreEvents = [
       ...(directResult ? this.applyExplosionResult(directResult, 0, projectile.id === "ignite" ? 1 : 0) : []),
       ...this.applyExplosionResult(result, 0, projectile.id === "ignite" ? 1.35 : projectile.id === "pulse" ? 0.35 : 0),
-      ...this.playProjectileSpecial(projectile.id, point, directionVector, active)
+      ...(options.specialActive ? this.playProjectileSpecial(projectile.id, point, directionVector, options.specialActive) : [])
     ];
     this.scorePopups.push(scoreEvents);
 
     this.explosion.play(point, visualRadius, result.dustColors, {
       projectileId: projectile.id,
       result,
-      powerScale: active.powerScale,
-      sizeScale: active.sizeScale,
+      powerScale,
+      sizeScale,
       hitMaterialId: hitObject?.materialId,
       impactDirection: directionVector,
       role: "primary"
@@ -3543,7 +3823,20 @@ class Game {
     this.hitStopTimer = this.settings.motionEffects ? 0.065 : 0;
     this.slowMotionTimer = this.settings.motionEffects ? 0.58 : 0;
     this.runState.beginSpectacle(performance.now());
-    this.status = `${projectile.name} impact: ${(directResult?.fracturedBodies ?? 0) + result.fracturedBodies} fractures, ${result.affectedBodies} objects hit.`;
+    this.status = `${options.statusName} impact: ${(directResult?.fracturedBodies ?? 0) + result.fracturedBodies} fractures, ${result.affectedBodies} objects hit.`;
+  }
+
+  private applyDirectImpactImpulse(
+    projectile: ProjectileDefinition,
+    hitObject: PhysicsObject,
+    directionVector: THREE.Vector3,
+    powerScale: number
+  ): void {
+    const directImpulse = directionVector
+      .clone()
+      .multiplyScalar(projectile.impulse * powerScale * 0.22 / Math.max(0.8, this.materials.get(hitObject.materialId).massFactor));
+    hitObject.body.applyImpulse({ x: directImpulse.x, y: directImpulse.y, z: directImpulse.z }, true);
+    hitObject.body.applyTorqueImpulse({ x: directImpulse.z * 0.06, y: directImpulse.x * 0.06, z: directImpulse.y * 0.06 }, true);
   }
 
   private focusSpectacleOn(point: THREE.Vector3, result: ExplosionResult, bonus = 0, force = false): void {
@@ -4195,8 +4488,16 @@ class Game {
     this.status = "Loose debris cleared. The trial state is unchanged.";
   }
 
+  private setPlaneBoost(active: boolean): void {
+    this.input.setPlaneBoost(active);
+  }
+
   private selectProjectile(id: ProjectileId): void {
     if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
+      return;
+    }
+    if (this.gameMode === "plane") {
+      this.status = "RC Crash Run uses the plane as the single arcade projectile.";
       return;
     }
     if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
@@ -4247,6 +4548,14 @@ class Game {
     return TEST_CHAMBERS[this.levelIndex];
   }
 
+  private aircraftReadyStatus(): string {
+    return `${this.currentLevel().name}: RC plane ready. Press START RUN, then steer into the city.`;
+  }
+
+  private aircraftFlightStatus(): string {
+    return `${this.currentLevel().name}: steer the RC plane into the city. Boost for a harder arcade crash.`;
+  }
+
   private currentLevelProgress() {
     return this.arcadeProgress.levels[this.currentLevel().id];
   }
@@ -4268,7 +4577,7 @@ class Game {
   }
 
   private updateAimMarker(): void {
-    this.aimMarker.visible = this.runState.phase === "aim";
+    this.aimMarker.visible = this.gameMode === "cannon" && this.runState.phase === "aim";
     this.aimMarker.position.copy(this.aimMarkerPoint).addScaledVector(this.aimSurfaceNormal, AIM_MARKER_SURFACE_OFFSET);
     this.aimMarker.quaternion.setFromUnitVectors(AIM_SURFACE_NORMAL, this.aimSurfaceNormal);
     this.aimMarkerMaterial.color.copy(PROJECTILES[this.selectedProjectile].color);
@@ -4330,8 +4639,8 @@ async function boot(): Promise<void> {
   registerDowntownMayhemServiceWorker();
   activeShell?.dispose();
   const shell = new AppShell({
-    startLevel: (levelIndex) => {
-      void startLevelFromShell(shell, levelIndex);
+    startLevel: (levelIndex, gameMode) => {
+      void startLevelFromShell(shell, levelIndex, gameMode);
     }
   });
   activeShell = shell;
@@ -4353,7 +4662,7 @@ async function boot(): Promise<void> {
   }
 }
 
-async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number): Promise<void> {
+async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number, gameMode: GameMode): Promise<void> {
   const progress = loadArcadeProgress(ARCADE_LEVELS);
   const levelIndex = clampInitialLevelIndex(requestedLevelIndex, progress.highestUnlockedLevel);
   const level = TEST_CHAMBERS[levelIndex];
@@ -4382,6 +4691,7 @@ async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number)
     await waitForDomPaint();
     const game = new Game(settings, rendererBundle, {
       initialLevelIndex: levelIndex,
+      gameMode,
       onMainMenu: () => returnToMainMenu(shell),
       showLoading: (levelName, status) => shell.showLoading(levelName, status),
       updateLoadingStatus: (status) => shell.updateLoadingStatus(status),
@@ -4445,6 +4755,10 @@ function clampInitialLevelIndex(index: number | undefined, highestUnlockedLevel:
   const requested = typeof index === "number" && Number.isFinite(index) ? Math.trunc(index) : 0;
   const maxUnlockedLevel = Math.max(0, Math.min(TEST_CHAMBERS.length - 1, highestUnlockedLevel));
   return THREE.MathUtils.clamp(requested, 0, maxUnlockedLevel);
+}
+
+function aircraftStartPosition(level: TestChamber): THREE.Vector3 {
+  return level.cameraTarget.clone().add(new THREE.Vector3(0, 10.5, 24.5));
 }
 
 function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
@@ -4959,12 +5273,21 @@ function projectileImpactCandidate(
   previous: THREE.Vector3,
   current: THREE.Vector3
 ): { point: THREE.Vector3; object: PhysicsObject; distance: number } | null {
-  if (!segmentCanReachObject(previous, current, object, active.radius + 0.2)) {
+  return sweptImpactCandidate(active.radius, object, previous, current);
+}
+
+function sweptImpactCandidate(
+  radius: number,
+  object: PhysicsObject,
+  previous: THREE.Vector3,
+  current: THREE.Vector3
+): { point: THREE.Vector3; object: PhysicsObject; distance: number } | null {
+  if (!segmentCanReachObject(previous, current, object, radius + 0.2)) {
     return null;
   }
   if (object.shape === "sphere") {
     const objectPosition = object.body.translation();
-    const threshold = active.radius + object.radius;
+    const threshold = radius + object.radius;
     const distanceSq = distancePointToSegmentSq(objectPosition, previous, current);
     if (distanceSq > threshold * threshold) {
       return null;
@@ -4979,7 +5302,7 @@ function projectileImpactCandidate(
   const localPrevious = previous.clone().sub(center).applyQuaternion(inverseRotation);
   const localCurrent = current.clone().sub(center).applyQuaternion(inverseRotation);
   const originalHalf = object.dimensions.clone().multiplyScalar(0.5);
-  const expandedHalf = originalHalf.clone().addScalar(active.radius + 0.08);
+  const expandedHalf = originalHalf.clone().addScalar(radius + 0.08);
   const hitT = segmentAabbIntersection(localPrevious, localCurrent, expandedHalf);
   if (hitT === null) {
     return null;
