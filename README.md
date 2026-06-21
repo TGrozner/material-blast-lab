@@ -70,9 +70,9 @@ RC Crash Run does not include payload dropping, multiple aircraft, fuel, enemies
 - Mouse move: aim the cannon
 - Left click / Space: fire the one available shot
 - 1-4: choose projectile
-- R: reset the current chamber
-- C: clear dynamic debris
-- Tab: switch test chamber
+- R: retry the current district
+- C: clear dynamic debris during the run
+- Tab: switch district
 
 ### RC Crash Run
 
@@ -80,8 +80,8 @@ RC Crash Run does not include payload dropping, multiple aircraft, fuel, enemies
 - W/S or ArrowUp/ArrowDown: pitch
 - A/D or ArrowLeft/ArrowRight: yaw
 - Shift: boost
-- R: reset the current chamber
-- C: clear dynamic debris
+- R: retry the current district
+- C: clear dynamic debris during the run
 - Touch: drag in the lower play area to steer, and hold the lower-right Boost button while airborne
 
 ## Projectiles

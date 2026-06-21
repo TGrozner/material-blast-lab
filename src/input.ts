@@ -24,7 +24,6 @@ export class InputController {
   private joystickOriginY = 0;
   private joystickCurrentX = 0;
   private joystickCurrentY = 0;
-  private boostPointerId: number | null = null;
   private uiBoostActive = false;
 
   constructor(
@@ -77,7 +76,7 @@ export class InputController {
     return {
       pitch: THREE.MathUtils.clamp(keyboardPitch + touch.pitch, -1, 1),
       yaw: THREE.MathUtils.clamp(keyboardYaw + touch.yaw, -1, 1),
-      boost: this.uiBoostActive || this.boostPointerId !== null || this.pressedKeys.has("ShiftLeft") || this.pressedKeys.has("ShiftRight")
+      boost: this.uiBoostActive || this.pressedKeys.has("ShiftLeft") || this.pressedKeys.has("ShiftRight")
     };
   }
 
@@ -198,18 +197,12 @@ export class InputController {
       return;
     }
     const rect = this.canvas.getBoundingClientRect();
-    const localX = event.clientX - rect.left;
     const localY = event.clientY - rect.top;
     if (localY < rect.height * 0.42) {
       return;
     }
     event.preventDefault();
     this.canvas.setPointerCapture(event.pointerId);
-    const rightBoostZone = localX > rect.width * 0.68 && localY > rect.height * 0.52;
-    if (rightBoostZone && this.boostPointerId === null) {
-      this.boostPointerId = event.pointerId;
-      return;
-    }
     if (this.joystickPointerId !== null) {
       return;
     }
@@ -233,14 +226,10 @@ export class InputController {
     if (pointerId === this.joystickPointerId) {
       this.joystickPointerId = null;
     }
-    if (pointerId === this.boostPointerId) {
-      this.boostPointerId = null;
-    }
   }
 
   private clearTouchFlightInput(): void {
     this.joystickPointerId = null;
-    this.boostPointerId = null;
     this.uiBoostActive = false;
   }
 

@@ -64,6 +64,8 @@ type UIScreen = "home" | "settings" | "play";
 
 export class GameUI {
   private readonly root: HTMLDivElement;
+  private readonly modeLabelValue: HTMLSpanElement;
+  private readonly loadoutLabelValue: HTMLSpanElement;
   private readonly projectileValue: HTMLSpanElement;
   private readonly chamberValue: HTMLSpanElement;
   private readonly objectiveValue: HTMLSpanElement;
@@ -130,7 +132,7 @@ export class GameUI {
       <section class="hud__command" aria-label="Mission command">
         <div class="hud__mission">
           <div class="hud__mission-kicker">
-            <span>Live Mission</span>
+            <span data-role="mode-label">Cannon Trial</span>
             <strong data-role="shots"></strong>
           </div>
           <strong data-role="chamber"></strong>
@@ -146,7 +148,7 @@ export class GameUI {
         </div>
 
         <div class="hud__loadout-head">
-          <span>Payload</span>
+          <span data-role="loadout-label">Payload</span>
           <strong data-role="projectile"></strong>
         </div>
         <div class="hud__projectiles" data-role="projectiles"></div>
@@ -157,7 +159,7 @@ export class GameUI {
           <button type="button" data-action="finish-run" hidden>Score Now</button>
           <button type="button" data-action="reset">Retry</button>
         </div>
-        <div class="hud__finish-hint" data-role="finish-hint" hidden>Done watching? Press F or Enter, or click Score Now.</div>
+        <div class="hud__finish-hint" data-role="finish-hint" hidden>Done watching the run? Press F or Enter, or click Score Now.</div>
         <div class="hud__status" data-role="status"></div>
       </section>
 
@@ -178,7 +180,7 @@ export class GameUI {
           <div class="hud__hero-copy">
             <span class="hud__eyebrow">DESTRUCTIBLE OBJECT ARCADE</span>
             <h1>Downtown Mayhem</h1>
-            <p>Select a district, choose a payload, fire once, then chase a high Mayhem Score.</p>
+            <p>Select a district, choose a one-run mode, then chase a high Mayhem Score.</p>
             <div class="hud__hero-actions">
               <button type="button" data-action="settings">Settings</button>
             </div>
@@ -246,6 +248,8 @@ export class GameUI {
     `;
     document.body.appendChild(this.root);
 
+    this.modeLabelValue = this.requireElement("[data-role='mode-label']");
+    this.loadoutLabelValue = this.requireElement("[data-role='loadout-label']");
     this.projectileValue = this.requireElement("[data-role='projectile']");
     this.chamberValue = this.requireElement("[data-role='chamber']");
     this.objectiveValue = this.requireElement("[data-role='objective']");
@@ -340,6 +344,8 @@ export class GameUI {
   update(state: UIState): void {
     this.currentState = state;
     const planeMode = state.gameMode === "plane";
+    setText(this.modeLabelValue, GAME_MODES[state.gameMode].name);
+    setText(this.loadoutLabelValue, planeMode ? "Vehicle" : "Payload");
     setText(this.projectileValue, planeMode ? GAME_MODES.plane.shortName : state.projectile.shortName);
     setTitle(this.projectileValue, planeMode ? GAME_MODES.plane.name : state.projectile.name);
     setText(this.chamberValue, state.levelName);
@@ -359,14 +365,14 @@ export class GameUI {
       setText(this.fpsValue, `${state.fps} FPS`);
     }
     setText(this.statusValue, state.status);
-    setText(this.fireButton, state.gameMode === "plane" ? "START RUN" : "FIRE");
+    setText(this.fireButton, fireButtonLabel(state));
     setText(this.targetScoreValue, `${formatScoreNumber(state.mission.scoreThresholds.twoStar)}+`);
     setText(this.targetDamageValue, formatScoreNumber(state.mission.targetDamageThreshold));
     setText(this.threeStarValue, `${formatScoreNumber(state.mission.scoreThresholds.threeStar)}+`);
     setText(this.bonusGoalValue, bonusSummary(state.mission));
 
     const blocked = this.isGameplayBlocked();
-    const fireHidden = false;
+    const fireHidden = planeMode && state.isFlyingRun;
     if (this.fireButton.hidden !== fireHidden) {
       this.fireButton.hidden = fireHidden;
     }
@@ -380,6 +386,7 @@ export class GameUI {
     if (this.finishHint.hidden !== finishHidden) {
       this.finishHint.hidden = finishHidden;
     }
+    setText(this.finishHint, "Done watching the run? Press F or Enter, or click Score Now.");
     if (this.finishButton.disabled !== (finishHidden || blocked)) {
       this.finishButton.disabled = finishHidden || blocked;
     }
@@ -673,6 +680,16 @@ function renderScore(state: UIState): string {
       <button type="button" data-action="result-next">Next Level</button>
     </div>
   `;
+}
+
+function fireButtonLabel(state: UIState): string {
+  if (state.gameMode !== "plane") {
+    return "FIRE";
+  }
+  if (state.shotAvailable) {
+    return "START RUN";
+  }
+  return state.isFlyingRun ? "AIRBORNE" : "CRASHED";
 }
 
 function bonusSummary(mission: ArcadeMissionFields): string {
@@ -1272,19 +1289,32 @@ function installStyles(): void {
       display: block;
     }
 
-    .hud.is-plane-mode .hud__loadout-head span {
-      visibility: hidden;
-    }
-
     .hud.is-plane-mode .hud__projectiles {
       display: none;
     }
 
-    .hud.is-plane-mode .hud__command {
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__command {
+      left: var(--hud-safe-left);
       bottom: auto;
       top: calc(var(--hud-safe-top) + 72px);
-      width: min(390px, calc(100vw - 32px));
-      max-height: min(42svh, 360px);
+      width: min(210px, calc(100vw - 32px));
+      max-height: none;
+      padding: 8px;
+      overflow: visible;
+    }
+
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__mission,
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__goal-grid,
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__loadout-head,
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__projectiles,
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__fire,
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__finish-hint,
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__status {
+      display: none;
+    }
+
+    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__utility {
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .hud__status {
@@ -1651,17 +1681,17 @@ function installStyles(): void {
         max-height: min(50svh, 430px);
       }
 
-      .hud.is-plane-mode .hud__command {
-        top: calc(var(--hud-safe-top-mobile) + 64px);
-        bottom: auto;
-        right: auto;
-        width: min(360px, calc(100vw - var(--hud-safe-left-mobile) - var(--hud-safe-right-mobile)));
-        max-height: min(38svh, 280px);
-      }
-
       .hud.is-plane-mode .hud__plane-touch {
         right: var(--hud-safe-right-mobile);
         bottom: var(--hud-safe-bottom-mobile);
+      }
+
+      .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__command {
+        left: var(--hud-safe-left-mobile);
+        right: auto;
+        top: calc(var(--hud-safe-top-mobile) + 58px);
+        width: min(180px, calc(100vw - var(--hud-safe-left-mobile) - var(--hud-safe-right-mobile)));
+        max-height: none;
       }
 
       .hud.is-post-shot[data-screen="play"] .hud__command {
@@ -2017,12 +2047,6 @@ function installStyles(): void {
       .hud__command {
         left: auto;
         width: min(390px, calc(52vw - var(--hud-edge-mobile)));
-        max-height: calc(100svh - var(--hud-safe-top-mobile) - var(--hud-safe-bottom-mobile));
-      }
-
-      .hud.is-plane-mode .hud__command {
-        left: var(--hud-safe-left-mobile);
-        width: min(320px, calc(48vw - var(--hud-edge-mobile)));
         max-height: calc(100svh - var(--hud-safe-top-mobile) - var(--hud-safe-bottom-mobile));
       }
 

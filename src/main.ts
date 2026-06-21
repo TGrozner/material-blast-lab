@@ -1090,7 +1090,7 @@ class AppShell {
           <span>${String(index + 1).padStart(2, "0")} / ${progressText}</span>
           <strong>${escapeShellHtml(level.name)}</strong>
           <em>${escapeShellHtml(level.objective)}</em>
-          <small>${locked ? "Earn 2 stars on the previous district" : `${GAME_MODES[this.selectedMode].name} / Best ${formatShellScore(bestScore)}`}</small>
+          <small>${locked ? "Earn 2 stars on the previous district" : `Start ${GAME_MODES[this.selectedMode].name} / Best ${formatShellScore(bestScore)}`}</small>
         </button>
       `;
     }).join("");
