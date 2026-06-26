@@ -123,7 +123,7 @@ test("renders a playable mobile portrait city trial inside the initial body-coun
   await expect(page.locator(".hud__rotate-phone")).toHaveCount(0);
   await expect(page.locator(".hud__command [data-action='level']")).toHaveCount(0);
   await expect(page.locator(".hud__command [data-action='clear']")).toHaveCount(0);
-  await fireButton(page).click();
+  await clickUi(fireButton(page));
   await expect(page.locator(".hud")).toHaveClass(/is-post-shot/);
   expect(consoleErrors).toEqual([]);
 });
@@ -142,7 +142,7 @@ test("renders a playable mobile landscape city trial inside the initial body-cou
   await expectBodyCountWithinBudget(page);
   await expect(page.evaluate(isHudWithinViewport)).resolves.toBe(true);
   await expect(page.evaluate(mobilePlayLayoutFailures)).resolves.toEqual([]);
-  await page.getByRole("button", { name: "Menu" }).click();
+  await clickUi(page.getByRole("button", { name: "Menu" }));
   await expect(page.locator(".app-shell")).toHaveAttribute("data-screen", "menu");
   expect(consoleErrors).toEqual([]);
 });
@@ -154,7 +154,7 @@ test("switches mobile portrait to a frictionless post-shot turn prompt", async (
   await bootTrial(page, MOBILE_PORTRAIT_VIEWPORT);
   await expectRenderableCanvas(page);
 
-  await fireButton(page).click();
+  await clickUi(fireButton(page));
   await expect(page.locator(".hud")).toHaveClass(/is-post-shot/);
   await expect(page.locator(".hud__command")).toBeHidden();
   const turnPrompt = page.locator("[data-action='turn-finish']");
@@ -173,12 +173,12 @@ test("lets mobile tap the post-shot prompt to reveal the score", async ({ page }
   await bootTrial(page, MOBILE_PORTRAIT_VIEWPORT);
   await expectRenderableCanvas(page);
 
-  await fireButton(page).click();
+  await clickUi(fireButton(page));
   const turnPrompt = page.locator("[data-action='turn-finish']");
   await expect(turnPrompt).toBeVisible();
   await expect(turnPrompt).toBeEnabled({ timeout: SCORE_REVEAL_TIMEOUT_MS });
   await expect(turnPrompt).toContainText("Tap to score");
-  await turnPrompt.click();
+  await clickUi(turnPrompt);
   await expectFinalScore(page, "Normal Shell");
 
   expect(consoleErrors).toEqual([]);
@@ -236,7 +236,7 @@ test("arms the RC crash run before launching on mobile", async ({ page }) => {
   await expect(page.locator(".hud__plane-boost")).toBeHidden();
   await expect(page.evaluate(mobilePlaneReadyLayoutFailures)).resolves.toEqual([]);
 
-  await fireButton(page).click();
+  await clickUi(fireButton(page));
   await expect(page.locator(".hud [data-role='shots']")).toHaveText("AIRBORNE");
   await expect(page.locator(".hud")).toHaveClass(/is-plane-flying/);
   await expect(page.locator(".hud__fire")).toBeHidden();
