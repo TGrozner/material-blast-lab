@@ -180,6 +180,11 @@ export class GameUI {
         <button class="hud__plane-boost" type="button" data-action="plane-boost" aria-label="Boost RC plane">BOOST</button>
       </div>
 
+      <div class="hud__rotate-phone" role="status" aria-live="polite">
+        <strong>Rotate phone</strong>
+        <span>Landscape</span>
+      </div>
+
       <section class="hud__results" data-role="score" aria-live="polite"></section>
 
       <section class="hud__home" aria-label="Downtown Mayhem menu">
@@ -1442,6 +1447,39 @@ function installStyles(): void {
       filter: brightness(1.12);
     }
 
+    .hud__rotate-phone {
+      position: absolute;
+      inset: 0;
+      z-index: 12;
+      display: none;
+      place-items: center;
+      align-content: center;
+      gap: 6px;
+      grid-auto-rows: max-content;
+      padding: 24px;
+      color: #f8fdff;
+      background:
+        radial-gradient(circle at center, rgba(121, 240, 255, 0.18), transparent 42%),
+        rgba(5, 8, 12, 0.9);
+      pointer-events: auto;
+      text-align: center;
+    }
+
+    .hud__rotate-phone strong {
+      display: block;
+      color: #ffffff;
+      font-size: 24px;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+
+    .hud__rotate-phone span {
+      color: #79f0ff;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
     .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__plane-touch {
       display: block;
     }
@@ -2022,6 +2060,222 @@ function installStyles(): void {
       }
     }
 
+    @media (max-width: 920px) and (max-height: 520px) and (orientation: landscape) {
+      :root {
+        --hud-edge-mobile: 8px;
+      }
+
+      .hud::before {
+        opacity: 0.22;
+      }
+
+      .hud[data-screen="play"]::before {
+        opacity: 0.18;
+      }
+
+      .hud__topbar {
+        left: var(--hud-safe-left-mobile);
+        right: auto;
+        top: var(--hud-safe-top-mobile);
+        width: min(336px, calc(44vw - var(--hud-edge-mobile)));
+        min-height: 42px;
+        padding: 6px 8px;
+      }
+
+      .hud__brand {
+        gap: 7px;
+      }
+
+      .hud__brand-mark {
+        width: 28px;
+        height: 28px;
+        font-size: 10px;
+      }
+
+      .hud__brand strong {
+        font-size: 13px;
+      }
+
+      .hud__brand span,
+      .hud__telemetry span:nth-child(2) {
+        display: none;
+      }
+
+      .hud__telemetry {
+        gap: 5px;
+      }
+
+      .hud__telemetry span,
+      .hud__telemetry button {
+        min-height: 38px;
+        padding: 0 8px;
+        font-size: 10px;
+      }
+
+      .hud__command {
+        left: auto;
+        right: var(--hud-safe-right-mobile);
+        bottom: var(--hud-safe-bottom-mobile);
+        width: min(300px, calc(39vw - var(--hud-edge-mobile)));
+        max-height: calc(100svh - var(--hud-safe-top-mobile) - var(--hud-safe-bottom-mobile));
+        gap: 6px;
+        padding: 8px;
+        overflow: hidden;
+      }
+
+      .hud__mission {
+        gap: 3px;
+      }
+
+      .hud__mission-kicker,
+      .hud__loadout-head {
+        gap: 8px;
+      }
+
+      .hud__mission > strong {
+        font-size: 14px;
+      }
+
+      .hud__mission > span,
+      .hud__mission > em,
+      .hud__goal-grid,
+      .hud__projectile small,
+      .hud__finish-hint,
+      .hud__status {
+        display: none;
+      }
+
+      .hud__projectiles {
+        gap: 5px;
+      }
+
+      .hud__projectile {
+        min-height: 42px;
+        padding: 3px;
+      }
+
+      .hud__projectile span {
+        font-size: 10px;
+      }
+
+      .hud__fire {
+        min-height: 46px;
+        font-size: 13px;
+      }
+
+      .hud.has-shot-available[data-screen="play"] .hud__utility {
+        display: none;
+      }
+
+      .hud.is-post-shot[data-screen="play"] .hud__command {
+        display: none;
+        pointer-events: none;
+      }
+
+      .hud.is-plane-mode .hud__command {
+        width: min(250px, calc(34vw - var(--hud-edge-mobile)));
+      }
+
+      .hud.is-plane-mode .hud__loadout-head {
+        display: flex;
+      }
+
+      .hud.is-plane-mode .hud__status {
+        display: block;
+        min-height: 0;
+        padding: 6px;
+        font-size: 10px;
+      }
+
+      .hud.is-plane-mode .hud__plane-boost {
+        width: 92px;
+        height: 92px;
+        font-size: 12px;
+      }
+
+      .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__command {
+        left: var(--hud-safe-left-mobile);
+        right: auto;
+        top: calc(var(--hud-safe-top-mobile) + 50px);
+        width: min(190px, calc(30vw - var(--hud-edge-mobile)));
+        max-height: none;
+        padding: 7px;
+        overflow: visible;
+      }
+
+      .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__status {
+        display: none;
+      }
+
+      .hud.is-post-shot[data-screen="play"] .hud__turn-prompt:not([hidden]) {
+        display: grid;
+        left: auto;
+        right: var(--hud-safe-right-mobile);
+        bottom: var(--hud-safe-bottom-mobile);
+        width: min(320px, calc(40vw - var(--hud-edge-mobile)));
+        min-height: 62px;
+        padding: 10px 12px;
+      }
+
+      .hud__turn-prompt strong {
+        font-size: 18px;
+      }
+
+      .hud__turn-prompt span,
+      .hud__turn-prompt em {
+        font-size: 10px;
+      }
+
+      .hud__results {
+        right: var(--hud-safe-right-mobile);
+        bottom: var(--hud-safe-bottom-mobile);
+        width: min(360px, calc(46vw - var(--hud-edge-mobile)));
+        max-height: calc(100svh - var(--hud-safe-top-mobile) - var(--hud-safe-bottom-mobile));
+        padding: 10px;
+      }
+
+      .hud__home {
+        align-items: end;
+        padding: calc(58px + env(safe-area-inset-top)) var(--hud-safe-right-mobile) var(--hud-safe-bottom-mobile) var(--hud-safe-left-mobile);
+      }
+
+      .hud__hero {
+        grid-template-columns: minmax(210px, 0.8fr) minmax(300px, 1fr);
+        gap: 16px;
+      }
+
+      .hud__hero-copy {
+        gap: 10px;
+      }
+
+      .hud__hero h1 {
+        font-size: 32px;
+      }
+
+      .hud__hero p {
+        display: none;
+      }
+
+      .hud__level-path {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .hud__level-card {
+        padding: 8px;
+      }
+
+      .hud__settings {
+        padding: var(--hud-safe-top-mobile) var(--hud-safe-right-mobile) var(--hud-safe-bottom-mobile) var(--hud-safe-left-mobile);
+      }
+
+      .hud__settings-panel {
+        width: min(560px, calc(100vw - var(--hud-safe-left-mobile) - var(--hud-safe-right-mobile)));
+        max-height: calc(100svh - var(--hud-safe-top-mobile) - var(--hud-safe-bottom-mobile));
+        overflow: auto;
+        padding: 10px;
+      }
+    }
+
     @media (max-width: 520px) {
       .hud::before {
         opacity: 0.48;
@@ -2316,6 +2570,12 @@ function installStyles(): void {
       }
     }
 
+    @media (max-width: 520px) and (orientation: portrait) {
+      .hud[data-screen="play"] .hud__rotate-phone {
+        display: grid;
+      }
+    }
+
     @media (max-width: 520px) and (max-height: 700px) {
       .hud__command {
         max-height: min(334px, calc(100svh - 72px));
@@ -2330,17 +2590,6 @@ function installStyles(): void {
       }
     }
 
-    @media (max-width: 840px) and (max-height: 520px) {
-      .hud__command {
-        left: auto;
-        width: min(390px, calc(52vw - var(--hud-edge-mobile)));
-        max-height: calc(100svh - var(--hud-safe-top-mobile) - var(--hud-safe-bottom-mobile));
-      }
-
-      .hud__home {
-        align-items: start;
-      }
-    }
   `;
   document.head.appendChild(style);
 }
