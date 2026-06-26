@@ -105,11 +105,11 @@ declare global {
   }
 }
 
-test("renders the mobile landscape city trial inside the initial body-count budget", async ({ page }) => {
+test("renders a playable mobile portrait city trial inside the initial body-count budget", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
 
-  await bootTrial(page, MOBILE_LANDSCAPE_VIEWPORT);
+  await bootTrial(page, MOBILE_PORTRAIT_VIEWPORT);
 
   await expect(page.locator(".hud")).toBeVisible();
   await expect(fireButton(page)).toBeEnabled();
@@ -119,40 +119,48 @@ test("renders the mobile landscape city trial inside the initial body-count budg
   await expectRenderableCanvas(page);
   await expectBodyCountWithinBudget(page);
   await expect(page.evaluate(isHudWithinViewport)).resolves.toBe(true);
-  await expect(page.evaluate(mobileLandscapeLayoutFailures)).resolves.toEqual([]);
+  await expect(page.evaluate(mobilePlayLayoutFailures)).resolves.toEqual([]);
+  await expect(page.locator(".hud__rotate-phone")).toHaveCount(0);
   await expect(page.locator(".hud__command [data-action='level']")).toHaveCount(0);
   await expect(page.locator(".hud__command [data-action='clear']")).toHaveCount(0);
+  await fireButton(page).click();
+  await expect(page.locator(".hud")).toHaveClass(/is-post-shot/);
   expect(consoleErrors).toEqual([]);
 });
 
-test("asks portrait phones to rotate before the run HUD is used", async ({ page }) => {
-  test.setTimeout(LONG_TEST_TIMEOUT_MS);
-  const consoleErrors = trackRuntimeErrors(page);
-
-  await bootTrial(page, MOBILE_PORTRAIT_VIEWPORT);
-
-  const rotatePrompt = page.locator(".hud__rotate-phone");
-  await expect(rotatePrompt).toBeVisible();
-  await expect(rotatePrompt).toContainText("Rotate phone");
-  await expect(rotatePrompt).toContainText("Landscape");
-  await expect(page.evaluate(isHudWithinViewport)).resolves.toBe(true);
-  expect(consoleErrors).toEqual([]);
-});
-
-test("switches mobile landscape to a frictionless post-shot turn prompt", async ({ page }) => {
+test("renders a playable mobile landscape city trial inside the initial body-count budget", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
 
   await bootTrial(page, MOBILE_LANDSCAPE_VIEWPORT);
+
+  await expect(page.locator(".hud")).toBeVisible();
+  await expect(fireButton(page)).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Heavy" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Impulse" })).toBeVisible();
+  await expectRenderableCanvas(page);
+  await expectBodyCountWithinBudget(page);
+  await expect(page.evaluate(isHudWithinViewport)).resolves.toBe(true);
+  await expect(page.evaluate(mobilePlayLayoutFailures)).resolves.toEqual([]);
+  await page.getByRole("button", { name: "Menu" }).click();
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-screen", "menu");
+  expect(consoleErrors).toEqual([]);
+});
+
+test("switches mobile portrait to a frictionless post-shot turn prompt", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await bootTrial(page, MOBILE_PORTRAIT_VIEWPORT);
   await expectRenderableCanvas(page);
 
-  await clickUi(fireButton(page));
+  await fireButton(page).click();
   await expect(page.locator(".hud")).toHaveClass(/is-post-shot/);
   await expect(page.locator(".hud__command")).toBeHidden();
   const turnPrompt = page.locator("[data-action='turn-finish']");
   await expect(turnPrompt).toBeVisible();
   await expect(turnPrompt).toContainText(/Watching mayhem|Tap to score/);
-  await expect(page.evaluate(mobileLandscapePostShotLayoutFailures)).resolves.toEqual([]);
+  await expect(page.evaluate(mobilePostShotLayoutFailures)).resolves.toEqual([]);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -162,15 +170,15 @@ test("lets mobile tap the post-shot prompt to reveal the score", async ({ page }
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
 
-  await bootTrial(page, MOBILE_LANDSCAPE_VIEWPORT);
+  await bootTrial(page, MOBILE_PORTRAIT_VIEWPORT);
   await expectRenderableCanvas(page);
 
-  await clickUi(fireButton(page));
+  await fireButton(page).click();
   const turnPrompt = page.locator("[data-action='turn-finish']");
   await expect(turnPrompt).toBeVisible();
   await expect(turnPrompt).toBeEnabled({ timeout: SCORE_REVEAL_TIMEOUT_MS });
   await expect(turnPrompt).toContainText("Tap to score");
-  await clickUi(turnPrompt);
+  await turnPrompt.click();
   await expectFinalScore(page, "Normal Shell");
 
   expect(consoleErrors).toEqual([]);
@@ -210,7 +218,7 @@ test("arms the RC crash run before launching on mobile", async ({ page }) => {
   const consoleErrors = trackRuntimeErrors(page);
 
   await useSmokePerformanceSettings(page);
-  await page.setViewportSize(MOBILE_LANDSCAPE_VIEWPORT);
+  await page.setViewportSize(MOBILE_PORTRAIT_VIEWPORT);
   await page.goto(SMOKE_URL);
 
   await clickUi(page.locator("[data-mode='plane']"));
@@ -226,15 +234,15 @@ test("arms the RC crash run before launching on mobile", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Heavy" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "W" })).toHaveCount(0);
   await expect(page.locator(".hud__plane-boost")).toBeHidden();
-  await expect(page.evaluate(mobileLandscapePlaneReadyLayoutFailures)).resolves.toEqual([]);
+  await expect(page.evaluate(mobilePlaneReadyLayoutFailures)).resolves.toEqual([]);
 
-  await clickUi(fireButton(page));
+  await fireButton(page).click();
   await expect(page.locator(".hud [data-role='shots']")).toHaveText("AIRBORNE");
   await expect(page.locator(".hud")).toHaveClass(/is-plane-flying/);
   await expect(page.locator(".hud__fire")).toBeHidden();
   await expect(page.locator("[data-action='reset']")).toBeVisible();
   await expect(page.locator(".hud__plane-boost")).toBeVisible();
-  await expect(page.evaluate(mobileLandscapePlaneFlightLayoutFailures)).resolves.toEqual([]);
+  await expect(page.evaluate(mobilePlaneFlightLayoutFailures)).resolves.toEqual([]);
 
   await clickUi(page.locator("[data-action='reset']"));
   await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
@@ -820,7 +828,7 @@ function isHudWithinViewport(): boolean {
   });
 }
 
-function mobileLandscapeLayoutFailures(): string[] {
+function mobilePlayLayoutFailures(): string[] {
   const failures: string[] = [];
   const isVisible = (element: Element): element is HTMLElement => {
     if (!(element instanceof HTMLElement)) {
@@ -829,15 +837,57 @@ function mobileLandscapeLayoutFailures(): string[] {
     const style = window.getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
   };
+  const coveredPlayAreaFailures = (hudSelectors: string[]): string[] => {
+    const covered: string[] = [];
+    const samples: Array<[number, number]> = [
+      [0.5, 0.34],
+      [0.5, 0.46],
+      [0.42, 0.5],
+      [0.58, 0.5]
+    ];
+    for (const [xRatio, yRatio] of samples) {
+      const x = Math.round(window.innerWidth * xRatio);
+      const y = Math.round(window.innerHeight * yRatio);
+      const element = document.elementFromPoint(x, y);
+      if (element?.closest(hudSelectors.join(","))) {
+        covered.push(`play area sample covered at ${Math.round(xRatio * 100)}%/${Math.round(yRatio * 100)}%`);
+      }
+    }
+    return covered;
+  };
+  const overlappingInteractiveFailures = (): string[] => {
+    const overlapping: string[] = [];
+    const controls = Array.from(document.querySelectorAll("button"))
+      .filter((element): element is HTMLButtonElement => isVisible(element))
+      .map((element) => ({
+        label: (element.textContent ?? element.getAttribute("aria-label") ?? "button").trim(),
+        rect: element.getBoundingClientRect()
+      }));
+
+    for (let index = 0; index < controls.length; index += 1) {
+      for (let otherIndex = index + 1; otherIndex < controls.length; otherIndex += 1) {
+        const first = controls[index];
+        const second = controls[otherIndex];
+        const overlapX = Math.max(0, Math.min(first.rect.right, second.rect.right) - Math.max(first.rect.left, second.rect.left));
+        const overlapY = Math.max(0, Math.min(first.rect.bottom, second.rect.bottom) - Math.max(first.rect.top, second.rect.top));
+        if (overlapX > 1 && overlapY > 1) {
+          overlapping.push(`controls overlap: ${first.label} / ${second.label}`);
+        }
+      }
+    }
+    return overlapping;
+  };
   const command = document.querySelector(".hud__command");
   const topbar = document.querySelector(".hud__topbar");
   if (!(command instanceof HTMLElement) || !(topbar instanceof HTMLElement)) {
-    return ["missing mobile landscape HUD"];
+    return ["missing mobile HUD"];
   }
 
   const commandRect = command.getBoundingClientRect();
   const topbarRect = topbar.getBoundingClientRect();
-  if (Math.ceil(commandRect.height) > 230) {
+  const landscape = window.innerWidth > window.innerHeight;
+  const maxDockHeight = landscape ? 124 : 176;
+  if (Math.ceil(commandRect.height) > maxDockHeight) {
     failures.push(`mobile play dock too tall: ${Math.ceil(commandRect.height)}px`);
   }
 
@@ -845,24 +895,21 @@ function mobileLandscapeLayoutFailures(): string[] {
     failures.push("play command panel scrolls before primary controls fit");
   }
 
-  if (topbarRect.right > window.innerWidth * 0.52) {
-    failures.push("top bar is too wide for landscape play");
+  if (topbarRect.height > 54) {
+    failures.push(`top bar too tall: ${Math.ceil(topbarRect.height)}px`);
   }
 
-  if (commandRect.left < window.innerWidth * 0.56) {
-    failures.push("play command panel is not docked to the right");
+  if (topbarRect.bottom > commandRect.top - 160) {
+    failures.push("HUD leaves too little visible play area");
   }
 
-  const sceneSpace = commandRect.left - topbarRect.right;
-  if (sceneSpace < 150) {
-    failures.push(`landscape scene space too small: ${Math.round(sceneSpace)}px`);
-  }
+  failures.push(...coveredPlayAreaFailures([".hud__command", ".hud__topbar", ".hud__turn-prompt", ".hud__results", ".hud__plane-touch"]));
 
   const targetChecks: Array<[string, string, number, number]> = [
     ["fire", ".hud__fire", 44, 44],
-    ["projectile", ".hud__projectile", 44, 40],
-    ["utility", ".hud__utility button", 38, 38],
-    ["menu", "[data-action='menu']", 38, 38]
+    ["projectile", ".hud__projectile", 44, 44],
+    ["utility", ".hud__utility button", 44, 44],
+    ["menu", "[data-action='menu']", 44, 44]
   ];
 
   for (const [name, selector, minWidth, minHeight] of targetChecks) {
@@ -874,10 +921,17 @@ function mobileLandscapeLayoutFailures(): string[] {
     }
   }
 
+  for (const element of Array.from(document.querySelectorAll("button")).filter(isVisible)) {
+    if (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1) {
+      failures.push(`button text clips: ${(element.textContent ?? "").trim()}`);
+    }
+  }
+
+  failures.push(...overlappingInteractiveFailures());
   return failures;
 }
 
-function mobileLandscapePlaneReadyLayoutFailures(): string[] {
+function mobilePlaneReadyLayoutFailures(): string[] {
   const failures: string[] = [];
   const isVisible = (element: Element): element is HTMLElement => {
     if (!(element instanceof HTMLElement)) {
@@ -885,6 +939,21 @@ function mobileLandscapePlaneReadyLayoutFailures(): string[] {
     }
     const style = window.getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+  };
+  const coveredPlayAreaFailures = (hudSelectors: string[]): string[] => {
+    const covered: string[] = [];
+    for (const [xRatio, yRatio] of [
+      [0.5, 0.34],
+      [0.5, 0.46],
+      [0.42, 0.5],
+      [0.58, 0.5]
+    ] as Array<[number, number]>) {
+      const element = document.elementFromPoint(Math.round(window.innerWidth * xRatio), Math.round(window.innerHeight * yRatio));
+      if (element?.closest(hudSelectors.join(","))) {
+        covered.push(`play area sample covered at ${Math.round(xRatio * 100)}%/${Math.round(yRatio * 100)}%`);
+      }
+    }
+    return covered;
   };
   const command = document.querySelector(".hud__command");
   const topbar = document.querySelector(".hud__topbar");
@@ -896,7 +965,7 @@ function mobileLandscapePlaneReadyLayoutFailures(): string[] {
     !(loadoutLabel instanceof HTMLElement) ||
     !(fire instanceof HTMLElement)
   ) {
-    return ["missing plane landscape ready HUD"];
+    return ["missing plane ready HUD"];
   }
 
   const commandStyle = window.getComputedStyle(command);
@@ -916,7 +985,7 @@ function mobileLandscapePlaneReadyLayoutFailures(): string[] {
   const commandRect = command.getBoundingClientRect();
   const topbarRect = topbar.getBoundingClientRect();
   const fireRect = fire.getBoundingClientRect();
-  if (Math.ceil(commandRect.height) > 230) {
+  if (Math.ceil(commandRect.height) > 176) {
     failures.push(`plane ready dock too tall: ${Math.ceil(commandRect.height)}px`);
   }
   if (command.scrollHeight > command.clientHeight + 1) {
@@ -929,10 +998,11 @@ function mobileLandscapePlaneReadyLayoutFailures(): string[] {
     failures.push(`plane start target too small: ${Math.round(fireRect.width)}x${Math.round(fireRect.height)}`);
   }
 
+  failures.push(...coveredPlayAreaFailures([".hud__command", ".hud__topbar", ".hud__plane-touch"]));
   return failures;
 }
 
-function mobileLandscapePlaneFlightLayoutFailures(): string[] {
+function mobilePlaneFlightLayoutFailures(): string[] {
   const failures: string[] = [];
   const isVisible = (element: Element): element is HTMLElement => {
     if (!(element instanceof HTMLElement)) {
@@ -941,12 +1011,27 @@ function mobileLandscapePlaneFlightLayoutFailures(): string[] {
     const style = window.getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
   };
+  const coveredPlayAreaFailures = (hudSelectors: string[]): string[] => {
+    const covered: string[] = [];
+    for (const [xRatio, yRatio] of [
+      [0.5, 0.34],
+      [0.5, 0.46],
+      [0.42, 0.5],
+      [0.58, 0.5]
+    ] as Array<[number, number]>) {
+      const element = document.elementFromPoint(Math.round(window.innerWidth * xRatio), Math.round(window.innerHeight * yRatio));
+      if (element?.closest(hudSelectors.join(","))) {
+        covered.push(`play area sample covered at ${Math.round(xRatio * 100)}%/${Math.round(yRatio * 100)}%`);
+      }
+    }
+    return covered;
+  };
   const command = document.querySelector(".hud__command");
   const boost = document.querySelector(".hud__plane-boost");
   const fire = document.querySelector(".hud__fire");
   const retry = document.querySelector("[data-action='reset']");
   if (!(command instanceof HTMLElement) || !(boost instanceof HTMLElement) || !(fire instanceof HTMLElement) || !(retry instanceof HTMLElement)) {
-    return ["missing plane landscape flight HUD"];
+    return ["missing plane flight HUD"];
   }
 
   if (!isVisible(command)) {
@@ -977,16 +1062,17 @@ function mobileLandscapePlaneFlightLayoutFailures(): string[] {
     failures.push("plane boost target is not anchored to the lower-right flight area");
   }
 
+  failures.push(...coveredPlayAreaFailures([".hud__command", ".hud__topbar", ".hud__plane-touch"]));
   return failures;
 }
 
-function mobileLandscapePostShotLayoutFailures(): string[] {
+function mobilePostShotLayoutFailures(): string[] {
   const failures: string[] = [];
   const prompt = document.querySelector("[data-action='turn-finish']");
   const command = document.querySelector(".hud__command");
   const topbar = document.querySelector(".hud__topbar");
   if (!(prompt instanceof HTMLElement) || !(command instanceof HTMLElement) || !(topbar instanceof HTMLElement)) {
-    return ["missing post-shot mobile landscape UI"];
+    return ["missing post-shot mobile UI"];
   }
 
   const promptStyle = window.getComputedStyle(prompt);
@@ -1003,12 +1089,9 @@ function mobileLandscapePostShotLayoutFailures(): string[] {
   if (promptRect.width < 320 || promptRect.height < 58) {
     failures.push(`turn prompt target too small: ${Math.round(promptRect.width)}x${Math.round(promptRect.height)}`);
   }
-  if (promptRect.left < window.innerWidth * 0.56) {
-    failures.push("turn prompt is not docked to the right");
-  }
-  const sceneSpace = promptRect.left - topbarRect.right;
-  if (sceneSpace < 150) {
-    failures.push(`post-shot landscape scene space too small: ${Math.round(sceneSpace)}px`);
+  const viewingSpace = promptRect.top - topbarRect.bottom;
+  if (viewingSpace < (window.innerWidth > window.innerHeight ? 180 : 450)) {
+    failures.push(`post-shot viewing space too small: ${Math.round(viewingSpace)}px`);
   }
   return failures;
 }

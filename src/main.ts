@@ -4897,6 +4897,9 @@ class Game {
   private resize(): void {
     const viewport = window.visualViewport;
     this.cameraRig.resize(Math.round(viewport?.width ?? window.innerWidth), Math.round(viewport?.height ?? window.innerHeight));
+    if (this.gameMode === "cannon" && this.runState.phase === "aim") {
+      this.cameraRig.setCityAimView(this.cannon.getCameraAnchor(), this.currentLevel().cameraTarget);
+    }
   }
 
   private updateAimMarker(): void {
