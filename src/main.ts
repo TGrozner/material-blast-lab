@@ -16,6 +16,16 @@ import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult }
 import { DEFAULT_GAME_MODE, GAME_MODES, isGameMode, type GameMode } from "./gameMode";
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
+import {
+  chainMilestoneForCombo,
+  loadBestShotGhost,
+  mayhemContractForRun,
+  runVariantForSeed,
+  saveBestShotGhost,
+  type BestShotGhost,
+  type MayhemContract,
+  type RunVariant
+} from "./mayhemFeatures";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
@@ -36,7 +46,7 @@ import {
   sanitizeGameSettings
 } from "./settings";
 import { ExplosionSystem, ParticleSystem } from "./vfx";
-import { GameUI } from "./ui";
+import { GameUI, type UIResultMeta } from "./ui";
 import { graphicTexture, preloadGraphicTextures } from "./visualAssets";
 import { registerDowntownMayhemServiceWorker } from "./serviceWorker";
 
@@ -66,6 +76,14 @@ const VOLATILE_TRIGGER_LIMIT_BY_DEPTH = [3, 1, 0] as const;
 const CAMERA_FOCUS_MIN_SCORE = 155;
 const CAMERA_FOCUS_LOCK_MS = 1100;
 const CAMERA_FOCUS_DECAY_MS = 3400;
+const PRIMARY_IMPACT_SHAKE_MAGNITUDE = 0.56;
+const PRIMARY_IMPACT_SHAKE_DURATION = 0.96;
+const PRIMARY_IMPACT_HIT_STOP_SECONDS = 0.072;
+const PRIMARY_IMPACT_SLOWMO_SECONDS = 0.58;
+const GRAVITY_IMPACT_SHAKE_MAGNITUDE = 0.62;
+const GRAVITY_IMPACT_SHAKE_DURATION = 0.72;
+const GRAVITY_IMPACT_HIT_STOP_SECONDS = 0.08;
+const GRAVITY_IMPACT_SLOWMO_SECONDS = 0.42;
 const HEAVY_PROJECTILE_CAMERA_RELEASE_SPEED = 11.5;
 const HEAVY_PROJECTILE_CAMERA_RELEASE_AGE = 3.2;
 const CANNON_DECK_OFFSETS = [
@@ -116,6 +134,7 @@ const AIRCRAFT_CRASH_PROJECTILE: ProjectileDefinition = {
   ...PROJECTILES.slug,
   name: "RC Crash Plane",
   shortName: "RC Plane",
+  role: "Pilot crash",
   color: new THREE.Color(0xffcf5d),
   impulse: 62,
   blastRadius: 3.85,
@@ -2073,6 +2092,15 @@ class Game {
     depthWrite: false
   });
   private readonly aimMarker = createAimMarker(this.aimMarkerMaterial);
+  private readonly bestShotGhostMarkerMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffd36d,
+    transparent: true,
+    opacity: 0.46,
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false
+  });
+  private readonly bestShotGhostMarker = createAimMarker(this.bestShotGhostMarkerMaterial);
   private readonly arenaObjects: THREE.Object3D[] = [];
   private readonly cannonBatteryObjects: THREE.Object3D[] = [];
   private readonly levelDecorations: THREE.Object3D[] = [];
@@ -2098,7 +2126,14 @@ class Game {
   private levelIndex = 0;
   private arcadeProgress = loadArcadeProgress(ARCADE_LEVELS);
   private arcadeResult: ArcadeResult | null = null;
+  private arcadeResultMeta: UIResultMeta | null = null;
   private runSeed = createRunSeed();
+  private runVariant: RunVariant = runVariantForSeed("hazard-junction", this.runSeed);
+  private mayhemContract: MayhemContract | null = null;
+  private shotMayhemContract: MayhemContract | null = null;
+  private bestShotGhost: BestShotGhost | null = null;
+  private readonly chainMilestonesAwarded = new Set<number>();
+  private readonly shotAimPoint = DEFAULT_AIM_POINT.clone();
   private status = "Aim the siege cannon from the high battery.";
   private slowMotionTimer = 0;
   private hitStopTimer = 0;
@@ -2178,6 +2213,8 @@ class Game {
     this.aircraft = new AircraftController();
     this.scene.add(this.aircraft.getObject3D());
     this.scene.add(this.aimMarker);
+    this.bestShotGhostMarker.visible = false;
+    this.scene.add(this.bestShotGhostMarker);
     this.scorePopups = new ScorePopupLayer();
 
     this.ui = new GameUI({
@@ -2365,15 +2402,11 @@ class Game {
       startedAt = perfMonitor.timeStart();
       const chainEvents = this.processDebrisImpacts();
       perfMonitor.addTiming("game.processDebrisImpacts", startedAt);
-      if (chainEvents.length > 0) {
-        this.scorePopups.push(chainEvents);
-      }
+      this.pushScoreEvents(chainEvents);
       startedAt = perfMonitor.timeStart();
       const fireEvents = this.updateBurningHazards();
       perfMonitor.addTiming("game.updateBurningHazards", startedAt);
-      if (fireEvents.length > 0) {
-        this.scorePopups.push(fireEvents);
-      }
+      this.pushScoreEvents(fireEvents);
       startedAt = perfMonitor.timeStart();
       this.updatePhase(simulationDelta * timeScale);
       perfMonitor.addTiming("game.updatePhase", startedAt);
@@ -2446,11 +2479,65 @@ class Game {
       levelProgress: this.currentLevelProgress(),
       totalStars: this.arcadeProgress.totalStars,
       arcadeResult: this.arcadeResult,
+      resultMeta: this.arcadeResultMeta,
       settings: this.settings,
       status: this.status,
       fps: this.displayedFps,
       score: this.runState.score
     });
+  }
+
+  private refreshRunPlanning(): void {
+    const level = this.currentLevel();
+    this.mayhemContract = mayhemContractForRun(
+      level.id,
+      level.mission,
+      this.selectedProjectile,
+      this.runVariant
+    );
+    this.updateScorePopupChainGoal(level);
+  }
+
+  private updateScorePopupChainGoal(level: TestChamber): void {
+    this.scorePopups.setChainGoal(
+      level.mission.bonusThreshold.metric === "chainReactionCount"
+        ? { minimum: level.mission.bonusThreshold.minimum, label: "secondary hits" }
+        : null
+    );
+  }
+
+  private resetRunTelemetry(): void {
+    this.shotMayhemContract = null;
+    this.chainMilestonesAwarded.clear();
+  }
+
+  private pushScoreEvents(events: ScoreEvent[]): void {
+    if (events.length === 0) {
+      return;
+    }
+    this.scorePopups.push(events);
+    const milestone = this.nextChainMilestone(events);
+    if (milestone) {
+      this.scorePopups.showChainMilestone(milestone.label, milestone.combo);
+    }
+  }
+
+  private nextChainMilestone(events: readonly ScoreEvent[]): { combo: number; label: string } | null {
+    let bestMilestone: { combo: number; label: string } | null = null;
+    for (const event of events) {
+      if (event.kind !== "chain" || !event.combo) {
+        continue;
+      }
+      const milestone = chainMilestoneForCombo(event.combo);
+      if (!milestone || this.chainMilestonesAwarded.has(milestone.combo)) {
+        continue;
+      }
+      this.chainMilestonesAwarded.add(milestone.combo);
+      if (!bestMilestone || milestone.combo > bestMilestone.combo) {
+        bestMilestone = milestone;
+      }
+    }
+    return bestMilestone;
   }
 
   private captureRenderStats(): DowntownMayhemRenderStats {
@@ -2903,8 +2990,12 @@ class Game {
     this.clearProjectileSpectacleFocus();
     this.runState.resetAim();
     this.arcadeResult = null;
+    this.arcadeResultMeta = null;
+    this.resetRunTelemetry();
     this.runSeed = createRunSeed();
     this.rng.reset(this.runSeed);
+    this.runVariant = runVariantForSeed(level.id, this.runSeed);
+    this.bestShotGhost = loadBestShotGhost(level.id);
     if (import.meta.env.DEV) {
       console.debug(`[Downtown Mayhem] run seed ${this.runSeed}`);
     }
@@ -2930,9 +3021,10 @@ class Game {
       this.status = this.aircraftReadyStatus();
     } else {
       this.aircraft.setVisible(false);
-      this.status = `${level.name}: ${level.objective}`;
+      this.status = "";
       this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
     }
+    this.refreshRunPlanning();
   }
 
   private loadLevel(): void {
@@ -3675,6 +3767,10 @@ class Game {
     const direction = this.cannon.getDirection();
     const launchPosition = this.cannon.getLaunchPosition(projectile.baseRadius * this.sizeScale);
     this.clearProjectileSpectacleFocus();
+    this.refreshRunPlanning();
+    this.resetRunTelemetry();
+    this.shotAimPoint.copy(this.aimPoint);
+    this.shotMayhemContract = this.mayhemContract;
     this.projectiles.launch(this.selectedProjectile, launchPosition, direction, this.sizeScale, this.powerScale);
     this.scoreTracker.beginShot(projectile);
     this.cannon.fireKick(this.powerScale, this.sizeScale);
@@ -3700,6 +3796,9 @@ class Game {
       this.perfDiskLogger?.flush("plane-run-start");
     }
     this.clearProjectileSpectacleFocus();
+    this.resetRunTelemetry();
+    this.shotAimPoint.copy(this.aircraft.getObject3D().position);
+    this.shotMayhemContract = this.mayhemContract;
     this.scoreTracker.beginShot(AIRCRAFT_CRASH_PROJECTILE);
     this.aircraftFlightStartedAt = performance.now();
     this.runState.beginFlight();
@@ -3726,10 +3825,46 @@ class Game {
       return;
     }
     const score = this.scoreTracker.finalize(this.physics);
+    const level = this.currentLevel();
+    const shotContract = this.shotMayhemContract ?? this.mayhemContract;
+    const previousProgress = this.currentLevelProgress();
+    const previousBestScore = previousProgress?.bestScore ?? 0;
+    const previousStars = previousProgress?.stars ?? 0;
+    const previousHighestUnlockedLevel = this.arcadeProgress.highestUnlockedLevel;
     this.runState.markScored(score);
-    const recorded = recordArcadeRun(this.arcadeProgress, ARCADE_LEVELS, this.currentLevel().id, score);
+    const recorded = recordArcadeRun(this.arcadeProgress, ARCADE_LEVELS, level.id, score, {
+      projectileId: this.selectedProjectile,
+      contractObjectives: shotContract?.objectives
+    });
     this.arcadeProgress = recorded.progress;
     this.arcadeResult = recorded.result;
+    const newBest = score.totalScore > previousBestScore;
+    if (newBest && this.gameMode === "cannon") {
+      this.bestShotGhost = {
+        version: 1,
+        levelId: level.id,
+        projectileId: this.selectedProjectile,
+        score: score.totalScore,
+        variantLabel: this.runVariant.label,
+        aimPoint: {
+          x: this.shotAimPoint.x,
+          y: this.shotAimPoint.y,
+          z: this.shotAimPoint.z
+        },
+        createdAt: Date.now()
+      };
+      saveBestShotGhost(this.bestShotGhost);
+    }
+    this.arcadeResultMeta = {
+      previousBestScore,
+      previousStars,
+      newBest,
+      starsGained: Math.max(0, recorded.result.stars - previousStars),
+      justUnlockedLevelName:
+        recorded.progress.highestUnlockedLevel > previousHighestUnlockedLevel
+          ? TEST_CHAMBERS[recorded.progress.highestUnlockedLevel]?.name
+          : undefined
+    };
     saveArcadeProgress(this.arcadeProgress);
     this.audio.playScoreCeremony(score.totalScore, recorded.result.stars, recorded.result.completed);
     this.status = `${statusPrefix}${statusPrefix ? " " : ""}${scoreStatus(score, recorded.result)}`;
@@ -3932,9 +4067,7 @@ class Game {
           : null;
       this.projectiles.removeActive();
       const scoreEvents = directResult ? this.applyExplosionResult(directResult, 0, 0) : [];
-      if (scoreEvents.length > 0) {
-        this.scorePopups.push(scoreEvents);
-      }
+      this.pushScoreEvents(scoreEvents);
       if (directResult) {
         this.markProjectileSpectacleFocus(point, directResult);
         this.focusSpectacleOn(point, directResult, 120, true);
@@ -3946,9 +4079,9 @@ class Game {
       }
       this.particles.spark(point, projectile.color, 1.35 * active.sizeScale * active.powerScale);
       this.audio.playGravityCrush(point, active.sizeScale * active.powerScale);
-      this.cameraRig.shake(0.58, 0.72);
-      this.hitStopTimer = this.settings.motionEffects ? 0.075 : 0;
-      this.slowMotionTimer = this.settings.motionEffects ? 0.42 : 0;
+      this.cameraRig.shake(GRAVITY_IMPACT_SHAKE_MAGNITUDE, GRAVITY_IMPACT_SHAKE_DURATION);
+      this.hitStopTimer = this.settings.motionEffects ? GRAVITY_IMPACT_HIT_STOP_SECONDS : 0;
+      this.slowMotionTimer = this.settings.motionEffects ? GRAVITY_IMPACT_SLOWMO_SECONDS : 0;
       this.runState.beginSpectacle(performance.now());
       this.status = directResult
         ? `${projectile.name} impact: ${directResult.fracturedBodies} direct fractures, no blast.`
@@ -4010,7 +4143,8 @@ class Game {
       result,
       powerScale,
       sizeScale,
-      hitMaterialId: hitObject?.materialId
+      hitMaterialId: hitObject?.materialId,
+      role: "primary"
     });
     this.focusSpectacleOn(point, result, 160, true);
     const scoreEvents = [
@@ -4018,7 +4152,7 @@ class Game {
       ...this.applyExplosionResult(result, 0, projectile.id === "ignite" ? 1.35 : projectile.id === "pulse" ? 0.35 : 0),
       ...(options.specialActive ? this.playProjectileSpecial(projectile.id, point, directionVector, options.specialActive) : [])
     ];
-    this.scorePopups.push(scoreEvents);
+    this.pushScoreEvents(scoreEvents);
 
     this.explosion.play(point, visualRadius, result.dustColors, {
       projectileId: projectile.id,
@@ -4030,9 +4164,9 @@ class Game {
       role: "primary"
     });
     this.particles.cityDebrisSpray(point, result.dustColors, 1 + result.fracturedBodies * 0.085);
-    this.cameraRig.shake(0.52, 0.92);
-    this.hitStopTimer = this.settings.motionEffects ? 0.065 : 0;
-    this.slowMotionTimer = this.settings.motionEffects ? 0.58 : 0;
+    this.cameraRig.shake(PRIMARY_IMPACT_SHAKE_MAGNITUDE, PRIMARY_IMPACT_SHAKE_DURATION);
+    this.hitStopTimer = this.settings.motionEffects ? PRIMARY_IMPACT_HIT_STOP_SECONDS : 0;
+    this.slowMotionTimer = this.settings.motionEffects ? PRIMARY_IMPACT_SLOWMO_SECONDS : 0;
     this.runState.beginSpectacle(performance.now());
     const directFractures = directResults.reduce((total, directResult) => total + directResult.fracturedBodies, 0);
     const directHits = directResults.reduce((total, directResult) => total + directResult.affectedBodies, 0);
@@ -4166,9 +4300,7 @@ class Game {
       this.markProjectileSpectacleFocus(point, result);
     }
     const scoreEvents = this.applyExplosionResult(result, 0, active.definition.id === "ignite" ? 0.9 : 0);
-    if (scoreEvents.length > 0) {
-      this.scorePopups.push(scoreEvents);
-    }
+    this.pushScoreEvents(scoreEvents);
 
     if (result.dustColors.length > 0) {
       this.particles.cityDebrisSpray(point, result.dustColors, 0.42 + result.fracturedBodies * 0.08);
@@ -4222,7 +4354,8 @@ class Game {
         result: ignition,
         powerScale: active.powerScale,
         sizeScale: active.sizeScale,
-        hitMaterialId: "rubber"
+        hitMaterialId: "rubber",
+        role: "ignition"
       });
       return this.applyExplosionResult(ignition, 0, 1.2);
     }
@@ -4275,7 +4408,8 @@ class Game {
         result: secondary,
         powerScale: profile.powerScale,
         sizeScale: profile.sizeScale,
-        hitMaterialId: object.materialId
+        hitMaterialId: object.materialId,
+        role: "secondary"
       });
       events.push(...this.scoreTracker.addChainReaction(Math.max(70, Math.round(secondary.materialChaos * 0.35)), origin, hazardExplosionLabel(object)));
       events.push(...this.applyExplosionResult(secondary, cascadeDepth + 1));
@@ -4346,7 +4480,9 @@ class Game {
       if (now >= hazard.nextFxAt) {
         this.particles.fireLick(hazard.origin, 0.62);
         if (remainingMs < 820) {
-          this.particles.armingPulse(hazard.origin, 1 - Math.max(0, remainingMs) / 820, ignitionWarningColor(hazard));
+          const warningProgress = 1 - Math.max(0, remainingMs) / 820;
+          this.particles.armingPulse(hazard.origin, warningProgress, ignitionWarningColor(hazard));
+          this.audio.playHazardWarning(hazard.origin, warningProgress, hazard.materialId);
         }
         hazard.nextFxAt = now + (remainingMs < 820 ? 110 : 180);
       }
@@ -4377,7 +4513,8 @@ class Game {
         result,
         powerScale: 0.76,
         sizeScale: 0.82,
-        hitMaterialId: hazard.materialId
+        hitMaterialId: hazard.materialId,
+        role: "ignition"
       });
       events.push(...this.scoreTracker.addChainReaction(Math.max(58, Math.round((result.materialChaos + result.structureDamage) * 0.28)), hazard.origin, hazard.label));
       events.push(...this.applyExplosionResult(result, 1, 0.18));
@@ -4730,6 +4867,7 @@ class Game {
     }
     this.selectedProjectile = id;
     this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
+    this.refreshRunPlanning();
     this.audio.playLoadoutPreview(id, this.powerScale, this.sizeScale);
     this.status = `${PROJECTILES[id].name}: ${PROJECTILES[id].description}`;
   }
@@ -4799,9 +4937,17 @@ class Game {
   private updateAimMarker(): void {
     const visible = this.gameMode === "cannon" && this.runState.phase === "aim";
     this.aimMarker.visible = visible;
+    this.bestShotGhostMarker.visible = visible && Boolean(this.bestShotGhost);
     this.renderer.domElement.classList.toggle("is-cannon-aim", visible);
     if (!visible) {
       return;
+    }
+    if (this.bestShotGhost) {
+      const ghostAim = this.bestShotGhost.aimPoint;
+      this.bestShotGhostMarker.position.set(ghostAim.x, Math.max(ghostAim.y, AIM_FALLBACK_SURFACE_Y), ghostAim.z);
+      this.bestShotGhostMarker.quaternion.setFromUnitVectors(AIM_SURFACE_NORMAL, AIM_SURFACE_NORMAL);
+      const ghostDistance = this.cameraRig.camera.position.distanceTo(this.bestShotGhostMarker.position);
+      this.bestShotGhostMarker.scale.setScalar(THREE.MathUtils.clamp(ghostDistance * 0.026, 0.7, 1.32));
     }
     this.aimMarker.position.copy(this.aimMarkerPoint).addScaledVector(this.aimSurfaceNormal, AIM_MARKER_SURFACE_OFFSET);
     this.aimMarker.quaternion.setFromUnitVectors(AIM_SURFACE_NORMAL, this.aimSurfaceNormal);

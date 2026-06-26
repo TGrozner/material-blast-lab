@@ -10,6 +10,12 @@ describe("ShotScoreTracker", () => {
     expect(PROJECTILE_ORDER).toEqual(["slug", "scatter", "pulse", "gravity"]);
     expect(PROJECTILE_ORDER.map((id) => PROJECTILES[id].key)).toEqual(["1", "2", "3", "4"]);
     expect(PROJECTILE_ORDER.map((id) => PROJECTILES[id].shortName)).toEqual(["Normal", "Frag", "Impulse", "Heavy"]);
+    expect(PROJECTILE_ORDER.map((id) => PROJECTILES[id].role)).toEqual([
+      "Balanced blast",
+      "Chain starter",
+      "Wide shove",
+      "Pierces structures"
+    ]);
   });
 
   test("deduplicates object damage while emitting high-value collateral chaos events", () => {
@@ -106,7 +112,7 @@ describe("ShotScoreTracker", () => {
     });
   });
 
-  test("keeps mayhem ratings on the same scale as million-point route targets", () => {
+  test("keeps mayhem ratings on the same scale as million-point score targets", () => {
     const tracker = new ShotScoreTracker();
     tracker.beginShot(PROJECTILES.slug);
 

@@ -10,6 +10,11 @@ interface ScorePopup {
   visible: boolean;
 }
 
+interface ChainGoal {
+  minimum: number;
+  label: string;
+}
+
 const MAX_POPUPS_PER_PUSH = 4;
 const MAX_ACTIVE_POPUPS = 12;
 const MAX_CHAIN_POPUPS_PER_PUSH = 1;
@@ -29,6 +34,7 @@ export class ScorePopupLayer {
   private readonly updateViewport = () => this.refreshViewport();
   private chainMeterLife = 0;
   private chainMeterVisible = false;
+  private chainGoal: ChainGoal | null = null;
   private viewportWidth = window.innerWidth;
   private viewportHeight = window.innerHeight;
   private viewportOffsetX = 0;
@@ -97,6 +103,22 @@ export class ScorePopupLayer {
     this.trimPopups(maxActivePopups);
   }
 
+  setChainGoal(goal: ChainGoal | null): void {
+    this.chainGoal = goal && goal.minimum > 0 ? { ...goal } : null;
+  }
+
+  showChainMilestone(label: string, combo: number): void {
+    this.chainMeterLife = 3.4;
+    this.chainMeter.className = `chain-meter is-visible ${chainPopupClass(combo)}`;
+    this.chainMeterVisible = true;
+    const progress = this.chainGoal ? `${Math.min(combo, this.chainGoal.minimum)}/${this.chainGoal.minimum}` : String(combo);
+    this.chainMeter.replaceChildren(
+      chainMeterLine("span", `CHAIN MILESTONE ${progress}`),
+      chainMeterLine("strong", label),
+      chainMeterLine("em", this.chainGoal?.label ?? "cascade")
+    );
+  }
+
   update(deltaSeconds: number, camera: THREE.Camera): void {
     if (this.chainMeterLife > 0) {
       this.chainMeterLife = Math.max(0, this.chainMeterLife - deltaSeconds);
@@ -139,7 +161,7 @@ export class ScorePopupLayer {
     this.chainMeterLife = 0;
     this.chainMeterVisible = false;
     this.chainMeter.className = "chain-meter";
-    this.chainMeter.textContent = "";
+    this.chainMeter.replaceChildren();
   }
 
   dispose(): void {
@@ -155,7 +177,13 @@ export class ScorePopupLayer {
     this.chainMeterLife = 2.9;
     this.chainMeter.className = `chain-meter is-visible ${chainPopupClass(combo)}`;
     this.chainMeterVisible = true;
-    this.chainMeter.textContent = `${event.label}  +${event.points}`;
+    const progress = this.chainGoal ? `${Math.min(combo, this.chainGoal.minimum)}/${this.chainGoal.minimum}` : String(combo);
+    const source = chainSourceText(event.label, combo);
+    this.chainMeter.replaceChildren(
+      chainMeterLine("span", `CHAIN HIT ${progress}`),
+      chainMeterLine("strong", source),
+      chainMeterLine("em", `+${event.points} ${this.chainGoal?.label ?? "chain score"}`)
+    );
   }
 
   private trimPopups(maxActivePopups: number): void {
@@ -265,13 +293,41 @@ function installScorePopupStyles(): void {
       font-size: 13px;
       font-weight: 900;
       letter-spacing: 0;
-      line-height: 1;
+      line-height: 1.05;
       text-align: center;
       text-shadow: 0 1px 7px rgba(0, 0, 0, 0.7);
       transform: translate(-50%, -12px) scale(0.96);
       opacity: 0;
       transition: opacity 120ms ease, transform 160ms ease;
       will-change: transform, opacity;
+    }
+
+    .chain-meter span,
+    .chain-meter strong,
+    .chain-meter em {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chain-meter span {
+      color: rgba(255, 243, 168, 0.78);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .chain-meter strong {
+      margin-top: 3px;
+      color: #ffffff;
+      font-size: 14px;
+    }
+
+    .chain-meter em {
+      margin-top: 3px;
+      color: #ffe48f;
+      font-size: 11px;
+      font-style: normal;
     }
 
     .chain-meter.is-visible {
@@ -323,4 +379,14 @@ function chainPopupClass(combo: number): string {
     return "score-popup--combo";
   }
   return "";
+}
+
+function chainMeterLine<K extends keyof HTMLElementTagNameMap>(tag: K, text: string): HTMLElementTagNameMap[K] {
+  const element = document.createElement(tag);
+  element.textContent = text;
+  return element;
+}
+
+function chainSourceText(label: string, combo: number): string {
+  return label.replace(new RegExp(`\\s+x${combo}$`), "");
 }

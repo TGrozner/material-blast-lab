@@ -586,11 +586,15 @@ async function expectSelectedProjectile(page: Page, shortName: string): Promise<
 async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   const scorePanel = page.locator(".hud [data-role='score']");
   await expect(scorePanel).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
+  await expect(scorePanel).toHaveAttribute("data-result-state", /three-star|complete|one-star|incomplete/);
   await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem|Needs 2 Stars/);
   await expect(scorePanel.locator(".hud__score-breakdown")).toContainText(shotName);
+  await expect(scorePanel.locator(".hud__result-actions .is-primary")).toBeVisible();
   await expect(scorePanel.locator(".hud__total strong")).toHaveText(/\d+/);
-  await expect(scorePanel.getByText("Object damage")).toBeVisible();
-  await expect(scorePanel.getByText("Collateral Chaos")).toBeVisible();
+  await expect(scorePanel.locator("[data-role='result-total']")).toHaveText(/\d+/);
+  await expect(scorePanel.getByText("Object damage", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Collateral Chaos", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Secondary Hits", { exact: true })).toBeVisible();
 }
 
 async function waitForPerfLog(reason?: string): Promise<PerfLogPayload> {

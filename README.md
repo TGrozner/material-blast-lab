@@ -99,7 +99,7 @@ RC Crash Run does not include payload dropping, multiple aircraft, fuel, enemies
 
 ## Score
 
-The score appears after the shot settles for a few seconds. Mayhem Score is the total run score and star-route target; Collateral Chaos is the secondary-destruction sub-score from debris, relays, vehicles, and loose objects.
+The score appears after the shot settles for a few seconds. Mayhem Score is the total run score and star target; Collateral Chaos is the secondary-destruction sub-score from debris, relays, vehicles, and loose objects.
 
 - Object Damage
 - Collateral Chaos

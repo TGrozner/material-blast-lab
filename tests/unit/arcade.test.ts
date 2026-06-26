@@ -79,6 +79,58 @@ describe("Arcade result evaluation", () => {
       stars: 3
     });
   });
+
+  test("evaluates mayhem contract objectives without changing star thresholds", () => {
+    const result = evaluateArcadeResult(
+      {
+        ...LEVELS[0],
+        contractObjectives: [
+          { id: "score-contract", label: "Score contract", metric: "totalScore", minimum: 1800 },
+          { id: "payload-contract", label: "Payload contract", metric: "projectile", projectileIds: ["gravity"] }
+        ]
+      },
+      score({ totalScore: 1900 }),
+      { projectileId: "gravity" }
+    );
+
+    expect(result).toMatchObject({
+      stars: 2,
+      contract: {
+        completed: true,
+        objectives: [
+          { id: "score-contract", completed: true, value: 1900, target: 1800 },
+          { id: "payload-contract", completed: true, value: "gravity", target: "gravity" }
+        ]
+      }
+    });
+  });
+
+  test("accepts run-context contracts for projectile-specific variants", () => {
+    const result = recordArcadeRun(
+      createInitialArcadeProgress(LEVELS),
+      LEVELS,
+      "alpha",
+      score({ totalScore: 2100, chainReactionCount: 3 }),
+      {
+        projectileId: "scatter",
+        contractObjectives: [
+          { id: "scatter-only", label: "Scatter contract", metric: "projectile", projectileIds: ["scatter"] },
+          { id: "chain-contract", label: "Chain contract", metric: "chainReactionCount", minimum: 4 }
+        ]
+      }
+    ).result;
+
+    expect(result).toMatchObject({
+      stars: 3,
+      contract: {
+        completed: false,
+        objectives: [
+          { id: "scatter-only", completed: true },
+          { id: "chain-contract", completed: false, value: 3, target: 4 }
+        ]
+      }
+    });
+  });
 });
 
 describe("Arcade progress", () => {

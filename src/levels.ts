@@ -60,7 +60,7 @@ export const TEST_CHAMBERS: TestChamber[] = [
     id: "hazard-junction",
     name: "Hazard Junction",
     description: "A dense hazard city packed below the high siege battery.",
-    objective: "Pick a chain starter: energy plant, gas station, substation, propane depot, parking silo, elevated metro, or skyneedle collapse route.",
+    objective: "Pick one big target: gas station, power grid, parking silo, elevated metro, or skyneedle.",
     chaosBrief: "Recognizable hazard buildings hit harder, but only a few can cascade per wave.",
     cannonPosition: new THREE.Vector3(0, 6.08, 24.55),
     defaultAimPoint: new THREE.Vector3(-1.72, 0.16, -3.35),
@@ -77,7 +77,7 @@ export const TEST_CHAMBERS: TestChamber[] = [
       targetDamageThreshold: 10_000,
       bonusThreshold: { metric: "chainReactionCount", minimum: 100 },
       bonusObjective: "Sustain 100+ secondary hits from the energy plant, gas line, substation, propane depot, parking silo, metro line, vehicle grid, or skyneedle debris.",
-      briefingHint: "Aim choice matters: gas is wide and low, the metro carries moving mass, the skyneedle can shed vertical debris, and the parking silo feeds vehicle chaos."
+      briefingHint: "Aim choice matters: gas is wide and low, the metro carries moving mass, the skyneedle sheds vertical debris, and the parking silo feeds vehicle chaos."
     },
     setup: (context) => {
       addCityGround(context);
@@ -101,8 +101,8 @@ export const TEST_CHAMBERS: TestChamber[] = [
     id: "breaker-yard",
     name: "Breaker Yard",
     description: "A full breaker district with a concrete spine, transformer yards, relay towers, and traffic weaving through the blast lanes.",
-    objective: "Choose between the breaker spine, substation banks, relay towers, fuel trucks, or street traffic to open the chain.",
-    chaosBrief: "This is a real city sector now: power arcs, tower debris, traffic, and dense blocks can all feed the same route.",
+    objective: "Start at the breaker spine, substation banks, relay towers, tankers, or traffic lanes, then keep secondary hits moving.",
+    chaosBrief: "This is a real city sector now: power arcs, tower debris, traffic, and dense blocks can all feed the same chain.",
     cannonPosition: new THREE.Vector3(-6.45, 6.15, 24.85),
     defaultAimPoint: new THREE.Vector3(-0.65, 0.18, -4.15),
     cameraTarget: new THREE.Vector3(-0.4, 0.95, -2.3),
@@ -126,8 +126,8 @@ export const TEST_CHAMBERS: TestChamber[] = [
     id: "switchback-crush",
     name: "Switchback Crush",
     description: "A full glass-and-foam switchback district where fragile archive towers, soft baffles, and service traffic steer the collapse.",
-    objective: "Break the archive spine, then use foam baffles and street traffic to redirect wreckage through both switchback blocks.",
-    chaosBrief: "The route is no longer a corridor: it is a brittle city bowl with multiple angles, redirects, and crush paths.",
+    objective: "Break the archive spine, then steer debris through foam baffles, traffic, and both switchback blocks.",
+    chaosBrief: "This is a brittle city bowl with multiple angles, redirects, and crush paths.",
     cannonPosition: new THREE.Vector3(6.25, 6.08, 24.55),
     defaultAimPoint: new THREE.Vector3(0.85, 0.18, -3.65),
     cameraTarget: new THREE.Vector3(0.55, 0.95, -2.1),

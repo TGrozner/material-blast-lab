@@ -10,6 +10,14 @@ import {
   type GraphicsQuality
 } from "./settings";
 
+export interface UIResultMeta {
+  previousBestScore: number;
+  previousStars: number;
+  newBest: boolean;
+  starsGained: number;
+  justUnlockedLevelName?: string;
+}
+
 interface UIState {
   gameMode: GameMode;
   projectileId: ProjectileId;
@@ -29,6 +37,7 @@ interface UIState {
   levelProgress: ArcadeLevelProgress;
   totalStars: number;
   arcadeResult: ArcadeResult | null;
+  resultMeta: UIResultMeta | null;
   settings: GameSettings;
   status: string;
   fps: number;
@@ -103,6 +112,7 @@ export class GameUI {
   private currentState: UIState | null = null;
   private renderedHomeKey = "";
   private renderedSettingsKey = "";
+  private scoreCountAnimation = 0;
 
   constructor(private readonly callbacks: UICallbacks) {
     installStyles();
@@ -140,7 +150,7 @@ export class GameUI {
         <div class="hud__goal-grid">
           <div><span>2-star unlock</span><strong data-role="target-score"></strong></div>
           <div><span>Object damage</span><strong data-role="target-damage"></strong></div>
-          <div><span>3-star route</span><strong data-role="three-star"></strong></div>
+          <div><span>3-star score</span><strong data-role="three-star"></strong></div>
           <div><span>Bonus</span><strong data-role="bonus-goal"></strong></div>
         </div>
 
@@ -275,9 +285,9 @@ export class GameUI {
       button.type = "button";
       button.className = "hud__projectile";
       button.setAttribute("aria-label", definition.shortName);
-      button.title = `${definition.key}: ${definition.name} - ${definition.description}`;
+      button.title = `${definition.key}: ${definition.name} - ${definition.role}. ${definition.description}`;
       button.style.setProperty("--projectile", `#${definition.color.getHexString()}`);
-      button.innerHTML = `<span>${definition.shortName}</span><small>${definition.key}</small>`;
+      button.innerHTML = `<span>${definition.shortName}</span><small>${definition.key} / ${escapeHtml(definition.role)}</small>`;
       button.addEventListener("click", () => this.callbacks.selectProjectile(id));
       projectileRoot.appendChild(button);
       this.projectileButtons.set(id, button);
@@ -344,6 +354,10 @@ export class GameUI {
     }
     if (state.settings.showFps) {
       setText(this.fpsValue, `${state.fps} FPS`);
+    }
+    const statusHidden = state.status.trim().length === 0;
+    if (this.statusValue.hidden !== statusHidden) {
+      this.statusValue.hidden = statusHidden;
     }
     setText(this.statusValue, state.status);
     setText(this.fireButton, fireButtonLabel(state));
@@ -419,6 +433,8 @@ export class GameUI {
     if (state.score) {
       const shouldRevealScore = !this.scoreWasVisible;
       this.scorePanel.classList.add("is-visible");
+      this.scorePanel.dataset.resultState = resultStateKey(state);
+      this.scorePanel.dataset.newBest = String(Boolean(state.resultMeta?.newBest));
       if (this.renderedScore !== state.score) {
         this.scorePanel.innerHTML = renderScore(state);
         this.bindResultActions();
@@ -426,13 +442,20 @@ export class GameUI {
       }
       this.scoreWasVisible = true;
       if (shouldRevealScore) {
+        this.scorePanel.classList.add("is-ceremony-enter");
         this.scorePanel.scrollTo({ top: 0, behavior: "instant" });
+        this.startScoreCountUp(state.score.totalScore);
+        window.setTimeout(() => this.scorePanel.classList.remove("is-ceremony-enter"), 1200);
       }
     } else if (this.scoreWasVisible || this.renderedScore) {
       this.scoreWasVisible = false;
       this.renderedScore = null;
       this.scorePanel.classList.remove("is-visible");
+      this.scorePanel.classList.remove("is-ceremony-enter");
+      delete this.scorePanel.dataset.resultState;
+      delete this.scorePanel.dataset.newBest;
       this.scorePanel.innerHTML = "";
+      this.stopScoreCountUp();
     }
   }
 
@@ -448,8 +471,12 @@ export class GameUI {
     this.scoreWasVisible = false;
     this.renderedScore = null;
     this.scorePanel.classList.remove("is-visible");
+    this.scorePanel.classList.remove("is-ceremony-enter");
+    delete this.scorePanel.dataset.resultState;
+    delete this.scorePanel.dataset.newBest;
     this.scorePanel.innerHTML = "";
     this.root.classList.remove("has-results");
+    this.stopScoreCountUp();
   }
 
   showHomeScreen(): void {
@@ -458,6 +485,7 @@ export class GameUI {
 
   dispose(): void {
     this.callbacks.setPlaneBoost(false);
+    this.stopScoreCountUp();
     this.root.remove();
   }
 
@@ -543,6 +571,36 @@ export class GameUI {
     this.scorePanel.querySelector<HTMLButtonElement>("[data-action='result-menu']")?.addEventListener("click", () => this.callbacks.openMainMenu());
   }
 
+  private startScoreCountUp(totalScore: number): void {
+    this.stopScoreCountUp();
+    const value = this.scorePanel.querySelector<HTMLElement>("[data-role='result-total']");
+    if (!value) {
+      return;
+    }
+    const startedAt = performance.now();
+    const durationMs = 900;
+    const tick = (now: number): void => {
+      const progress = THREEClamp01((now - startedAt) / durationMs);
+      const eased = 1 - (1 - progress) ** 3;
+      setText(value, formatScoreNumber(totalScore * eased));
+      if (progress < 1) {
+        this.scoreCountAnimation = window.requestAnimationFrame(tick);
+      } else {
+        this.scoreCountAnimation = 0;
+        setText(value, formatScoreNumber(totalScore));
+      }
+    };
+    setText(value, "0");
+    this.scoreCountAnimation = window.requestAnimationFrame(tick);
+  }
+
+  private stopScoreCountUp(): void {
+    if (this.scoreCountAnimation !== 0) {
+      window.cancelAnimationFrame(this.scoreCountAnimation);
+      this.scoreCountAnimation = 0;
+    }
+  }
+
   private requireElement<T extends HTMLElement = HTMLElement>(selector: string): T {
     const element = this.root.querySelector<T>(selector);
     if (!element) {
@@ -592,6 +650,10 @@ function renderScore(state: UIState): string {
   const result = state.arcadeResult;
   const stars = result?.stars ?? 0;
   const resultLabel = result?.completed ? (stars >= 3 ? "Maximum Mayhem" : "Mayhem Complete") : "Needs 2 Stars";
+  const districtRating = districtMayhemRating(state, score);
+  const callouts = resultCallouts(state, score);
+  const primaryAction = primaryResultAction(state);
+  const hasNextDistrict = canStartNextDistrict(state);
   const bonusValue = bonusMetricValue(score, state.mission.bonusThreshold.metric);
   const goals = [
     {
@@ -610,27 +672,30 @@ function renderScore(state: UIState): string {
       passed: score.totalScore >= state.mission.scoreThresholds.twoStar
     },
     {
-      label: "3-star route",
+      label: "3-star score",
       value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.threeStar)}`,
       passed: score.totalScore >= state.mission.scoreThresholds.threeStar
     },
     {
-      label: state.mission.bonusObjective,
+      label: "Bonus goal",
       value: `${formatScoreNumber(bonusValue)} / ${formatScoreNumber(state.mission.bonusThreshold.minimum)}`,
-      passed: result?.bonusCompleted ?? false
+      passed: result?.bonusCompleted ?? false,
+      hint: bonusGoalHint(state, score)
     }
   ];
 
   return `
       <div class="hud__result-head">
       <span>${resultLabel}</span>
-      <strong>${escapeHtml(score.mayhemRating)}</strong>
+      <strong>${escapeHtml(districtRating)}</strong>
+      <em>${escapeHtml(score.mayhemRating)} global rating</em>
     </div>
     <div class="hud__stars" aria-label="${stars} stars">${renderStars(stars)}</div>
+    ${callouts.length > 0 ? `<div class="hud__result-callouts">${callouts.map(renderResultCallout).join("")}</div>` : ""}
     <div class="hud__total">
       <span>Mayhem Score</span>
-      <strong>${formatScoreNumber(score.totalScore)}</strong>
-      <em>Best ${formatScoreNumber(state.levelProgress.bestScore)}</em>
+      <strong data-role="result-total">${formatScoreNumber(score.totalScore)}</strong>
+      <em>${bestScoreLabel(state)}</em>
     </div>
     <div class="hud__objective-list">
       ${goals
@@ -639,6 +704,7 @@ function renderScore(state: UIState): string {
             <div class="${goal.passed ? "is-passed" : "is-missed"}">
               <span>${escapeHtml(goal.label)}</span>
               <strong>${escapeHtml(goal.value)}</strong>
+              ${"hint" in goal && goal.hint ? `<em>${escapeHtml(goal.hint)}</em>` : ""}
             </div>
           `
         )
@@ -647,16 +713,113 @@ function renderScore(state: UIState): string {
     <div class="hud__score-breakdown">
       <div><span>${state.gameMode === "plane" ? "Vehicle" : "Payload"}</span><strong>${escapeHtml(score.shotName)}</strong></div>
       <div><span>Collateral Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
-      <div><span>Chain Bonus</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
-      <div><span>Chain Hits</span><strong>${score.chainReactionCount}${score.maxChainCombo > 1 ? ` / x${score.maxChainCombo}` : ""}</strong></div>
+      <div><span>Chain Score</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
+      <div><span>Secondary Hits</span><strong>${score.chainReactionCount}${score.maxChainCombo > 1 ? ` / x${score.maxChainCombo}` : ""}</strong></div>
       <div><span>Motion Bonus</span><strong>${formatScoreNumber(score.remainingDebrisMotion)}</strong></div>
     </div>
     <div class="hud__result-actions">
       <button type="button" data-action="result-menu">Menu</button>
-      <button type="button" data-action="result-retry">Retry</button>
-      <button type="button" data-action="result-next">Next Level</button>
+      ${primaryAction === "retry" ? `<button class="is-primary" type="button" data-action="result-retry">${result?.completed ? "Retry For 3 Stars" : "Retry Run"}</button>` : `<button type="button" data-action="result-retry">Retry</button>`}
+      ${hasNextDistrict ? (primaryAction === "next" ? `<button class="is-primary" type="button" data-action="result-next">Next District</button>` : `<button type="button" data-action="result-next">Next District</button>`) : ""}
     </div>
   `;
+}
+
+function resultStateKey(state: UIState): string {
+  const stars = state.arcadeResult?.stars ?? 0;
+  if (stars >= 3) {
+    return "three-star";
+  }
+  if (state.arcadeResult?.completed) {
+    return "complete";
+  }
+  if (stars >= 1) {
+    return "one-star";
+  }
+  return "incomplete";
+}
+
+function districtMayhemRating(state: UIState, score: ScoreBreakdown): string {
+  const result = state.arcadeResult;
+  if ((result?.stars ?? 0) >= 3) {
+    return "MAXIMUM MAYHEM";
+  }
+  if (result?.completed) {
+    return "DISTRICT WRECKER";
+  }
+  if (score.totalScore >= state.mission.scoreThresholds.oneStar) {
+    return "SPARK SHOW";
+  }
+  return "SPARK SHOW";
+}
+
+function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ className: string; label: string; value: string }> {
+  const callouts: Array<{ className: string; label: string; value: string }> = [];
+  const meta = state.resultMeta;
+  if (meta?.newBest) {
+    callouts.push({
+      className: "is-new-best",
+      label: "New best",
+      value: `${formatScoreNumber(meta.previousBestScore)} -> ${formatScoreNumber(score.totalScore)}`
+    });
+  }
+  if (meta && meta.starsGained > 0) {
+    callouts.push({
+      className: "is-stars-gained",
+      label: "Stars gained",
+      value: `+${meta.starsGained}`
+    });
+  }
+  if (meta?.justUnlockedLevelName) {
+    callouts.push({
+      className: "is-unlock",
+      label: "Unlocked",
+      value: meta.justUnlockedLevelName
+    });
+  }
+  if (state.arcadeResult?.bonusCompleted) {
+    callouts.push({
+      className: "is-bonus-complete",
+      label: "Bonus goal",
+      value: "Complete"
+    });
+  }
+  return callouts;
+}
+
+function renderResultCallout(callout: { className: string; label: string; value: string }): string {
+  return `<div class="${callout.className}"><span>${escapeHtml(callout.label)}</span><strong>${escapeHtml(callout.value)}</strong></div>`;
+}
+
+function bestScoreLabel(state: UIState): string {
+  const previous = state.resultMeta?.previousBestScore ?? state.levelProgress.bestScore;
+  const current = state.levelProgress.bestScore;
+  if (state.resultMeta?.newBest) {
+    return `Previous best ${formatScoreNumber(previous)}`;
+  }
+  return `Best ${formatScoreNumber(current)}`;
+}
+
+function primaryResultAction(state: UIState): "next" | "retry" {
+  if (state.arcadeResult?.completed && canStartNextDistrict(state)) {
+    return "next";
+  }
+  return "retry";
+}
+
+function canStartNextDistrict(state: UIState): boolean {
+  const next = state.levels[state.levelIndex + 1];
+  return Boolean(next && !next.locked);
+}
+
+function bonusGoalHint(state: UIState, score: ScoreBreakdown): string {
+  const metric = state.mission.bonusThreshold.metric;
+  const value = bonusMetricValue(score, metric);
+  const minimum = state.mission.bonusThreshold.minimum;
+  if (value >= minimum) {
+    return "Bonus goal complete";
+  }
+  return `Need ${formatScoreNumber(minimum - value)} more ${metricUnit(metric)}`;
 }
 
 function fireButtonLabel(state: UIState): string {
@@ -689,6 +852,23 @@ function metricLabel(metric: ArcadeMissionFields["bonusThreshold"]["metric"]): s
       return "motion";
     case "chainReactionCount":
       return "hits";
+    case "maxChainCombo":
+      return "combo";
+  }
+}
+
+function metricUnit(metric: ArcadeMissionFields["bonusThreshold"]["metric"]): string {
+  switch (metric) {
+    case "targetDamage":
+      return "object damage";
+    case "collateralChaos":
+      return "collateral chaos";
+    case "chainReactionBonus":
+      return "chain score";
+    case "remainingDebrisMotion":
+      return "motion score";
+    case "chainReactionCount":
+      return "secondary hits";
     case "maxChainCombo":
       return "combo";
   }
@@ -1115,7 +1295,7 @@ function installStyles(): void {
     }
 
     .hud__fire,
-    .hud__result-actions button:last-child {
+    .hud__result-actions button.is-primary {
       color: #051016;
       background: linear-gradient(180deg, #92f2ff, #55d4f1);
       border-color: rgba(183, 255, 255, 0.78);
@@ -1325,6 +1505,11 @@ function installStyles(): void {
     .hud__results.is-visible {
       display: grid;
       gap: 12px;
+      animation: resultPanelIn 180ms ease-out both;
+    }
+
+    .hud__results.is-ceremony-enter {
+      animation: resultPanelIn 220ms ease-out both, resultPanelGlow 980ms ease-out both;
     }
 
     .hud__result-head {
@@ -1344,6 +1529,13 @@ function installStyles(): void {
       color: #ffffff;
       font-size: 24px;
       line-height: 1;
+    }
+
+    .hud__result-head em {
+      color: #9db6c4;
+      font-size: 11px;
+      font-style: normal;
+      line-height: 1.2;
     }
 
     .hud__stars {
@@ -1369,6 +1561,60 @@ function installStyles(): void {
       color: #111008;
       border-color: rgba(255, 222, 122, 0.9);
       background: linear-gradient(180deg, #ffe98d, #ffb93d);
+      animation: starPop 360ms ease-out both;
+    }
+
+    .hud__stars span.is-earned:nth-child(2) {
+      animation-delay: 110ms;
+    }
+
+    .hud__stars span.is-earned:nth-child(3) {
+      animation-delay: 220ms;
+    }
+
+    .hud__result-callouts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+      gap: 7px;
+    }
+
+    .hud__result-callouts div {
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .hud__result-callouts .is-new-best {
+      border-color: rgba(255, 226, 126, 0.62);
+      background: rgba(255, 202, 76, 0.12);
+    }
+
+    .hud__result-callouts .is-unlock {
+      border-color: rgba(114, 240, 165, 0.58);
+      background: rgba(114, 240, 165, 0.1);
+    }
+
+    .hud__result-callouts span,
+    .hud__result-callouts strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hud__result-callouts span {
+      color: #9db6c4;
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .hud__result-callouts strong {
+      margin-top: 3px;
+      color: #ffffff;
+      font-size: 12px;
     }
 
     .hud__total {
@@ -1387,6 +1633,7 @@ function installStyles(): void {
       font-size: 34px;
       line-height: 0.95;
       font-variant-numeric: tabular-nums;
+      animation: scorePulse 720ms ease-out both;
     }
 
     .hud__total em {
@@ -1421,6 +1668,8 @@ function installStyles(): void {
     }
 
     .hud__objective-list div {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: flex-start;
       border-left: 3px solid #ff7c9f;
     }
@@ -1428,6 +1677,14 @@ function installStyles(): void {
     .hud__objective-list span {
       min-width: 0;
       white-space: normal;
+    }
+
+    .hud__objective-list em {
+      grid-column: 1 / -1;
+      color: #9db6c4;
+      font-size: 10px;
+      font-style: normal;
+      line-height: 1.2;
     }
 
     .hud__objective-list div.is-passed {
@@ -1449,6 +1706,56 @@ function installStyles(): void {
 
     .hud__score-breakdown .is-penalty {
       color: #ff8aa3;
+    }
+
+    @keyframes resultPanelIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.985);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes resultPanelGlow {
+      0% {
+        box-shadow: 0 18px 58px rgba(0, 0, 0, 0.5), 0 0 0 rgba(255, 211, 109, 0);
+      }
+      30% {
+        box-shadow: 0 18px 58px rgba(0, 0, 0, 0.5), 0 0 34px rgba(255, 211, 109, 0.24);
+      }
+      100% {
+        box-shadow: 0 18px 58px rgba(0, 0, 0, 0.5), 0 0 0 rgba(255, 211, 109, 0);
+      }
+    }
+
+    @keyframes starPop {
+      0% {
+        transform: scale(0.78);
+        filter: brightness(0.85);
+      }
+      65% {
+        transform: scale(1.12);
+        filter: brightness(1.18);
+      }
+      100% {
+        transform: scale(1);
+        filter: brightness(1);
+      }
+    }
+
+    @keyframes scorePulse {
+      0% {
+        transform: scale(0.96);
+      }
+      55% {
+        transform: scale(1.035);
+      }
+      100% {
+        transform: scale(1);
+      }
     }
 
     .hud__home,
@@ -1805,7 +2112,10 @@ function installStyles(): void {
       }
 
       .hud__mission > em {
-        display: none;
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .hud__goal-grid {

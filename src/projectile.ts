@@ -11,6 +11,7 @@ export interface ProjectileDefinition {
   key: string;
   name: string;
   shortName: string;
+  role: string;
   color: THREE.Color;
   materialId: MaterialId;
   baseRadius: number;
@@ -42,6 +43,7 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     key: "1",
     name: "Normal Shell",
     shortName: "Normal",
+    role: "Balanced blast",
     color: new THREE.Color(0x9fb7c8),
     materialId: "metal",
     baseRadius: 0.24,
@@ -58,6 +60,7 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     key: "2",
     name: "Fragmentation Cluster",
     shortName: "Frag",
+    role: "Chain starter",
     color: new THREE.Color(0xffc961),
     materialId: "foam",
     baseRadius: 0.26,
@@ -74,6 +77,7 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     key: "3",
     name: "Impulse Orb",
     shortName: "Impulse",
+    role: "Wide shove",
     color: new THREE.Color(0x61f4ff),
     materialId: "glass",
     baseRadius: 0.31,
@@ -90,6 +94,7 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     key: "4",
     name: "Heavy Penetrator",
     shortName: "Heavy",
+    role: "Pierces structures",
     color: new THREE.Color(0x9c71ff),
     materialId: "metal",
     baseRadius: 0.4,
@@ -106,6 +111,7 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     key: "0",
     name: "Hazard Ignition",
     shortName: "Ignite",
+    role: "Hazard chain",
     color: new THREE.Color(0xff7a35),
     materialId: "rubber",
     baseRadius: 0.24,

@@ -252,7 +252,7 @@ function mayhemRating(totalScore: number): string {
     return "CITY WRECKER";
   }
   if (totalScore >= 1_600_000) {
-    return "WRECK ROUTE";
+    return "DISTRICT WRECKER";
   }
   return "SPARK SHOW";
 }

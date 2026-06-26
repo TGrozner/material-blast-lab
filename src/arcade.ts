@@ -1,3 +1,4 @@
+import type { ProjectileId } from "./projectile";
 import type { ScoreBreakdown } from "./scoring";
 
 export const ARCADE_PROGRESS_STORAGE_KEY = "downtown-mayhem:arcade-progress";
@@ -18,6 +19,34 @@ export interface ArcadeBonusThreshold {
   minimum: number;
 }
 
+export type ArcadeContractMetric = ArcadeBonusMetric | "totalScore" | "projectile";
+
+export interface ArcadeContractObjective {
+  id: string;
+  label: string;
+  metric: ArcadeContractMetric;
+  minimum?: number;
+  projectileIds?: ProjectileId[];
+}
+
+export interface ArcadeContractObjectiveResult {
+  id: string;
+  label: string;
+  completed: boolean;
+  value: number | string;
+  target: number | string;
+}
+
+export interface ArcadeContractResult {
+  completed: boolean;
+  objectives: ArcadeContractObjectiveResult[];
+}
+
+export interface ArcadeRunContext {
+  projectileId?: ProjectileId;
+  contractObjectives?: readonly ArcadeContractObjective[];
+}
+
 export interface ArcadeStarThresholds {
   missionScore: number;
   twoStarScore: number;
@@ -29,6 +58,7 @@ export interface ArcadeLevelDefinition {
   id: string;
   title: string;
   thresholds: ArcadeStarThresholds;
+  contractObjectives?: ArcadeContractObjective[];
 }
 
 export interface ArcadeResult {
@@ -37,6 +67,7 @@ export interface ArcadeResult {
   stars: ArcadeStars;
   score: number;
   bonusCompleted: boolean;
+  contract: ArcadeContractResult | null;
 }
 
 export interface ArcadeLevelProgress {
@@ -90,7 +121,8 @@ export const DEFAULT_ARCADE_LEVELS: ArcadeLevelDefinition[] = [
 
 export function evaluateArcadeResult(
   level: ArcadeLevelDefinition,
-  score: ScoreBreakdown
+  score: ScoreBreakdown,
+  context: ArcadeRunContext = {}
 ): ArcadeResult {
   const thresholds = level.thresholds;
   const oneStar = score.totalScore >= thresholds.missionScore;
@@ -103,7 +135,8 @@ export function evaluateArcadeResult(
     completed: twoStar,
     stars: threeStar ? 3 : twoStar ? 2 : oneStar ? 1 : 0,
     score: score.totalScore,
-    bonusCompleted
+    bonusCompleted,
+    contract: evaluateMayhemContract(context.contractObjectives ?? level.contractObjectives, score, context)
   };
 }
 
@@ -120,14 +153,15 @@ export function recordArcadeRun(
   progress: ArcadeProgress,
   levels: readonly ArcadeLevelDefinition[],
   levelId: string,
-  score: ScoreBreakdown
+  score: ScoreBreakdown,
+  context: ArcadeRunContext = {}
 ): { progress: ArcadeProgress; result: ArcadeResult } {
   const levelIndex = levels.findIndex((level) => level.id === levelId);
   if (levelIndex < 0) {
     throw new Error(`Unknown Arcade level: ${levelId}`);
   }
 
-  const result = evaluateArcadeResult(levels[levelIndex], score);
+  const result = evaluateArcadeResult(levels[levelIndex], score, context);
   const previousLevel = progress.levels[levelId] ?? createEmptyLevelProgress();
   const stars = maxStars(previousLevel.stars, result.stars);
   const levelsProgress: Record<string, ArcadeLevelProgress> = {
@@ -191,6 +225,48 @@ function evaluateBonus(score: ScoreBreakdown, bonus: ArcadeBonusThreshold | unde
     return true;
   }
   return score[bonus.metric] >= bonus.minimum;
+}
+
+export function evaluateMayhemContract(
+  objectives: readonly ArcadeContractObjective[] | undefined,
+  score: ScoreBreakdown,
+  context: ArcadeRunContext = {}
+): ArcadeContractResult | null {
+  if (!objectives || objectives.length === 0) {
+    return null;
+  }
+  const results = objectives.map((objective) => evaluateContractObjective(objective, score, context));
+  return {
+    completed: results.every((objective) => objective.completed),
+    objectives: results
+  };
+}
+
+function evaluateContractObjective(
+  objective: ArcadeContractObjective,
+  score: ScoreBreakdown,
+  context: ArcadeRunContext
+): ArcadeContractObjectiveResult {
+  if (objective.metric === "projectile") {
+    const projectileIds = objective.projectileIds ?? [];
+    const projectileId = context.projectileId ?? "";
+    return {
+      id: objective.id,
+      label: objective.label,
+      completed: projectileIds.includes(projectileId as ProjectileId),
+      value: projectileId || "none",
+      target: projectileIds.join(" or ") || "any"
+    };
+  }
+  const minimum = objective.minimum ?? 0;
+  const value = objective.metric === "totalScore" ? score.totalScore : score[objective.metric];
+  return {
+    id: objective.id,
+    label: objective.label,
+    completed: value >= minimum,
+    value,
+    target: minimum
+  };
 }
 
 function createEmptyLevelProgress(): ArcadeLevelProgress {

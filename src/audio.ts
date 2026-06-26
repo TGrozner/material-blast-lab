@@ -44,6 +44,7 @@ interface ImpactOptions {
   powerScale: number;
   sizeScale: number;
   hitMaterialId?: MaterialId;
+  role?: "primary" | "secondary" | "ignition";
 }
 
 interface ChainImpactOptions {
@@ -111,6 +112,10 @@ const DEFAULT_MIX: AudioMixSettings = {
   ui: 0.8,
   rumble: 0.86
 };
+const PRIMARY_IMPACT_TRANSIENT_GAIN = 0.16;
+const PRIMARY_IMPACT_TRANSIENT_DURATION = 0.075;
+const CHAIN_IMPACT_TRANSIENT_GAIN = 0.045;
+const HAZARD_WARNING_COOLDOWN_MS = 95;
 
 export class DestructionAudio {
   private context: AudioContext | null = null;
@@ -167,6 +172,27 @@ export class DestructionAudio {
     this.playTone({ frequency: 132, duration: 0.1, gain: 0.035, delay: 0.055, bus: "ui", pan: 0, type: "sawtooth", lowpass: 700 });
   }
 
+  playHazardWarning(point: THREE.Vector3, progress: number, materialId: MaterialId): void {
+    if (!this.canPlay("hazard-warning", HAZARD_WARNING_COOLDOWN_MS)) {
+      return;
+    }
+    const urgency = THREE.MathUtils.clamp(progress, 0, 1);
+    const pan = this.panFromPoint(point);
+    const baseFrequency = hazardWarningFrequency(materialId);
+    this.playTone({
+      frequency: baseFrequency * (1 + urgency * 0.46),
+      duration: 0.052,
+      gain: 0.018 + urgency * 0.025,
+      bus: "sfx",
+      pan,
+      type: materialId === "metal" || materialId === "glass" ? "triangle" : "sawtooth",
+      lowpass: materialId === "wood" || materialId === "foam" ? 1200 : 3200
+    });
+    if (materialId === "wood" || materialId === "foam" || materialId === "rubber") {
+      this.playNoiseBurst(0.012 + urgency * 0.012, 0.07, pan, 480, 2400, 0.005);
+    }
+  }
+
   playScoreCeremony(totalScore: number, stars: number, completed: boolean): void {
     this.resume();
     const base = completed ? 220 : 146;
@@ -208,6 +234,8 @@ export class DestructionAudio {
     const intensity = this.impactIntensity(options.result, options.powerScale, options.sizeScale);
     const blastSamples = PROJECTILE_BLASTS[options.projectileId];
     const materialIds = this.materialIdsFromResult(options.result, options.hitMaterialId);
+    const role = options.role ?? "primary";
+    this.playImpactTransient(options.point, intensity, materialIds[0] ?? options.hitMaterialId ?? "concrete", role);
     this.playBuffer(this.pick(blastSamples), {
       gain: 0.62 * intensity,
       rate: this.randomRange(0.64, 0.84),
@@ -247,6 +275,7 @@ export class DestructionAudio {
       highpass: 90,
       lowpass: 4200
     });
+    this.playImpactTransient(options.point, intensity, options.materialId, "secondary", 0.006);
     this.playNoiseBurst(0.06 * intensity, 0.16, pan, 420, 3400, 0.012);
   }
 
@@ -401,6 +430,35 @@ export class DestructionAudio {
         lowpass: 2800
       });
     }
+  }
+
+  private playImpactTransient(
+    point: THREE.Vector3,
+    intensity: number,
+    materialId: MaterialId,
+    role: NonNullable<ImpactOptions["role"]>,
+    delay = 0
+  ): void {
+    const pan = this.panFromPoint(point);
+    const roleScale = role === "primary" ? 1 : role === "secondary" ? 0.54 : 0.72;
+    const transientGain =
+      role === "secondary" ? CHAIN_IMPACT_TRANSIENT_GAIN : PRIMARY_IMPACT_TRANSIENT_GAIN * roleScale;
+    this.playNoiseBurst(
+      transientGain * THREE.MathUtils.clamp(intensity, 0.55, 1.9),
+      PRIMARY_IMPACT_TRANSIENT_DURATION,
+      pan,
+      materialId === "glass" ? 1500 : 850,
+      materialId === "metal" || materialId === "glass" ? 7200 : 4800,
+      delay
+    );
+    this.playBuffer(this.pick(MATERIAL_SAMPLES[materialId]), {
+      gain: 0.052 * roleScale * THREE.MathUtils.clamp(intensity, 0.5, 1.8),
+      rate: materialId === "metal" ? this.randomRange(0.82, 0.98) : this.randomRange(0.88, 1.18),
+      delay: delay + 0.004,
+      pan,
+      highpass: materialId === "glass" ? 460 : 120,
+      lowpass: materialId === "glass" ? 7600 : 5200
+    });
   }
 
   private playRumble(gainValue: number, duration: number, startFrequency: number, endFrequency: number, pan: number, delay = 0): void {
@@ -600,6 +658,23 @@ export class DestructionAudio {
 function assetUrl(path: string): string {
   const base = import.meta.env.BASE_URL || "/";
   return `${base.endsWith("/") ? base : `${base}/`}${path}`;
+}
+
+function hazardWarningFrequency(materialId: MaterialId): number {
+  switch (materialId) {
+    case "glass":
+      return 720;
+    case "metal":
+      return 640;
+    case "concrete":
+      return 410;
+    case "wood":
+      return 330;
+    case "foam":
+      return 290;
+    case "rubber":
+      return 260;
+  }
 }
 
 declare global {
