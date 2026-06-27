@@ -13,7 +13,7 @@
     "test:smoke": "NO_COLOR= playwright test --config playwright.config.ts",
     "test:perf": "NO_COLOR= DOWNTOWN_MAYHEM_PERF_SMOKE=true DOWNTOWN_MAYHEM_PERF_DIR=test-results/perf-logs playwright test --config playwright.config.ts --grep \"records post-shot perf budgets\"",
     "build": "tsc --noEmit && vite build",
-    "build:pages": "BASE_PATH=/downtown-mayhem/ npm run build && npm run harden:dist",
+    "build:pages": "BASE_PATH=/downtown-mayhem/ npm run build && npm run harden:dist && BASE_PATH=/downtown-mayhem/ node scripts/write-service-worker.mjs",
     "harden:dist": "node scripts/harden-dist.mjs",
     "preview": "vite preview"
   },

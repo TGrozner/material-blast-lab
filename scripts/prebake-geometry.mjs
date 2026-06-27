@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -52,8 +52,12 @@ export const CITY_GROUND_GEOMETRY_BATCHES = ${JSON.stringify(batches)} as const 
 `;
 
 await mkdir(dirname(outputPath), { recursive: true });
-await writeFile(outputPath, source, "utf8");
-console.log(`prebaked ${batches.length} city ground geometry batches -> ${outputPath}`);
+if ((await readExistingSource(outputPath)) === source) {
+  console.log(`prebaked ${batches.length} city ground geometry batches unchanged -> ${outputPath}`);
+} else {
+  await writeFile(outputPath, source, "utf8");
+  console.log(`prebaked ${batches.length} city ground geometry batches -> ${outputPath}`);
+}
 
 function createPrebakedGroundBatches() {
   const panels = createGroundPanels();
@@ -84,6 +88,14 @@ function createPrebakedGroundBatches() {
     geometry.dispose();
     return batch;
   });
+}
+
+async function readExistingSource(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 function createGroundPanels() {

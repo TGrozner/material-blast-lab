@@ -6,11 +6,11 @@ const defaultDistDir = resolve("dist");
 const distDir = resolve(process.env.DIST_DIR ?? defaultDistDir);
 const basePath = normalizeBasePath(process.env.BASE_PATH ?? "/");
 const cachePrefix = "downtown-mayhem-precache";
-const files = (await listFiles(distDir)).filter(shouldPrecache);
+const files = (await listFiles(distDir)).filter(shouldPrecache).sort((a, b) => relativePath(a).localeCompare(relativePath(b)));
 const manifestEntries = await Promise.all(
   files.map(async (file) => {
     const source = await readFile(file);
-    const path = relative(distDir, file).split(sep).join("/");
+    const path = relativePath(file);
     return {
       url: `${basePath}${path}`,
       revision: createHash("sha256").update(source).digest("base64url").slice(0, 12)
@@ -91,11 +91,15 @@ await writeFile(join(distDir, "sw.js"), source, "utf8");
 console.log(`wrote service worker ${join(distDir, "sw.js")} with ${manifestEntries.length} precache entries`);
 
 function shouldPrecache(file) {
-  const path = relative(distDir, file).split(sep).join("/");
+  const path = relativePath(file);
   if (path === "sw.js") {
     return false;
   }
   return [".html", ".js", ".css", ".json", ".wasm", ".webp", ".ogg"].includes(extname(file));
+}
+
+function relativePath(file) {
+  return relative(distDir, file).split(sep).join("/");
 }
 
 function normalizeBasePath(value) {

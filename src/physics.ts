@@ -2216,7 +2216,7 @@ function isStaticDetailMeshBatchable(mesh: THREE.Mesh): mesh is THREE.Mesh<THREE
   if (mesh.geometry.userData.sharedGeometry !== true || mesh.userData.disposeMaterial === true) {
     return false;
   }
-  if (mesh.material.transparent || mesh.material instanceof THREE.MeshBasicMaterial || isEmissiveMaterial(mesh.material)) {
+  if (mesh.material.transparent || isEmissiveMaterial(mesh.material)) {
     return false;
   }
   return true;

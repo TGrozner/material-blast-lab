@@ -1078,8 +1078,7 @@ function mergeOpaqueDecorativeChildrenByMaterial(parent: THREE.Mesh): void {
     if (
       !(child instanceof THREE.Mesh) ||
       Array.isArray(child.material) ||
-      child.children.length > 0 ||
-      (child.material.transparent && child.material.depthWrite === false)
+      child.children.length > 0
     ) {
       continue;
     }

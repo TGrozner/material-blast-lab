@@ -4,6 +4,7 @@ const port = Number(process.env.PLAYWRIGHT_PORT ?? 4175);
 const host = "127.0.0.1";
 const baseURL = `http://${host}:${port}/`;
 const browserChannel = process.env.PLAYWRIGHT_CHANNEL ?? (process.env.CI ? undefined : "chrome");
+const reuseExistingServer = !process.env.CI && process.env.DOWNTOWN_MAYHEM_PERF_SMOKE !== "true";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -32,6 +33,6 @@ export default defineConfig({
     command: `npm run dev -- --host ${host} --port ${port} --strictPort`,
     url: baseURL,
     timeout: 30_000,
-    reuseExistingServer: !process.env.CI
+    reuseExistingServer
   }
 });

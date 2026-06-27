@@ -176,6 +176,7 @@ interface CityVehicleOptions {
   zoneId?: string;
   scoreValue?: number;
   hazardKind?: "electric" | "combustible" | "explosive";
+  detail?: "full" | "lean";
 }
 
 interface GroundPanelSpec {
@@ -3896,7 +3897,13 @@ function addCityVehicle(
     ccd: true
   });
   object.mesh.userData.disposeMaterial = false;
-  decorateCityVehicle(object.mesh, { size, accent, kind: cityVehicleVisualKind(label) });
+  object.mesh.castShadow = false;
+  decorateCityVehicle(object.mesh, {
+    size,
+    accent,
+    kind: cityVehicleVisualKind(label),
+    detail: options.detail ?? (options.hazardKind ? "full" : "lean")
+  });
   if (options.hazardKind) {
     decorateHazardIndicator(object.mesh, { size, kind: options.hazardKind });
   }

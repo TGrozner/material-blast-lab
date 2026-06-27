@@ -44,7 +44,7 @@ interface UIState {
   score: ScoreBreakdown | null;
 }
 
-interface UILevelOption {
+export interface UILevelOption {
   index: number;
   name: string;
   description: string;

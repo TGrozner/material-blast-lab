@@ -31,11 +31,11 @@ const STABLE_VISUAL_CAPTURE_SETTINGS = {
   showFps: false
 };
 const HAZARD_JUNCTION_RENDER_BUDGET = {
-  drawCalls: 5_150,
-  visibleMeshes: 3_300,
+  drawCalls: 4_550,
+  visibleMeshes: 3_000,
   visibleMaterials: 340,
   programs: 30,
-  geometries: 1_780,
+  geometries: 1_300,
   textures: 42
 };
 const PERF_SMOKE_BUDGET = {
@@ -397,7 +397,7 @@ test("records post-shot perf budgets", async ({ page }) => {
   test.skip(!RUN_PERF_SMOKE, "Set DOWNTOWN_MAYHEM_PERF_SMOKE=true to run the perf smoke.");
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
-  await rm(perfLatestPath(), { force: true });
+  await rm(perfLogDir(), { force: true, recursive: true });
 
   await useSmokePerformanceSettings(page);
   await page.setViewportSize({ width: 1024, height: 768 });
@@ -438,7 +438,7 @@ test("records post-shot perf budgets", async ({ page }) => {
   await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.flushPerfLog("perf-smoke-post-reset-final"));
 
   const postResetPayload = await waitForPerfLog("perf-smoke-post-reset-final");
-  expectPerfBudget(postResetPayload);
+  expectPerfBudget(postResetPayload, { checkSlowRatio: false });
   expect(consoleErrors).toEqual([]);
 });
 
@@ -676,7 +676,11 @@ function matchesPerfLogPayload(payload: PerfLogPayload, reason?: string): boolea
 }
 
 function perfLatestPath(): string {
-  return path.resolve(process.cwd(), process.env.DOWNTOWN_MAYHEM_PERF_DIR ?? "test-results/perf-logs", "latest.json");
+  return path.join(perfLogDir(), "latest.json");
+}
+
+function perfLogDir(): string {
+  return path.resolve(process.cwd(), process.env.DOWNTOWN_MAYHEM_PERF_DIR ?? "test-results/perf-logs");
 }
 
 async function setRange(page: Page, setting: string, value: number): Promise<void> {

@@ -4,6 +4,7 @@ import {
   recordArcadeRun,
   saveArcadeProgress,
   type ArcadeLevelDefinition,
+  type ArcadeProgress,
   type ArcadeResult
 } from "./arcade";
 import { DestructionAudio } from "./audio";
@@ -11,6 +12,7 @@ import { AircraftController } from "./aircraft";
 import { CameraRig } from "./cameraRig";
 import { Cannon } from "./cannon";
 import { decorateFragment } from "./cityVisuals";
+import { withSuppressedConsoleWarning } from "./consoleWarnings";
 import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
 import { DEFAULT_GAME_MODE, GAME_MODES, isGameMode, type GameMode } from "./gameMode";
 import { InputController } from "./input";
@@ -42,7 +44,7 @@ import {
   sanitizeGameSettings
 } from "./settings";
 import { ExplosionSystem, ParticleSystem } from "./vfx";
-import { GameUI, type UIResultMeta } from "./ui";
+import { GameUI, type UILevelOption, type UIResultMeta } from "./ui";
 import { graphicTexture, preloadGraphicTextures } from "./visualAssets";
 import { registerDowntownMayhemServiceWorker } from "./serviceWorker";
 import { initializeRapierCompat } from "./rapierInit";
@@ -120,13 +122,12 @@ const RENDER_WARMUP_MAX_DURATION_MS = 6_000;
 const RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS = 3_000;
 const RENDER_WARMUP_SYNTHETIC_ORIGIN = new THREE.Vector3(72, 1.2, 72);
 const RENDER_WARMUP_SYNTHETIC_DESTRUCTION_ZONE = "render-warmup-destruction";
-const AIM_TRAFFIC_STEP_SECONDS = 1 / 24;
+const AIM_TRAFFIC_STEP_SECONDS = 1 / 12;
 const AIM_TRAFFIC_MAX_ACCUMULATED_SECONDS = 0.12;
 const DAY_SKY_RADIUS = 118;
 const SUN_DIRECTION = new THREE.Vector3(-0.28, 0.28, -0.92).normalize();
 const PREMIUM_DAYLIGHT_RENDER_ORDER = 6;
 const PREMIUM_ATMOSPHERE_RENDER_ORDER = 1;
-const DISTANT_SKYLINE_RENDER_ORDER = 0;
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
 const AIRCRAFT_CRASH_PROJECTILE: ProjectileDefinition = {
   ...PROJECTILES.slug,
@@ -296,15 +297,6 @@ interface CanvasGradeProfile {
   boxShadow: string;
 }
 
-interface SkylineBlockSpec {
-  x: number;
-  z: number;
-  width: number;
-  height: number;
-  depth: number;
-  rotationY?: number;
-}
-
 declare global {
   interface Window {
     __DOWNTOWN_MAYHEM_DEBUG__?: DowntownMayhemDebugApi;
@@ -356,27 +348,7 @@ function setOptionalShadowMapFlag(renderer: THREE.WebGLRenderer, key: "autoUpdat
 const PARALLEL_SHADER_COMPILE_WARNING = "THREE.WebGLRenderer: KHR_parallel_shader_compile extension not supported.";
 
 function compileRendererPipelines(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<unknown> {
-  const originalWarn = console.warn;
-  const filteredWarn: typeof console.warn = (...args: unknown[]) => {
-    if (args.length === 1 && args[0] === PARALLEL_SHADER_COMPILE_WARNING) {
-      return;
-    }
-    originalWarn(...args);
-  };
-
-  console.warn = filteredWarn;
-  try {
-    return Promise.resolve(renderer.compileAsync(scene, camera)).finally(() => {
-      if (console.warn === filteredWarn) {
-        console.warn = originalWarn;
-      }
-    });
-  } catch (error) {
-    if (console.warn === filteredWarn) {
-      console.warn = originalWarn;
-    }
-    throw error;
-  }
+  return withSuppressedConsoleWarning(PARALLEL_SHADER_COMPILE_WARNING, () => renderer.compileAsync(scene, camera));
 }
 
 function createInitialRenderWarmupState(): RenderWarmupState {
@@ -2101,7 +2073,11 @@ function topPerfFrames(frames: PerfFrameSnapshot[]): PerfFrameSummary[] {
 }
 
 function maxPerfValue(frames: PerfFrameSnapshot[], readValue: (frame: PerfFrameSnapshot) => number | undefined): number {
-  return Math.max(0, ...frames.map((frame) => readValue(frame) ?? 0));
+  let max = 0;
+  for (const frame of frames) {
+    max = Math.max(max, readValue(frame) ?? 0);
+  }
+  return max;
 }
 
 function sumPerfValue(frames: PerfFrameSnapshot[], readValue: (frame: PerfFrameSnapshot) => number | undefined): number {
@@ -2194,6 +2170,7 @@ class Game {
   private readonly processedSurfaceImpactObjectIds = new Set<number>();
   private readonly triggeredHazards = new Set<number>();
   private readonly burningHazards = new Map<number, BurningHazard>();
+  private readonly visibleRenderMaterialsScratch = new Set<THREE.Material>();
 
   private settings: GameSettings;
   private readonly gameMode: GameMode;
@@ -2202,6 +2179,8 @@ class Game {
   private sizeScale = 1;
   private levelIndex = 0;
   private arcadeProgress = loadArcadeProgress(ARCADE_LEVELS);
+  private levelOptionsCache: UILevelOption[] | null = null;
+  private levelOptionsCacheProgress: ArcadeProgress | null = null;
   private arcadeResult: ArcadeResult | null = null;
   private arcadeResultMeta: UIResultMeta | null = null;
   private runSeed = createRunSeed();
@@ -2615,7 +2594,8 @@ class Game {
   }
 
   private captureRenderStats(): DowntownMayhemRenderStats {
-    const visibleMaterials = new Set<THREE.Material>();
+    const visibleMaterials = this.visibleRenderMaterialsScratch;
+    visibleMaterials.clear();
     let visibleMeshes = 0;
     const physicsStats = this.physics.getRuntimeStats();
     const fragmentStats = this.destruction.getFragmentInstanceStats();
@@ -2624,9 +2604,12 @@ class Game {
         return;
       }
       visibleMeshes += 1;
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
-      for (const material of materials) {
-        visibleMaterials.add(material);
+      if (Array.isArray(object.material)) {
+        for (const material of object.material) {
+          visibleMaterials.add(material);
+        }
+      } else {
+        visibleMaterials.add(object.material);
       }
     });
     this.lastRenderStats = {
@@ -2890,9 +2873,6 @@ class Game {
 
     this.addPremiumDaylightBakes();
     this.addPremiumCityAtmosphere();
-    if (this.settings.graphicsQuality !== "performance") {
-      this.addDistantSkyline();
-    }
   }
 
   private trackPremiumSceneTexture<T extends THREE.Texture>(texture: T): T {
@@ -2988,57 +2968,6 @@ class Game {
       hazeMaterial,
       PREMIUM_ATMOSPHERE_RENDER_ORDER + 1
     );
-  }
-
-  private addDistantSkyline(): void {
-    const skylineMaterial = new THREE.MeshBasicMaterial({
-      color: 0x31464f,
-      fog: false
-    });
-
-    this.addSkylineInstanceRow("Distant city skyline silhouettes", skylineMaterial, [
-      { x: -28, z: -35, width: 4.8, height: 8.8, depth: 3.2, rotationY: 0.08 },
-      { x: -21.5, z: -36.4, width: 3.2, height: 12.4, depth: 2.7, rotationY: -0.03 },
-      { x: -15.2, z: -34.6, width: 5.4, height: 7.2, depth: 3.1, rotationY: 0.12 },
-      { x: -8.6, z: -36.8, width: 3.6, height: 10.8, depth: 3.4, rotationY: -0.08 },
-      { x: -1.1, z: -35.2, width: 4.2, height: 6.8, depth: 2.9, rotationY: 0.03 },
-      { x: 5.8, z: -36.6, width: 4.9, height: 11.6, depth: 3.1, rotationY: -0.1 },
-      { x: 13.4, z: -34.8, width: 3.2, height: 8.4, depth: 2.6, rotationY: 0.14 },
-      { x: 20.2, z: -36.2, width: 5.8, height: 13.2, depth: 3.8, rotationY: 0.04 },
-      { x: 28.2, z: -35.1, width: 4.3, height: 7.6, depth: 3.2, rotationY: -0.12 },
-      { x: -23.8, z: -24.6, width: 2.1, height: 5.8, depth: 1.8 },
-      { x: -18.4, z: -25.2, width: 2.8, height: 7.6, depth: 2.1, rotationY: 0.08 },
-      { x: -3.4, z: -24.8, width: 2.4, height: 5.2, depth: 1.8, rotationY: -0.05 },
-      { x: 9.2, z: -25.4, width: 2.7, height: 8.2, depth: 2.2, rotationY: 0.06 },
-      { x: 16.4, z: -24.7, width: 2.1, height: 5.9, depth: 1.9 },
-      { x: 24.6, z: -25.8, width: 3.2, height: 6.7, depth: 2.4, rotationY: -0.08 }
-    ]);
-  }
-
-  private addSkylineInstanceRow(label: string, material: THREE.Material, blocks: readonly SkylineBlockSpec[]): void {
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const mesh = new THREE.InstancedMesh(geometry, material, blocks.length);
-    const matrix = new THREE.Matrix4();
-    const quaternion = new THREE.Quaternion();
-    const position = new THREE.Vector3();
-    const scale = new THREE.Vector3();
-
-    mesh.name = label;
-    mesh.frustumCulled = false;
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
-    mesh.renderOrder = DISTANT_SKYLINE_RENDER_ORDER;
-
-    blocks.forEach((block, index) => {
-      position.set(block.x, block.height * 0.5 - 0.08, block.z);
-      quaternion.setFromEuler(new THREE.Euler(0, block.rotationY ?? 0, 0));
-      scale.set(block.width, block.height, block.depth);
-      matrix.compose(position, quaternion, scale);
-      mesh.setMatrixAt(index, matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    this.scene.add(mesh);
-    this.arenaObjects.push(mesh);
   }
 
   private addArenaDecalPlane(
@@ -5060,7 +4989,7 @@ class Game {
     return this.skyReflectionTexture;
   }
 
-  private currentLevel() {
+  private currentLevel(): TestChamber {
     return TEST_CHAMBERS[this.levelIndex];
   }
 
@@ -5076,8 +5005,12 @@ class Game {
     return this.arcadeProgress.levels[this.currentLevel().id];
   }
 
-  private levelOptions() {
-    return TEST_CHAMBERS.map((level, index) => ({
+  private levelOptions(): UILevelOption[] {
+    if (this.levelOptionsCache && this.levelOptionsCacheProgress === this.arcadeProgress) {
+      return this.levelOptionsCache;
+    }
+    this.levelOptionsCacheProgress = this.arcadeProgress;
+    this.levelOptionsCache = TEST_CHAMBERS.map((level, index) => ({
       index,
       name: level.name,
       description: level.description,
@@ -5085,6 +5018,7 @@ class Game {
       progress: this.arcadeProgress.levels[level.id],
       locked: index > this.arcadeProgress.highestUnlockedLevel
     }));
+    return this.levelOptionsCache;
   }
 
   private resize(): void {

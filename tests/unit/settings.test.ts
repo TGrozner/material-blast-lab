@@ -76,7 +76,7 @@ describe("game settings", () => {
   test("maps graphics quality to renderer pixel ratio caps", () => {
     expect(graphicsPixelRatioCap("performance")).toBe(1.15);
     expect(graphicsPixelRatioCap("balanced")).toBe(1.5);
-    expect(graphicsPixelRatioCap("cinematic")).toBe(2.25);
+    expect(graphicsPixelRatioCap("cinematic")).toBe(1.75);
   });
 
   test("clamps renderer pixel ratio to the device ratio and quality cap", () => {

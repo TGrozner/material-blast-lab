@@ -41,7 +41,7 @@ const obfuscationOptions = {
   unicodeEscapeSequence: false
 };
 
-const jsFiles = (await listFiles(distAssetsDir)).filter((file) => extname(file) === ".js");
+const jsFiles = (await listFiles(distAssetsDir)).filter((file) => extname(file) === ".js").sort();
 const appFiles = jsFiles.filter((file) => basename(file).startsWith("app-"));
 const targetFiles = includeVendor ? jsFiles : appFiles;
 
@@ -93,9 +93,9 @@ async function rewriteDistReferences(replacementMap) {
     return;
   }
 
-  const textFiles = (await listFiles(distDir)).filter((file) =>
-    [".html", ".js", ".css", ".json", ".md"].includes(extname(file))
-  );
+  const textFiles = (await listFiles(distDir))
+    .filter((file) => [".html", ".js", ".css", ".json", ".md"].includes(extname(file)))
+    .sort();
 
   for (const file of textFiles) {
     let source = await readFile(file, "utf8");
