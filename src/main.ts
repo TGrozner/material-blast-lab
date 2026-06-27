@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import RAPIER from "@dimforge/rapier3d-compat";
 import {
   loadArcadeProgress,
   recordArcadeRun,
@@ -46,6 +45,7 @@ import { ExplosionSystem, ParticleSystem } from "./vfx";
 import { GameUI, type UIResultMeta } from "./ui";
 import { graphicTexture, preloadGraphicTextures } from "./visualAssets";
 import { registerDowntownMayhemServiceWorker } from "./serviceWorker";
+import { initializeRapierCompat } from "./rapierInit";
 
 const DEFAULT_AIM_POINT = new THREE.Vector3(0, 0.16, -3.4);
 const CHAIN_DEBRIS_MIN_SPEED = 1.85;
@@ -351,6 +351,32 @@ function rendererProgramCount(renderer: THREE.WebGLRenderer): number {
 
 function setOptionalShadowMapFlag(renderer: THREE.WebGLRenderer, key: "autoUpdate" | "needsUpdate", value: boolean): void {
   (renderer.shadowMap as typeof renderer.shadowMap & Partial<Record<typeof key, boolean>>)[key] = value;
+}
+
+const PARALLEL_SHADER_COMPILE_WARNING = "THREE.WebGLRenderer: KHR_parallel_shader_compile extension not supported.";
+
+function compileRendererPipelines(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<unknown> {
+  const originalWarn = console.warn;
+  const filteredWarn: typeof console.warn = (...args: unknown[]) => {
+    if (args.length === 1 && args[0] === PARALLEL_SHADER_COMPILE_WARNING) {
+      return;
+    }
+    originalWarn(...args);
+  };
+
+  console.warn = filteredWarn;
+  try {
+    return Promise.resolve(renderer.compileAsync(scene, camera)).finally(() => {
+      if (console.warn === filteredWarn) {
+        console.warn = originalWarn;
+      }
+    });
+  } catch (error) {
+    if (console.warn === filteredWarn) {
+      console.warn = originalWarn;
+    }
+    throw error;
+  }
 }
 
 function createInitialRenderWarmupState(): RenderWarmupState {
@@ -3200,7 +3226,7 @@ class Game {
     const restoreFrustumCulling = disableSceneFrustumCullingForWarmup(this.scene);
     try {
       this.physics.flushStagedVisualActivations(Number.POSITIVE_INFINITY, 0);
-      await this.renderer.compileAsync(this.scene, this.cameraRig.camera);
+      await compileRendererPipelines(this.renderer, this.scene, this.cameraRig.camera);
       await renderWarmupYield();
       this.renderer.render(this.scene, this.cameraRig.camera);
       if (this.disposed || token !== this.renderWarmupToken) {
@@ -3289,7 +3315,7 @@ class Game {
       this.playRenderWarmupEffects(0);
       if (profile.compileAllCameras) {
         for (const camera of warmupCameras) {
-          await this.renderer.compileAsync(this.scene, camera);
+          await compileRendererPipelines(this.renderer, this.scene, camera);
         }
       }
       let frames = 0;
@@ -3384,7 +3410,7 @@ class Game {
         this.physics.flushInstancedRenderBounds();
         if (profile.compileAllCameras) {
           for (const camera of warmupCameras) {
-            await this.renderer.compileAsync(this.scene, camera);
+            await compileRendererPipelines(this.renderer, this.scene, camera);
           }
         }
       }
@@ -5250,7 +5276,7 @@ async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number,
 }
 
 function ensureRapierReady(): Promise<unknown> {
-  rapierReady ??= RAPIER.init();
+  rapierReady ??= initializeRapierCompat();
   return rapierReady;
 }
 

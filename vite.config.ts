@@ -17,6 +17,7 @@ export default defineConfig({
     license: true,
     minify: "oxc",
     reportCompressedSize: true,
+    chunkSizeWarningLimit: 2300,
     sourcemap: false,
     target: "baseline-widely-available",
     rolldownOptions: {

@@ -1,8 +1,8 @@
-import RAPIER from "@dimforge/rapier3d-compat";
 import * as THREE from "three";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { MaterialDefinition } from "../../src/materialCatalog";
 import { PhysicsWorld } from "../../src/physics";
+import { initializeRapierCompat } from "../../src/rapierInit";
 
 const metal: MaterialDefinition = {
   id: "metal",
@@ -23,7 +23,7 @@ const metal: MaterialDefinition = {
 
 describe("support release triggers", () => {
   beforeAll(async () => {
-    await RAPIER.init({});
+    await initializeRapierCompat();
   });
 
   test("can release support objects below a high weak point", () => {
