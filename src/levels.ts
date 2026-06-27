@@ -13,7 +13,7 @@ import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { PhysicsWorld, type ScoreRole, type TrafficRoute } from "./physics";
 import type { ArcadeBonusThreshold } from "./arcade";
 import { CITY_GROUND_GEOMETRY_BATCHES, type PrebakedGroundGeometryBatch } from "./generated/cityGroundGeometry";
-import { decalAtlasTile, materialAtlasTile } from "./visualAssets";
+import { decalAtlasTile, graphicTexture, materialAtlasTile } from "./visualAssets";
 
 type TriggerType = "transformer" | "springPad" | "shockCanister";
 const panelRenderMaterials = new Map<string, THREE.Material>();
@@ -1989,12 +1989,13 @@ function spawnCentralSkyneedle(context: LevelContext): void {
         depthWrite: false,
         emissive: 0x123948,
         emissiveIntensity: 0.2,
-        map: materialAtlasTile(8)
+        map: materialAtlasTile(8),
+        envMapIntensity: 1.25
       })
   );
   const towerMetalRenderMaterial = sharedLevelMaterial(
     "central-skyneedle-metal",
-    () => new THREE.MeshStandardMaterial({ color: 0x90a7ad, roughness: 0.38, metalness: 0.58, map: materialAtlasTile(10) })
+    () => new THREE.MeshStandardMaterial({ color: 0x90a7ad, roughness: 0.34, metalness: 0.64, map: materialAtlasTile(10), envMapIntensity: 1.08 })
   );
   const podium = context.physics.addDynamicBox({
     label: "Central skyneedle podium",
@@ -3628,27 +3629,89 @@ function addRoadDecals(context: LevelContext): void {
     { name: "battery lane arrow", x: 4.45, z: 8.35, width: 1.1, depth: 0.42, tile: 5, color: 0xf0c96a, opacity: 0.58, rotation: Math.PI * 0.5 },
     { name: "south depot drain", x: -2.8, z: 11.35, width: 0.55, depth: 0.55, tile: 10, color: 0x6f7c83, opacity: 0.52, rotation: Math.PI * 0.25 },
     { name: "west alley grime", x: -10.8, z: 3.35, width: 0.48, depth: 2.1, tile: 12, color: 0x111719, opacity: 0.38, rotation: 0.05 },
-    { name: "east curb scuff", x: 13.25, z: -4.65, width: 0.5, depth: 1.55, tile: 7, color: 0x8c969b, opacity: 0.3, rotation: -0.08 }
+    { name: "east curb scuff", x: 13.25, z: -4.65, width: 0.5, depth: 1.55, tile: 7, color: 0x8c969b, opacity: 0.3, rotation: -0.08 },
+    { name: "north tanker tire sweep", x: -5.4, z: -7.24, width: 2.8, depth: 0.34, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: -0.08 },
+    { name: "east service tire sweep", x: 10.16, z: -5.2, width: 0.34, depth: 2.7, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: 0.04 },
+    { name: "west road asphalt patch", x: -10.68, z: -1.05, width: 0.72, depth: 1.22, tile: 12, color: 0x182128, opacity: 0.45, rotation: -0.12 },
+    { name: "central avenue asphalt patch", x: 0.12, z: 2.85, width: 0.86, depth: 1.45, tile: 12, color: 0x182128, opacity: 0.42, rotation: 0.08 },
+    { name: "south service repair seam", x: 7.1, z: 5.04, width: 2.25, depth: 0.18, tile: 7, color: 0x98a7ad, opacity: 0.24, rotation: 0.02 },
+    { name: "battery deck grime fan", x: 0.55, z: 16.85, width: 4.2, depth: 1.6, tile: 9, color: 0x0d1114, opacity: 0.28, rotation: -0.05 },
+    { name: "gas station hazard paint", x: -6.8, z: -3.85, width: 1.75, depth: 0.44, tile: 3, color: 0xffc75c, opacity: 0.36, rotation: -0.18 },
+    { name: "power-grid service paint", x: 6.95, z: -2.95, width: 1.35, depth: 0.42, tile: 3, color: 0x8feeff, opacity: 0.28, rotation: 0.24 },
+    { name: "parking silo entry arrow", x: -13.6, z: 0.3, width: 1.45, depth: 0.46, tile: 5, color: 0xffd873, opacity: 0.42, rotation: -Math.PI * 0.5 },
+    { name: "metro underpass dust", x: 0.8, z: -6.25, width: 6.6, depth: 0.55, tile: 12, color: 0x111719, opacity: 0.26, rotation: 0 },
+    { name: "south apron cargo stain", x: -5.6, z: 11.85, width: 1.55, depth: 0.62, tile: 9, color: 0x10161b, opacity: 0.32, rotation: 0.22 },
+    { name: "east depot drain", x: 12.15, z: 7.15, width: 0.5, depth: 0.5, tile: 10, color: 0x7b8990, opacity: 0.42, rotation: -Math.PI * 0.18 },
+    { name: "west curb repair marker", x: -13.2, z: 6.75, width: 0.48, depth: 1.8, tile: 7, color: 0x8c969b, opacity: 0.26, rotation: 0.08 },
+    { name: "central crosswalk soot", x: 2.7, z: -1.28, width: 1.1, depth: 0.24, tile: 9, color: 0x0d1114, opacity: 0.24, rotation: 0 },
+    { name: "battery access road arrow", x: -6.25, z: 8.35, width: 1.05, depth: 0.4, tile: 5, color: 0xffd873, opacity: 0.36, rotation: Math.PI * 0.5 }
   ] as const;
+  const decalBatches = new Map<string, { color: THREE.ColorRepresentation; opacity: number; geometries: THREE.BufferGeometry[] }>();
+  const atlasTexture = graphicTexture("decalAtlas", {
+    wrap: THREE.ClampToEdgeWrapping,
+    colorSpace: THREE.SRGBColorSpace,
+    anisotropy: 4
+  });
 
   for (const decal of decals) {
+    const opacity = decalOpacityBand(decal.opacity);
+    const batchKey = `${decal.tile}:${opacity}:${decal.color}`;
+    const batch = decalBatches.get(batchKey);
+    const geometry = new THREE.PlaneGeometry(decal.width, decal.depth);
+    setDecalAtlasGeometryUvs(geometry, decal.tile);
+    geometry.applyMatrix4(
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(decal.x, CITY_GROUND_DECAL_Y, decal.z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI * 0.5, 0, decal.rotation)),
+        new THREE.Vector3(1, 1, 1)
+      )
+    );
+    if (batch) {
+      batch.geometries.push(geometry);
+    } else {
+      decalBatches.set(batchKey, { color: decal.color, opacity, geometries: [geometry] });
+    }
+  }
+
+  for (const { color, opacity, geometries } of decalBatches.values()) {
+    const mergedGeometry = mergeGeometries(geometries, false);
+    for (const geometry of geometries) {
+      geometry.dispose();
+    }
+    if (!mergedGeometry) {
+      continue;
+    }
     const material = new THREE.MeshBasicMaterial({
-      color: decal.color,
-      map: decalAtlasTile(decal.tile),
+      color,
+      map: atlasTexture,
       transparent: true,
-      opacity: decal.opacity,
+      opacity,
       depthWrite: false,
       alphaTest: 0.03,
       side: THREE.DoubleSide
     });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(decal.width, decal.depth), material);
-    mesh.name = decal.name;
-    mesh.position.set(decal.x, CITY_GROUND_DECAL_Y, decal.z);
-    mesh.rotation.set(-Math.PI * 0.5, 0, decal.rotation);
+    const mesh = new THREE.Mesh(mergedGeometry, material);
+    mesh.name = `road decal batch ${Math.round(opacity * 100)}`;
     mesh.renderOrder = CITY_GROUND_LAYER_MARKINGS + 1;
     mesh.userData.disposeMaterial = true;
     context.addDecoration(mesh);
   }
+}
+
+function decalOpacityBand(opacity: number): number {
+  return THREE.MathUtils.clamp(Math.round(opacity * 10) / 10, 0.2, 0.6);
+}
+
+function setDecalAtlasGeometryUvs(geometry: THREE.PlaneGeometry, tileIndex: number): void {
+  const columns = 4;
+  const rows = 4;
+  const tileX = tileIndex % columns;
+  const tileY = Math.floor(tileIndex / columns);
+  const minU = tileX / columns;
+  const maxU = (tileX + 1) / columns;
+  const minV = 1 - (tileY + 1) / rows;
+  const maxV = 1 - tileY / rows;
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute([minU, maxV, maxU, maxV, minU, minV, maxU, minV], 2));
 }
 
 function spawnStreetSetpieces(context: LevelContext): void {

@@ -126,6 +126,7 @@ const DAY_SKY_RADIUS = 118;
 const SUN_DIRECTION = new THREE.Vector3(-0.28, 0.28, -0.92).normalize();
 const PREMIUM_DAYLIGHT_RENDER_ORDER = 6;
 const PREMIUM_ATMOSPHERE_RENDER_ORDER = 1;
+const DISTANT_SKYLINE_RENDER_ORDER = 0;
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
 const AIRCRAFT_CRASH_PROJECTILE: ProjectileDefinition = {
   ...PROJECTILES.slug,
@@ -288,6 +289,20 @@ interface GraphicsLightingProfile {
   skyFillColor: THREE.ColorRepresentation;
   skyFillIntensity: number;
   shadowMapSize: number;
+}
+
+interface CanvasGradeProfile {
+  filter: string;
+  boxShadow: string;
+}
+
+interface SkylineBlockSpec {
+  x: number;
+  z: number;
+  width: number;
+  height: number;
+  depth: number;
+  rotationY?: number;
 }
 
 declare global {
@@ -583,6 +598,53 @@ function createDaySkyTexture(): THREE.CanvasTexture {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  return texture;
+}
+
+function createSkyReflectionTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 256;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to create sky reflection texture context");
+  }
+
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, "#69bdf4");
+  gradient.addColorStop(0.44, "#c8ecf7");
+  gradient.addColorStop(0.58, "#f1d49c");
+  gradient.addColorStop(1, "#1a252c");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const sun = context.createRadialGradient(canvas.width * 0.22, canvas.height * 0.22, 5, canvas.width * 0.22, canvas.height * 0.22, 98);
+  sun.addColorStop(0, "rgba(255, 250, 218, 0.9)");
+  sun.addColorStop(0.34, "rgba(255, 216, 122, 0.38)");
+  sun.addColorStop(1, "rgba(255, 216, 122, 0)");
+  context.fillStyle = sun;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = "rgba(19, 34, 40, 0.52)";
+  for (const [x, width, height] of [
+    [18, 18, 42],
+    [48, 34, 68],
+    [96, 22, 54],
+    [138, 44, 82],
+    [216, 28, 62],
+    [278, 56, 74],
+    [356, 28, 96],
+    [404, 42, 66],
+    [468, 22, 50]
+  ] as const) {
+    context.fillRect(x, canvas.height - height, width, height);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.mapping = THREE.EquirectangularReflectionMapping;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   return texture;
@@ -2093,6 +2155,7 @@ class Game {
   private readonly cannonBatteryObjects: THREE.Object3D[] = [];
   private readonly levelDecorations: THREE.Object3D[] = [];
   private readonly premiumSceneTextures: THREE.Texture[] = [];
+  private skyReflectionTexture: THREE.Texture | null = null;
   private renderWarmupGroup: THREE.Group | null = null;
   private ambientLight: THREE.HemisphereLight | null = null;
   private sunKeyLight: THREE.DirectionalLight | null = null;
@@ -2327,6 +2390,7 @@ class Game {
     }
     this.cannonBatteryObjects.length = 0;
     this.scene.environment = null;
+    this.skyReflectionTexture = null;
     for (const texture of this.premiumSceneTextures) {
       texture.dispose();
     }
@@ -2800,6 +2864,9 @@ class Game {
 
     this.addPremiumDaylightBakes();
     this.addPremiumCityAtmosphere();
+    if (this.settings.graphicsQuality !== "performance") {
+      this.addDistantSkyline();
+    }
   }
 
   private trackPremiumSceneTexture<T extends THREE.Texture>(texture: T): T {
@@ -2895,6 +2962,57 @@ class Game {
       hazeMaterial,
       PREMIUM_ATMOSPHERE_RENDER_ORDER + 1
     );
+  }
+
+  private addDistantSkyline(): void {
+    const skylineMaterial = new THREE.MeshBasicMaterial({
+      color: 0x31464f,
+      fog: false
+    });
+
+    this.addSkylineInstanceRow("Distant city skyline silhouettes", skylineMaterial, [
+      { x: -28, z: -35, width: 4.8, height: 8.8, depth: 3.2, rotationY: 0.08 },
+      { x: -21.5, z: -36.4, width: 3.2, height: 12.4, depth: 2.7, rotationY: -0.03 },
+      { x: -15.2, z: -34.6, width: 5.4, height: 7.2, depth: 3.1, rotationY: 0.12 },
+      { x: -8.6, z: -36.8, width: 3.6, height: 10.8, depth: 3.4, rotationY: -0.08 },
+      { x: -1.1, z: -35.2, width: 4.2, height: 6.8, depth: 2.9, rotationY: 0.03 },
+      { x: 5.8, z: -36.6, width: 4.9, height: 11.6, depth: 3.1, rotationY: -0.1 },
+      { x: 13.4, z: -34.8, width: 3.2, height: 8.4, depth: 2.6, rotationY: 0.14 },
+      { x: 20.2, z: -36.2, width: 5.8, height: 13.2, depth: 3.8, rotationY: 0.04 },
+      { x: 28.2, z: -35.1, width: 4.3, height: 7.6, depth: 3.2, rotationY: -0.12 },
+      { x: -23.8, z: -24.6, width: 2.1, height: 5.8, depth: 1.8 },
+      { x: -18.4, z: -25.2, width: 2.8, height: 7.6, depth: 2.1, rotationY: 0.08 },
+      { x: -3.4, z: -24.8, width: 2.4, height: 5.2, depth: 1.8, rotationY: -0.05 },
+      { x: 9.2, z: -25.4, width: 2.7, height: 8.2, depth: 2.2, rotationY: 0.06 },
+      { x: 16.4, z: -24.7, width: 2.1, height: 5.9, depth: 1.9 },
+      { x: 24.6, z: -25.8, width: 3.2, height: 6.7, depth: 2.4, rotationY: -0.08 }
+    ]);
+  }
+
+  private addSkylineInstanceRow(label: string, material: THREE.Material, blocks: readonly SkylineBlockSpec[]): void {
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const mesh = new THREE.InstancedMesh(geometry, material, blocks.length);
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+
+    mesh.name = label;
+    mesh.frustumCulled = false;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = DISTANT_SKYLINE_RENDER_ORDER;
+
+    blocks.forEach((block, index) => {
+      position.set(block.x, block.height * 0.5 - 0.08, block.z);
+      quaternion.setFromEuler(new THREE.Euler(0, block.rotationY ?? 0, 0));
+      scale.set(block.width, block.height, block.depth);
+      matrix.compose(position, quaternion, scale);
+      mesh.setMatrixAt(index, matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(mesh);
+    this.arenaObjects.push(mesh);
   }
 
   private addArenaDecalPlane(
@@ -4893,12 +5011,27 @@ class Game {
     this.particles.setFlashScale(this.settings.motionEffects ? 1 : 0);
     this.particles.setQuality(this.settings.graphicsQuality);
     this.applyGraphicsQualityLighting();
+    this.applyCanvasGrade();
+    this.scene.environment = this.settings.graphicsQuality === "performance" ? null : this.ensureSkyReflectionTexture();
     this.renderer.shadowMap.enabled = this.settings.graphicsQuality === "cinematic";
     if (this.sunKeyLight) {
       this.sunKeyLight.castShadow = this.settings.graphicsQuality === "cinematic";
     }
     setOptionalShadowMapFlag(this.renderer, "needsUpdate", true);
     this.resize();
+  }
+
+  private applyCanvasGrade(): void {
+    const grade = canvasGradeProfile(this.settings.graphicsQuality);
+    this.renderer.domElement.style.filter = grade.filter;
+    this.renderer.domElement.style.boxShadow = grade.boxShadow;
+  }
+
+  private ensureSkyReflectionTexture(): THREE.Texture {
+    if (!this.skyReflectionTexture) {
+      this.skyReflectionTexture = this.trackPremiumSceneTexture(createSkyReflectionTexture());
+    }
+    return this.skyReflectionTexture;
   }
 
   private currentLevel() {
@@ -6001,6 +6134,26 @@ function graphicsLightingProfile(quality: GraphicsQuality): GraphicsLightingProf
         skyFillColor: 0x83ccff,
         skyFillIntensity: 0.34,
         shadowMapSize: 2048
+      };
+  }
+}
+
+function canvasGradeProfile(quality: GraphicsQuality): CanvasGradeProfile {
+  switch (quality) {
+    case "performance":
+      return {
+        filter: "none",
+        boxShadow: "none"
+      };
+    case "balanced":
+      return {
+        filter: "contrast(1.04) saturate(1.06)",
+        boxShadow: "inset 0 0 72px rgba(5, 13, 18, 0.16)"
+      };
+    case "cinematic":
+      return {
+        filter: "contrast(1.08) saturate(1.12) brightness(1.015)",
+        boxShadow: "inset 0 0 112px rgba(5, 13, 18, 0.24)"
       };
   }
 }

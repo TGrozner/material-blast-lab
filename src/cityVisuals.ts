@@ -1244,7 +1244,8 @@ function createMaterial(key: string): THREE.Material {
         opacity: 0.4,
         roughness: 0.12,
         metalness: 0,
-        depthWrite: false
+        depthWrite: false,
+        envMapIntensity: 1.18
       });
     case "hazard_facade":
       return new THREE.MeshStandardMaterial({ color: 0x7b3023, roughness: 0.72, metalness: 0.04, map: materialAtlasTile(4) });
@@ -1294,7 +1295,8 @@ function createMaterial(key: string): THREE.Material {
         roughness: 0.18,
         metalness: 0.02,
         depthWrite: false,
-        map: materialAtlasTile(8)
+        map: materialAtlasTile(8),
+        envMapIntensity: 1.22
       });
     case "industrial_facade":
       return new THREE.MeshStandardMaterial({ color: 0x515d63, roughness: 0.76, metalness: 0.08, map: materialAtlasTile(12) });
@@ -1319,7 +1321,7 @@ function createMaterial(key: string): THREE.Material {
     case "warm_roof":
       return new THREE.MeshStandardMaterial({ color: 0x7f5a3e, roughness: 0.8, metalness: 0.02, map: materialAtlasTile(13) });
     case "glass_shard":
-      return new THREE.MeshPhysicalMaterial({ color: 0xc7fbff, transparent: true, opacity: 0.58, roughness: 0.12, metalness: 0, depthWrite: false });
+      return new THREE.MeshPhysicalMaterial({ color: 0xc7fbff, transparent: true, opacity: 0.58, roughness: 0.12, metalness: 0, depthWrite: false, envMapIntensity: 1.16 });
     case "scraped_metal":
       return new THREE.MeshStandardMaterial({ color: 0xb8c5ca, roughness: 0.42, metalness: 0.86, map: materialAtlasTile(1) });
     case "rubble_dark":
@@ -1383,7 +1385,7 @@ function createMaterial(key: string): THREE.Material {
     case "water_tank":
       return new THREE.MeshStandardMaterial({ color: 0x7d8b93, roughness: 0.58, metalness: 0.42, map: materialAtlasTile(10) });
     case "relay_gel_core":
-      return new THREE.MeshPhysicalMaterial({ color: 0xd92b72, transparent: true, opacity: 0.58, roughness: 0.28, metalness: 0.02, depthWrite: false });
+      return new THREE.MeshPhysicalMaterial({ color: 0xd92b72, transparent: true, opacity: 0.58, roughness: 0.28, metalness: 0.02, depthWrite: false, envMapIntensity: 0.9 });
     case "relay_gel_glow":
       return new THREE.MeshBasicMaterial({ color: 0xff77ad, transparent: true, opacity: 0.78 });
     case "relay_hazard_band":
@@ -1395,7 +1397,7 @@ function createMaterial(key: string): THREE.Material {
     case "relay_pad_glow":
       return new THREE.MeshBasicMaterial({ color: 0xffd66b, transparent: true, opacity: 0.8 });
     case "relay_shock_glass":
-      return new THREE.MeshPhysicalMaterial({ color: 0x8ff7ff, transparent: true, opacity: 0.5, roughness: 0.16, metalness: 0, depthWrite: false });
+      return new THREE.MeshPhysicalMaterial({ color: 0x8ff7ff, transparent: true, opacity: 0.5, roughness: 0.16, metalness: 0, depthWrite: false, envMapIntensity: 1.12 });
     case "relay_shock_cap":
       return new THREE.MeshStandardMaterial({ color: 0x33404c, roughness: 0.42, metalness: 0.62, map: materialAtlasTile(0) });
     case "relay_shock_core":
