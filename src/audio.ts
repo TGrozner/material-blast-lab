@@ -25,7 +25,15 @@ type SampleId =
   | "plateHeavyA"
   | "plateHeavyB"
   | "punchHeavy"
-  | "bellHeavy";
+  | "bellHeavy"
+  | "urbanExplosion"
+  | "mortarExplosion"
+  | "bombardmentBroadside"
+  | "cannonballImpact"
+  | "buildingRubbleCollapse"
+  | "glassRubbleCollapse"
+  | "fallingRockCollapse"
+  | "massiveWallCollapseTail";
 
 interface BufferPlayOptions {
   gain: number;
@@ -85,7 +93,15 @@ const SAMPLE_PATHS: Record<SampleId, string> = {
   plateHeavyA: "audio/kenney-impact/impactPlate_heavy_000.ogg",
   plateHeavyB: "audio/kenney-impact/impactPlate_heavy_004.ogg",
   punchHeavy: "audio/kenney-impact/impactPunch_heavy_000.ogg",
-  bellHeavy: "audio/kenney-impact/impactBell_heavy_001.ogg"
+  bellHeavy: "audio/kenney-impact/impactBell_heavy_001.ogg",
+  urbanExplosion: "audio/sonniss-gdc/urban-explosion.ogg",
+  mortarExplosion: "audio/sonniss-gdc/mortar-explosion.ogg",
+  bombardmentBroadside: "audio/sonniss-gdc/bombardment-broadside.ogg",
+  cannonballImpact: "audio/sonniss-gdc/cannonball-impact.ogg",
+  buildingRubbleCollapse: "audio/sonniss-gdc/building-rubble-collapse.ogg",
+  glassRubbleCollapse: "audio/sonniss-gdc/glass-rubble-collapse.ogg",
+  fallingRockCollapse: "audio/sonniss-gdc/falling-rock-collapse.ogg",
+  massiveWallCollapseTail: "audio/sonniss-gdc/massive-wall-collapse-tail.ogg"
 };
 
 const MATERIAL_SAMPLES: Record<MaterialId, SampleId[]> = {
@@ -98,14 +114,16 @@ const MATERIAL_SAMPLES: Record<MaterialId, SampleId[]> = {
 };
 
 const PROJECTILE_BLASTS: Record<ProjectileId, SampleId[]> = {
-  slug: ["blastCrunchA", "lowBoomA", "metalHeavyA"],
-  scatter: ["blastCrunchB", "plateHeavyA", "plank"],
-  pulse: ["blastCrunchC", "forceField", "lowBoomB"],
-  gravity: ["blastCrunchC", "lowBoomA", "bellHeavy"],
-  ignite: ["blastCrunchA", "forceField", "lowBoomB"]
+  slug: ["urbanExplosion", "mortarExplosion", "cannonballImpact"],
+  scatter: ["mortarExplosion", "glassRubbleCollapse", "plateHeavyA"],
+  pulse: ["urbanExplosion", "forceField", "lowBoomB"],
+  gravity: ["bombardmentBroadside", "urbanExplosion", "cannonballImpact"],
+  ignite: ["urbanExplosion", "mortarExplosion", "lowBoomB"]
 };
 
 const SAMPLE_IDS = Object.keys(SAMPLE_PATHS) as SampleId[];
+const COLLAPSE_SAMPLES: SampleId[] = ["buildingRubbleCollapse", "fallingRockCollapse", "massiveWallCollapseTail"];
+const SHORT_RUBBLE_SAMPLES: SampleId[] = ["cannonballImpact", "glassRubbleCollapse", "fallingRockCollapse"];
 const DEFAULT_MIX: AudioMixSettings = {
   master: 0.88,
   sfx: 0.96,
@@ -217,16 +235,24 @@ export class DestructionAudio {
     this.resume();
     const intensity = THREE.MathUtils.clamp(0.72 + powerScale * 0.34 + sizeScale * 0.18, 0.75, 1.55);
     const pan = -0.05 + (Math.random() - 0.5) * 0.1;
-    const muzzleSample = projectileId === "gravity" || projectileId === "slug" ? "muzzleA" : "muzzleB";
+    const muzzleSample = projectileId === "scatter" ? "mortarExplosion" : "bombardmentBroadside";
     this.playBuffer(muzzleSample, {
-      gain: 0.34 * intensity,
-      rate: this.randomRange(0.76, 0.92),
+      gain: 0.46 * intensity,
+      rate: projectileId === "gravity" ? this.randomRange(0.7, 0.82) : this.randomRange(0.82, 0.98),
+      pan,
+      highpass: 34,
+      lowpass: projectileId === "pulse" ? 5200 : 4200
+    });
+    this.playBuffer("cannonballImpact", {
+      gain: 0.13 * intensity,
+      rate: this.randomRange(0.78, 0.94),
+      delay: 0.035,
       pan,
       highpass: 80,
-      lowpass: projectileId === "pulse" ? 5400 : 3600
+      lowpass: 2800
     });
-    this.playRumble(0.12 * intensity, 0.24, 78, 38, pan, 0.015);
-    this.playNoiseBurst(0.1 * intensity, 0.18, pan, 520, 2600, 0.006);
+    this.playRumble(0.2 * intensity, 0.5, 62, 24, pan, 0.015);
+    this.playNoiseBurst(0.08 * intensity, 0.18, pan, 420, 2200, 0.006);
   }
 
   playProjectileImpact(options: ImpactOptions): void {
@@ -237,24 +263,26 @@ export class DestructionAudio {
     const role = options.role ?? "primary";
     this.playImpactTransient(options.point, intensity, materialIds[0] ?? options.hitMaterialId ?? "concrete", role);
     this.playBuffer(this.pick(blastSamples), {
-      gain: 0.62 * intensity,
-      rate: this.randomRange(0.64, 0.84),
+      gain: 0.7 * intensity,
+      rate: this.randomRange(0.78, 1.03),
       pan,
-      lowpass: 3200
+      highpass: 28,
+      lowpass: 5200
     });
     this.playBuffer(this.pick(["lowBoomA", "lowBoomB"]), {
-      gain: 0.55 * intensity,
+      gain: 0.36 * intensity,
       rate: this.randomRange(0.58, 0.76),
       delay: 0.018,
       pan,
       lowpass: 900
     });
     this.playMaterialHits(materialIds, intensity, pan, 0.05, Math.min(7, 2 + options.result.fracturedBodies));
-    this.playRumble(0.33 * intensity, 1.1 + intensity * 0.34, 42, 18, pan, 0.02);
+    this.playRumble(0.4 * intensity, 1.35 + intensity * 0.46, 38, 14, pan, 0.02);
     this.playNoiseBurst(0.18 * intensity, 0.48, pan, 160, 1800, 0.035);
 
     if (options.result.fracturedBodies >= 4 || options.projectileId === "gravity") {
       this.playDebrisTail(materialIds, intensity, pan);
+      this.playCollapseLayer(materialIds, intensity, pan, options.result.fracturedBodies >= 8 ? "major" : "medium", 0.08);
     }
   }
 
@@ -277,6 +305,9 @@ export class DestructionAudio {
     });
     this.playImpactTransient(options.point, intensity, options.materialId, "secondary", 0.006);
     this.playNoiseBurst(0.06 * intensity, 0.16, pan, 420, 3400, 0.012);
+    if (options.result.fracturedBodies >= 2 || options.relativeSpeed > 8.5) {
+      this.playCollapseLayer([options.materialId], intensity, pan, "small", 0.04);
+    }
   }
 
   playScatterBurst(point: THREE.Vector3, intensity: number): void {
@@ -293,6 +324,14 @@ export class DestructionAudio {
       rate: this.randomRange(0.46, 0.58),
       pan,
       lowpass: 1900
+    });
+    this.playBuffer("massiveWallCollapseTail", {
+      gain: 0.2 * loudness,
+      rate: this.randomRange(0.68, 0.82),
+      delay: 0.08,
+      pan,
+      highpass: 34,
+      lowpass: 2200
     });
     this.playRumble(0.44 * loudness, 1.35, 34, 12, pan, 0.015);
   }
@@ -419,6 +458,7 @@ export class DestructionAudio {
   }
 
   private playDebrisTail(materialIds: MaterialId[], intensity: number, pan: number): void {
+    this.playCollapseLayer(materialIds, intensity, pan, "medium", 0.12);
     for (let i = 0; i < 5; i += 1) {
       const materialId = materialIds[i % materialIds.length] ?? "concrete";
       this.playBuffer(this.pick(MATERIAL_SAMPLES[materialId]), {
@@ -428,6 +468,34 @@ export class DestructionAudio {
         pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.34, 0.34), -0.9, 0.9),
         highpass: 120,
         lowpass: 2800
+      });
+    }
+  }
+
+  private playCollapseLayer(materialIds: MaterialId[], intensity: number, pan: number, scale: "small" | "medium" | "major", delay: number): void {
+    const cooldown = scale === "major" ? 520 : scale === "medium" ? 320 : 170;
+    if (!this.canPlay(`collapse-${scale}`, cooldown)) {
+      return;
+    }
+    const material = materialIds[0] ?? "concrete";
+    const sample = material === "glass" ? "glassRubbleCollapse" : scale === "major" ? "massiveWallCollapseTail" : this.pick(COLLAPSE_SAMPLES);
+    const gainScale = scale === "major" ? 0.34 : scale === "medium" ? 0.22 : 0.12;
+    this.playBuffer(sample, {
+      gain: gainScale * THREE.MathUtils.clamp(intensity, 0.58, 2.2),
+      rate: scale === "major" ? this.randomRange(0.72, 0.88) : this.randomRange(0.82, 1.06),
+      delay,
+      pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.08, 0.08), -0.9, 0.9),
+      highpass: material === "glass" ? 80 : 28,
+      lowpass: material === "glass" ? 7600 : scale === "major" ? 2600 : 4800
+    });
+    if (scale !== "major") {
+      this.playBuffer(this.pick(SHORT_RUBBLE_SAMPLES), {
+        gain: 0.06 * THREE.MathUtils.clamp(intensity, 0.5, 1.6),
+        rate: this.randomRange(0.78, 1.12),
+        delay: delay + this.randomRange(0.05, 0.16),
+        pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.18, 0.18), -0.9, 0.9),
+        highpass: 120,
+        lowpass: material === "glass" ? 8200 : 3600
       });
     }
   }
