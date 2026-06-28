@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { createDowntownBuildingSkin } from "./buildingKit";
 import type { MaterialId } from "./materialCatalog";
 import { perfMonitor } from "./perf";
 import type { ScoreRole } from "./physics";
@@ -15,14 +14,9 @@ interface BuildingCellVisualOptions {
   scoreRole: ScoreRole;
   style: BuildingVisualStyle;
   floor: number;
-  floorBase?: number;
   column: number;
-  groupFloors?: number;
-  groupColumns?: number;
   floors: number;
   columns: number;
-  stackCellSize?: THREE.Vector3;
-  stagger?: number;
   brand?: BuildingBrand;
 }
 
@@ -78,9 +72,6 @@ interface DetailRootUserData {
 }
 
 export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisualOptions): void {
-  if (attachDowntownBuildingKitSkin(mesh, options)) {
-    return;
-  }
   const palette = paletteFor(options.style, options.scoreRole);
   if (options.scoreRole === "neutral") {
     decorateNeutralBuildingCell(mesh, options, palette);
@@ -99,33 +90,6 @@ export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisu
     addRoofDetail(mesh, options, palette.roof);
   }
   mergeOpaqueDecorativeChildrenByMaterial(mesh);
-}
-
-function attachDowntownBuildingKitSkin(mesh: THREE.Mesh, options: BuildingCellVisualOptions): boolean {
-  if (
-    options.floorBase === undefined ||
-    options.groupFloors === undefined ||
-    options.groupColumns === undefined ||
-    !options.stackCellSize ||
-    options.stagger === undefined
-  ) {
-    return false;
-  }
-  const skin = createDowntownBuildingSkin({
-    ...options,
-    floorBase: options.floorBase,
-    columnBase: options.column,
-    groupFloors: options.groupFloors,
-    groupColumns: options.groupColumns,
-    stackCellSize: options.stackCellSize,
-    stagger: options.stagger
-  });
-  if (!skin) {
-    return false;
-  }
-  decorativeChildHost(mesh, true).add(skin);
-  mesh.material = downtownSkinHostMaterial();
-  return true;
 }
 
 function decorateNeutralBuildingCell(
@@ -1420,19 +1384,6 @@ function colorMaterial(key: string, color: THREE.ColorRepresentation, roughness:
     return existing;
   }
   const created = new THREE.MeshStandardMaterial({ color, roughness, metalness });
-  sharedMaterials.set(key, created);
-  return created;
-}
-
-function downtownSkinHostMaterial(): THREE.Material {
-  const key = "downtown_skin_host";
-  const existing = sharedMaterials.get(key);
-  if (existing) {
-    return existing;
-  }
-  const created = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  created.visible = false;
-  created.userData.sharedRoleRenderMaterial = true;
   sharedMaterials.set(key, created);
   return created;
 }

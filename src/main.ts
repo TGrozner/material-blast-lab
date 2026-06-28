@@ -9,7 +9,6 @@ import {
 } from "./arcade";
 import { DestructionAudio } from "./audio";
 import { AircraftController } from "./aircraft";
-import { preloadDowntownBuildingKit } from "./buildingKit";
 import { CameraRig } from "./cameraRig";
 import { Cannon, type CannonVisualState } from "./cannon";
 import { decorateFragment } from "./cityVisuals";
@@ -5327,7 +5326,6 @@ async function boot(): Promise<void> {
   activeShell = shell;
   shell.showMenu();
   void preloadGraphicTextures();
-  void preloadDowntownBuildingKit();
   void ensureRapierReady().catch((error: unknown) => {
     console.warn("Downtown Mayhem: physics engine preload failed.", error);
   });
@@ -5358,11 +5356,6 @@ async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number,
 
   try {
     await ensureRapierReady();
-    if (!isActiveStart(shell, token)) {
-      return;
-    }
-    shell.updateLoadingStatus("Loading city building kit");
-    await preloadDowntownBuildingKit();
     if (!isActiveStart(shell, token)) {
       return;
     }

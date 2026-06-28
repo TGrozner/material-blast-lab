@@ -32,7 +32,7 @@ const STABLE_VISUAL_CAPTURE_SETTINGS = {
 };
 const HAZARD_JUNCTION_RENDER_BUDGET = {
   drawCalls: 4_550,
-  visibleMeshes: 3_030,
+  visibleMeshes: 3_020,
   visibleMaterials: 340,
   programs: 32,
   geometries: 1_300,
