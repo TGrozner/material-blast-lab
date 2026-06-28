@@ -138,7 +138,7 @@ const RENDER_WARMUP_SYNTHETIC_DESTRUCTION_ZONE = "render-warmup-destruction";
 const AIM_TRAFFIC_STEP_SECONDS = 1 / 24;
 const AIM_TRAFFIC_MAX_ACCUMULATED_SECONDS = 0.12;
 const DAY_SKY_RADIUS = 118;
-const SUN_DIRECTION = new THREE.Vector3(-0.28, 0.28, -0.92).normalize();
+const SUN_DIRECTION = new THREE.Vector3(-0.24, 0.22, -0.95).normalize();
 const PREMIUM_DAYLIGHT_RENDER_ORDER = 6;
 const PREMIUM_ATMOSPHERE_RENDER_ORDER = 1;
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
@@ -363,7 +363,7 @@ function configureDowntownMayhemRenderer(renderer: THREE.WebGLRenderer, settings
   setOptionalShadowMapFlag(renderer, "autoUpdate", false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMappingExposure = 1.06;
   renderer.setPixelRatio(effectiveGraphicsPixelRatio(graphicsPixelRatioCap(settings.graphicsQuality)));
 }
 
@@ -553,14 +553,14 @@ function createDaySkyDome(textureRegistry: THREE.Texture[]): THREE.Group {
       map: haloTexture,
       color: 0xffe4a6,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.58,
       depthWrite: false,
       blending: THREE.NormalBlending
     })
   );
   halo.name = "Warm sun halo";
   halo.position.copy(sunPosition);
-  halo.scale.set(43, 43, 1);
+  halo.scale.set(54, 54, 1);
   halo.renderOrder = -40;
   group.add(halo);
 
@@ -571,14 +571,14 @@ function createDaySkyDome(textureRegistry: THREE.Texture[]): THREE.Group {
       map: sunTexture,
       color: 0xffdd84,
       transparent: true,
-      opacity: 0.78,
+      opacity: 0.96,
       depthWrite: false,
       blending: THREE.NormalBlending
     })
   );
   sun.name = "Soft midday sun";
   sun.position.copy(sunPosition.clone().multiplyScalar(0.995));
-  sun.scale.set(11.4, 11.4, 1);
+  sun.scale.set(15.4, 15.4, 1);
   sun.renderOrder = -35;
   group.add(sun);
 
@@ -595,10 +595,10 @@ function createDaySkyTexture(): THREE.CanvasTexture {
   }
 
   const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, "#236ec7");
-  gradient.addColorStop(0.36, "#5db9ec");
-  gradient.addColorStop(0.72, "#b9e3ef");
-  gradient.addColorStop(1, "#e8d0a4");
+  gradient.addColorStop(0, "#1f6fbf");
+  gradient.addColorStop(0.36, "#58b0e7");
+  gradient.addColorStop(0.72, "#accfda");
+  gradient.addColorStop(1, "#d7b46f");
   context.fillStyle = gradient;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -610,30 +610,30 @@ function createDaySkyTexture(): THREE.CanvasTexture {
     canvas.height * 1.08,
     canvas.width * 0.64
   );
-  horizonGlow.addColorStop(0, "rgba(242, 219, 170, 0.26)");
-  horizonGlow.addColorStop(0.46, "rgba(226, 199, 138, 0.1)");
+  horizonGlow.addColorStop(0, "rgba(244, 217, 147, 0.28)");
+  horizonGlow.addColorStop(0.46, "rgba(217, 174, 96, 0.12)");
   horizonGlow.addColorStop(1, "rgba(118, 190, 255, 0)");
   context.fillStyle = horizonGlow;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   const sunWash = context.createRadialGradient(
-    canvas.width * 0.28,
-    canvas.height * 0.22,
+    canvas.width * 0.3,
+    canvas.height * 0.36,
     16,
-    canvas.width * 0.28,
-    canvas.height * 0.22,
-    canvas.width * 0.42
+    canvas.width * 0.3,
+    canvas.height * 0.36,
+    canvas.width * 0.38
   );
-  sunWash.addColorStop(0, "rgba(255, 241, 199, 0.32)");
-  sunWash.addColorStop(0.34, "rgba(239, 197, 109, 0.13)");
+  sunWash.addColorStop(0, "rgba(255, 235, 174, 0.38)");
+  sunWash.addColorStop(0.34, "rgba(232, 170, 77, 0.14)");
   sunWash.addColorStop(1, "rgba(236, 205, 137, 0)");
   context.fillStyle = sunWash;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
-  paintCloud(context, 150, 128, 1.25, 0.14);
-  paintCloud(context, 378, 96, 0.92, 0.11);
-  paintCloud(context, 724, 146, 1.5, 0.12);
-  paintCloud(context, 884, 216, 1.08, 0.09);
+  paintCloud(context, 150, 128, 1.25, 0.13);
+  paintCloud(context, 378, 96, 0.92, 0.1);
+  paintCloud(context, 724, 146, 1.5, 0.11);
+  paintCloud(context, 884, 216, 1.08, 0.08);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -653,15 +653,15 @@ function createSkyReflectionTexture(): THREE.CanvasTexture {
 
   const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
   gradient.addColorStop(0, "#4fa4dc");
-  gradient.addColorStop(0.44, "#a9d6e4");
-  gradient.addColorStop(0.58, "#d7bc83");
-  gradient.addColorStop(1, "#151f24");
+  gradient.addColorStop(0.44, "#a7d2df");
+  gradient.addColorStop(0.58, "#d8b978");
+  gradient.addColorStop(1, "#141f24");
   context.fillStyle = gradient;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   const sun = context.createRadialGradient(canvas.width * 0.22, canvas.height * 0.22, 5, canvas.width * 0.22, canvas.height * 0.22, 98);
-  sun.addColorStop(0, "rgba(255, 244, 205, 0.52)");
-  sun.addColorStop(0.34, "rgba(235, 194, 104, 0.18)");
+  sun.addColorStop(0, "rgba(255, 240, 188, 0.58)");
+  sun.addColorStop(0.34, "rgba(229, 172, 77, 0.2)");
   sun.addColorStop(1, "rgba(255, 216, 122, 0)");
   context.fillStyle = sun;
   context.fillRect(0, 0, canvas.width, canvas.height);
@@ -700,8 +700,8 @@ function createGroundSunlightTexture(): THREE.CanvasTexture {
 
   context.clearRect(0, 0, canvas.width, canvas.height);
   const wash = context.createRadialGradient(170, 132, 20, 196, 166, 470);
-  wash.addColorStop(0, "rgba(245, 226, 168, 0.18)");
-  wash.addColorStop(0.42, "rgba(222, 177, 87, 0.075)");
+  wash.addColorStop(0, "rgba(248, 224, 156, 0.2)");
+  wash.addColorStop(0.42, "rgba(218, 158, 72, 0.085)");
   wash.addColorStop(1, "rgba(218, 174, 84, 0)");
   context.fillStyle = wash;
   context.fillRect(0, 0, canvas.width, canvas.height);
@@ -713,9 +713,9 @@ function createGroundSunlightTexture(): THREE.CanvasTexture {
     const x = index * 118;
     const band = context.createLinearGradient(x - 42, -260, x + 78, 260);
     band.addColorStop(0, "rgba(255, 255, 255, 0)");
-    band.addColorStop(0.42, "rgba(246, 224, 151, 0.04)");
-    band.addColorStop(0.5, "rgba(232, 188, 93, 0.085)");
-    band.addColorStop(0.58, "rgba(246, 224, 151, 0.04)");
+    band.addColorStop(0.42, "rgba(244, 214, 135, 0.045)");
+    band.addColorStop(0.5, "rgba(220, 158, 72, 0.095)");
+    band.addColorStop(0.58, "rgba(244, 214, 135, 0.045)");
     band.addColorStop(1, "rgba(255, 255, 255, 0)");
     context.fillStyle = band;
     context.fillRect(x - 46, -320, 124, 640);
@@ -740,8 +740,8 @@ function createContactShadowTexture(): THREE.CanvasTexture {
 
   context.clearRect(0, 0, canvas.width, canvas.height);
   const shadow = context.createRadialGradient(256, 256, 24, 256, 256, 236);
-  shadow.addColorStop(0, "rgba(0, 0, 0, 0.36)");
-  shadow.addColorStop(0.46, "rgba(0, 0, 0, 0.2)");
+  shadow.addColorStop(0, "rgba(0, 0, 0, 0.34)");
+  shadow.addColorStop(0.46, "rgba(0, 0, 0, 0.18)");
   shadow.addColorStop(1, "rgba(0, 0, 0, 0)");
   context.fillStyle = shadow;
   context.save();
@@ -776,16 +776,16 @@ function createDistantAtmosphereTexture(): THREE.CanvasTexture {
     canvas.height * 0.52,
     canvas.width * 0.58
   );
-  airGlow.addColorStop(0, "rgba(226, 244, 248, 0.05)");
-  airGlow.addColorStop(0.42, "rgba(164, 207, 218, 0.07)");
+  airGlow.addColorStop(0, "rgba(230, 244, 248, 0.045)");
+  airGlow.addColorStop(0.42, "rgba(166, 205, 216, 0.06)");
   airGlow.addColorStop(1, "rgba(190, 231, 240, 0)");
   context.fillStyle = airGlow;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   const haze = context.createLinearGradient(0, canvas.height * 0.55, 0, canvas.height);
   haze.addColorStop(0, "rgba(188, 235, 255, 0)");
-  haze.addColorStop(0.5, "rgba(176, 214, 222, 0.065)");
-  haze.addColorStop(0.8, "rgba(218, 189, 131, 0.085)");
+  haze.addColorStop(0.5, "rgba(176, 212, 222, 0.045)");
+  haze.addColorStop(0.8, "rgba(216, 180, 112, 0.07)");
   haze.addColorStop(1, "rgba(246, 219, 170, 0)");
   context.fillStyle = haze;
   context.fillRect(0, 0, canvas.width, canvas.height);
@@ -797,7 +797,7 @@ function createDistantAtmosphereTexture(): THREE.CanvasTexture {
     const x = index * 165;
     const band = context.createLinearGradient(x - 130, 0, x + 180, 0);
     band.addColorStop(0, "rgba(255, 255, 255, 0)");
-    band.addColorStop(0.5, "rgba(209, 228, 226, 0.045)");
+    band.addColorStop(0.5, "rgba(205, 223, 222, 0.035)");
     band.addColorStop(1, "rgba(255, 255, 255, 0)");
     context.fillStyle = band;
     context.fillRect(x - 145, -18, 330, 36);
@@ -824,17 +824,17 @@ function createIndustrialHazeTexture(): THREE.CanvasTexture {
   context.clearRect(0, 0, canvas.width, canvas.height);
   const base = context.createLinearGradient(0, 0, 0, canvas.height);
   base.addColorStop(0, "rgba(210, 242, 255, 0)");
-  base.addColorStop(0.36, "rgba(159, 207, 218, 0.075)");
-  base.addColorStop(0.72, "rgba(207, 167, 102, 0.105)");
+  base.addColorStop(0.36, "rgba(166, 208, 218, 0.058)");
+  base.addColorStop(0.72, "rgba(209, 166, 96, 0.088)");
   base.addColorStop(1, "rgba(240, 205, 149, 0)");
   context.fillStyle = base;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   for (const band of [
-    [18, 82, 0.18, 0.095],
-    [118, 118, -0.1, 0.08],
-    [260, 68, 0.08, 0.065],
-    [344, 148, -0.16, 0.075]
+    [18, 82, 0.18, 0.074],
+    [118, 118, -0.1, 0.062],
+    [260, 68, 0.08, 0.052],
+    [344, 148, -0.16, 0.058]
   ] as const) {
     const [x, y, tilt, opacity] = band;
     context.save();
@@ -2987,7 +2987,7 @@ class Game {
     const cityShadowMaterial = new THREE.MeshBasicMaterial({
       map: shadowTexture,
       transparent: true,
-      opacity: 0.42,
+      opacity: 0.36,
       depthWrite: false,
       toneMapped: false
     });
@@ -3003,7 +3003,7 @@ class Game {
     const cannonShadowMaterial = new THREE.MeshBasicMaterial({
       map: shadowTexture,
       transparent: true,
-      opacity: 0.54,
+      opacity: 0.44,
       depthWrite: false,
       toneMapped: false
     });
@@ -3022,7 +3022,7 @@ class Game {
     const atmosphereMaterial = new THREE.MeshBasicMaterial({
       map: atmosphereTexture,
       transparent: true,
-      opacity: 0.68,
+      opacity: 0.5,
       depthWrite: false,
       fog: false,
       toneMapped: false
@@ -3039,7 +3039,7 @@ class Game {
     const hazeMaterial = new THREE.MeshBasicMaterial({
       map: hazeTexture,
       transparent: true,
-      opacity: 0.28,
+      opacity: 0.2,
       depthWrite: false,
       blending: THREE.NormalBlending,
       fog: false,
@@ -6546,50 +6546,50 @@ function graphicsLightingProfile(quality: GraphicsQuality): GraphicsLightingProf
   switch (quality) {
     case "performance":
       return {
-        background: 0x9bd2f1,
-        fog: 0xcfe5e8,
-        fogNear: 66,
-        fogFar: 148,
-        exposure: 1.02,
+        background: 0x9ed4f0,
+        fog: 0xd7e2df,
+        fogNear: 68,
+        fogFar: 162,
+        exposure: 1.04,
         ambientSky: 0xb8e4f2,
-        ambientGround: 0xb99664,
-        ambientIntensity: 0.68,
-        sunColor: 0xffdf9a,
-        sunIntensity: 2.65,
+        ambientGround: 0xbc935b,
+        ambientIntensity: 0.74,
+        sunColor: 0xffd58a,
+        sunIntensity: 2.85,
         skyFillColor: 0x82c6e8,
-        skyFillIntensity: 0.16,
+        skyFillIntensity: 0.24,
         shadowMapSize: 1536
       };
     case "balanced":
       return {
-        background: 0x8fc9ec,
-        fog: 0xd4e2df,
-        fogNear: 60,
-        fogFar: 142,
-        exposure: 1.03,
+        background: 0x8fc8e9,
+        fog: 0xd2dbd5,
+        fogNear: 62,
+        fogFar: 154,
+        exposure: 1.06,
         ambientSky: 0xa9dced,
-        ambientGround: 0xae8752,
-        ambientIntensity: 0.62,
-        sunColor: 0xffd78f,
-        sunIntensity: 2.85,
+        ambientGround: 0xb4864c,
+        ambientIntensity: 0.72,
+        sunColor: 0xffcc76,
+        sunIntensity: 3.02,
         skyFillColor: 0x74bade,
-        skyFillIntensity: 0.18,
+        skyFillIntensity: 0.26,
         shadowMapSize: 1536
       };
     case "cinematic":
       return {
-        background: 0x77b9e2,
-        fog: 0xd7d7c9,
-        fogNear: 54,
-        fogFar: 132,
-        exposure: 1.06,
-        ambientSky: 0xa9dceb,
-        ambientGround: 0xb1834a,
-        ambientIntensity: 0.58,
-        sunColor: 0xffcc7a,
-        sunIntensity: 3.18,
+        background: 0x78bae3,
+        fog: 0xd4d2bd,
+        fogNear: 58,
+        fogFar: 146,
+        exposure: 1.08,
+        ambientSky: 0xa5d9ea,
+        ambientGround: 0xb07e43,
+        ambientIntensity: 0.68,
+        sunColor: 0xffc46a,
+        sunIntensity: 3.12,
         skyFillColor: 0x6fb8dc,
-        skyFillIntensity: 0.17,
+        skyFillIntensity: 0.24,
         shadowMapSize: 2048
       };
   }
@@ -6604,13 +6604,13 @@ function canvasGradeProfile(quality: GraphicsQuality): CanvasGradeProfile {
       };
     case "balanced":
       return {
-        filter: "contrast(1.035) saturate(1.025)",
-        boxShadow: "inset 0 0 72px rgba(5, 13, 18, 0.16)"
+        filter: "contrast(1.035) saturate(1.035)",
+        boxShadow: "inset 0 0 54px rgba(5, 13, 18, 0.12)"
       };
     case "cinematic":
       return {
-        filter: "contrast(1.075) saturate(1.055)",
-        boxShadow: "inset 0 0 108px rgba(5, 13, 18, 0.22)"
+        filter: "contrast(1.065) saturate(1.055)",
+        boxShadow: "inset 0 0 86px rgba(5, 13, 18, 0.18)"
       };
   }
 }
