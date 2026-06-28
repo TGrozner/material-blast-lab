@@ -31,11 +31,11 @@ const STABLE_VISUAL_CAPTURE_SETTINGS = {
   showFps: false
 };
 const HAZARD_JUNCTION_RENDER_BUDGET = {
-  drawCalls: 4_550,
-  visibleMeshes: 3_020,
+  drawCalls: 4_950,
+  visibleMeshes: 3_150,
   visibleMaterials: 340,
   programs: 32,
-  geometries: 1_300,
+  geometries: 1_450,
   textures: 42
 };
 const PERF_SMOKE_BUDGET = {

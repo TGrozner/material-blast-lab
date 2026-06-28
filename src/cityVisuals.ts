@@ -66,6 +66,17 @@ const childBoxGeometryCache = new Map<string, THREE.BoxGeometry>();
 const childCylinderGeometryCache = new Map<string, THREE.CylinderGeometry>();
 const childSphereGeometryCache = new Map<string, THREE.SphereGeometry>();
 
+const FACADE_DEPTH = 0.016;
+const TRIM_DEPTH = 0.022;
+const GLASS_DEPTH = 0.014;
+const DECAL_DEPTH = 0.012;
+const FRONT_SKIN_OFFSET = 0.002;
+const FRONT_TRIM_OFFSET = 0.018;
+const FRONT_GLASS_OFFSET = 0.034;
+const FRONT_DECAL_OFFSET = 0.05;
+const SIDE_SKIN_OFFSET = 0.002;
+const SIDE_TRIM_OFFSET = 0.014;
+
 interface DetailRootUserData {
   unscaledDetailRoot?: THREE.Object3D;
   fragmentVisualParts?: THREE.Mesh[];
@@ -73,18 +84,22 @@ interface DetailRootUserData {
 
 export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisualOptions): void {
   const palette = paletteFor(options.style, options.scoreRole);
+  const detail = facadeDetailFor(options);
   if (options.scoreRole === "neutral") {
     decorateNeutralBuildingCell(mesh, options, palette);
     mergeOpaqueDecorativeChildrenByMaterial(mesh);
     return;
   }
-  addFacadeSkin(mesh, options.size, palette.facade, 0.016);
+  addFacadeSkin(mesh, options.size, palette.facade, FACADE_DEPTH);
+  if (options.floor === 0 || options.floor === options.floors - 1) {
+    addCellSlabBands(mesh, options, palette.trim, detail === "full" ? "full" : "lean");
+  }
   addWindowRows(mesh, options);
   addVerticalTrim(mesh, options.size, palette.trim, options.column === 0, options.column === options.columns - 1);
   addPremiumFacadeDetails(mesh, options, palette.sign);
 
   if (options.floor === 0) {
-    addStorefront(mesh, options.size, palette.sign, options.style, options.column);
+    addStorefront(mesh, options.size, palette.sign, options.style, options.column, palette.trim);
   }
   if (options.floor === options.floors - 1) {
     addRoofDetail(mesh, options, palette.roof);
@@ -104,6 +119,9 @@ function decorateNeutralBuildingCell(
 
   if (isGround || isTop || (isEdgeColumn && isFeatureBand)) {
     addNeutralFacadeSkin(mesh, options.size, palette.facade);
+    if (isGround || isTop) {
+      addCellSlabBands(mesh, options, palette.trim, "lean");
+    }
     addNeutralWindowBand(mesh, options, palette.trim);
   }
   if (isGround && (options.column % 2 === 0 || isEdgeColumn)) {
@@ -757,15 +775,106 @@ function decorateCapacitorBank(mesh: THREE.Mesh, size: THREE.Vector3): void {
   });
 }
 
+function frontLayerZ(size: THREE.Vector3, depth: number, offset: number): number {
+  return size.z * 0.5 + offset + depth * 0.5;
+}
+
+function backLayerZ(size: THREE.Vector3, depth: number, offset: number): number {
+  return -size.z * 0.5 - offset - depth * 0.5;
+}
+
+function leftLayerX(size: THREE.Vector3, depth: number, offset: number): number {
+  return -size.x * 0.5 - offset - depth * 0.5;
+}
+
+function rightLayerX(size: THREE.Vector3, depth: number, offset: number): number {
+  return size.x * 0.5 + offset + depth * 0.5;
+}
+
+function buildingVariant(options: BuildingCellVisualOptions): number {
+  let hash = 2166136261;
+  hash = Math.imul(hash ^ (options.floor + 1), 16777619);
+  hash = Math.imul(hash ^ (options.column + 3), 16777619);
+  hash = Math.imul(hash ^ (options.floors + 5), 16777619);
+  hash = Math.imul(hash ^ (options.columns + 7), 16777619);
+  for (let index = 0; index < options.style.length; index += 1) {
+    hash = Math.imul(hash ^ options.style.charCodeAt(index), 16777619);
+  }
+  return hash >>> 0;
+}
+
+function facadeDetailFor(options: BuildingCellVisualOptions): "full" | "standard" | "lean" {
+  if (options.scoreRole === "neutral") {
+    return "lean";
+  }
+  if (options.floor === 0 || options.floor === options.floors - 1 || options.brand) {
+    return "full";
+  }
+  if (options.column === 0 || options.column === options.columns - 1) {
+    return options.floor % 2 === 0 ? "full" : "standard";
+  }
+  return (options.floor + options.column) % 3 === 0 ? "standard" : "lean";
+}
+
 function addFacadeSkin(mesh: THREE.Mesh, size: THREE.Vector3, materialRef: THREE.Material, depth: number): void {
-  addChildBox(mesh, size.x * 0.96, size.y * 0.92, depth, materialRef, { z: size.z * 0.5 + depth * 0.5 });
-  addChildBox(mesh, size.x * 0.92, size.y * 0.82, depth, materialRef, { z: -size.z * 0.5 - depth * 0.5 });
-  addChildBox(mesh, depth, size.y * 0.76, size.z * 0.82, materialRef, { x: -size.x * 0.5 - depth * 0.5 });
-  addChildBox(mesh, depth, size.y * 0.76, size.z * 0.82, materialRef, { x: size.x * 0.5 + depth * 0.5 });
+  addChildBox(mesh, size.x * 0.96, size.y * 0.92, depth, materialRef, {
+    z: frontLayerZ(size, depth, FRONT_SKIN_OFFSET)
+  });
+  addChildBox(mesh, size.x * 0.92, size.y * 0.82, depth, materialRef, {
+    z: backLayerZ(size, depth, FRONT_SKIN_OFFSET)
+  });
+  addChildBox(mesh, depth, size.y * 0.76, size.z * 0.82, materialRef, {
+    x: leftLayerX(size, depth, SIDE_SKIN_OFFSET)
+  });
+  addChildBox(mesh, depth, size.y * 0.76, size.z * 0.82, materialRef, {
+    x: rightLayerX(size, depth, SIDE_SKIN_OFFSET)
+  });
+}
+
+function addCellSlabBands(
+  mesh: THREE.Mesh,
+  options: BuildingCellVisualOptions,
+  trimMaterial: THREE.Material,
+  detail: "full" | "lean" = "full"
+): void {
+  const size = options.size;
+  const z = frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET);
+  const bandHeight = Math.max(0.022, size.y * 0.045);
+  const width = size.x * (detail === "lean" ? 0.78 : 0.96);
+  addChildBox(mesh, width, bandHeight, TRIM_DEPTH, trimMaterial, {
+    y: -size.y * 0.5 + bandHeight * 0.55,
+    z
+  });
+  addChildBox(mesh, width, bandHeight, TRIM_DEPTH, trimMaterial, {
+    y: size.y * 0.5 - bandHeight * 0.55,
+    z
+  });
+
+  if (options.floor === 0) {
+    addFoundationBand(mesh, size, trimMaterial, detail);
+  }
+}
+
+function addFoundationBand(mesh: THREE.Mesh, size: THREE.Vector3, trimMaterial: THREE.Material, detail: "full" | "lean"): void {
+  const height = Math.max(0.055, size.y * (detail === "lean" ? 0.11 : 0.14));
+  addChildBox(mesh, size.x * (detail === "lean" ? 0.82 : 1.02), height, TRIM_DEPTH, trimMaterial, {
+    y: -size.y * 0.5 + height * 0.5,
+    z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.012)
+  });
+  if (detail === "full") {
+    addChildBox(mesh, TRIM_DEPTH, height * 0.86, size.z * 0.82, trimMaterial, {
+      x: leftLayerX(size, TRIM_DEPTH, SIDE_TRIM_OFFSET)
+    });
+    addChildBox(mesh, TRIM_DEPTH, height * 0.86, size.z * 0.82, trimMaterial, {
+      x: rightLayerX(size, TRIM_DEPTH, SIDE_TRIM_OFFSET)
+    });
+  }
 }
 
 function addNeutralFacadeSkin(mesh: THREE.Mesh, size: THREE.Vector3, materialRef: THREE.Material): void {
-  addChildBox(mesh, size.x * 0.94, size.y * 0.86, 0.014, materialRef, { z: size.z * 0.5 + 0.02 });
+  addChildBox(mesh, size.x * 0.94, size.y * 0.86, FACADE_DEPTH, materialRef, {
+    z: frontLayerZ(size, FACADE_DEPTH, FRONT_SKIN_OFFSET)
+  });
 }
 
 function addNeutralWindowBand(
@@ -773,23 +882,26 @@ function addNeutralWindowBand(
   options: BuildingCellVisualOptions,
   mullionMaterial: THREE.Material
 ): void {
-  const windowMaterial = material(options.style === "glassTower" ? "cool_window" : "warm_window");
-  addChildBox(mesh, options.size.x * 0.58, options.size.y * 0.22, 0.018, windowMaterial, {
-    y: options.size.y * 0.08,
-    z: options.size.z * 0.5 + 0.034
-  });
+  const variant = buildingVariant(options);
+  addFacadeModule(mesh, options, 0, options.size.y * 0.08, options.size.x * 0.56, options.size.y * 0.22, variant, "lean", mullionMaterial);
   if (options.style === "industrial" || options.style === "warehouse" || options.style === "utility") {
-    addChildBox(mesh, options.size.x * 0.66, 0.026, 0.02, mullionMaterial, {
+    addChildBox(mesh, options.size.x * 0.62, 0.024, TRIM_DEPTH, mullionMaterial, {
       y: -options.size.y * 0.15,
-      z: options.size.z * 0.5 + 0.038
+      z: frontLayerZ(options.size, TRIM_DEPTH, FRONT_DECAL_OFFSET)
     });
   }
 }
 
 function addNeutralStorefront(mesh: THREE.Mesh, size: THREE.Vector3, signMaterial: THREE.Material, style: BuildingVisualStyle): void {
-  addChildBox(mesh, size.x * 0.66, 0.075, 0.028, signMaterial, { y: -size.y * 0.27, z: size.z * 0.5 + 0.044 });
+  addChildBox(mesh, size.x * 0.66, 0.075, DECAL_DEPTH, signMaterial, {
+    y: -size.y * 0.27,
+    z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET)
+  });
   if (style === "market" || style === "apartment") {
-    addChildBox(mesh, size.x * 0.48, 0.11, 0.02, material("shop_glass"), { y: -size.y * 0.08, z: size.z * 0.5 + 0.038 });
+    addChildBox(mesh, size.x * 0.48, 0.11, GLASS_DEPTH, material("shop_glass"), {
+      y: -size.y * 0.08,
+      z: frontLayerZ(size, GLASS_DEPTH, FRONT_GLASS_OFFSET)
+    });
   }
 }
 
@@ -803,29 +915,143 @@ function addNeutralRoofDetail(mesh: THREE.Mesh, size: THREE.Vector3, roofMateria
 }
 
 function addWindowRows(mesh: THREE.Mesh, options: BuildingCellVisualOptions): void {
+  const detail = facadeDetailFor(options);
   const rows = options.style === "warehouse" || options.style === "utility" ? 1 : 2;
-  const columns = options.style === "glassTower" ? 3 : 2;
-  const windowMaterial = material(options.style === "glassTower" ? "cool_window" : "warm_window");
+  const columns = options.style === "glassTower" ? 3 : options.style === "civic" ? 2 : 2;
   const mullionMaterial = material(options.scoreRole === "target" ? "hazard_trim" : "dark_trim");
-  const width = (options.size.x * 0.64) / columns;
-  const height = (options.size.y * 0.5) / rows;
+  const usableWidth = options.size.x * (options.style === "glassTower" ? 0.78 : 0.7);
+  const usableHeight = options.size.y * (options.style === "glassTower" ? 0.6 : options.style === "warehouse" ? 0.34 : 0.5);
+  const width = usableWidth / columns;
+  const height = usableHeight / rows;
+  const variant = buildingVariant(options);
+  const windowMaterial = material(facadeGlassMaterial(options.style, variant));
 
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
       const x = (column - (columns - 1) * 0.5) * width * 1.18;
-      const y = (row - (rows - 1) * 0.5) * height * 1.22 + options.size.y * 0.08;
-      addChildBox(mesh, width * 0.72, height * 0.62, 0.018, windowMaterial, { x, y, z: options.size.z * 0.5 + 0.026 });
-      if ((options.floor + options.column + row + column) % 7 === 0) {
-        addChildBox(mesh, width * 0.62, height * 0.52, 0.019, material("dark_window"), { x, y, z: options.size.z * 0.5 + 0.028 });
+      const y = (row - (rows - 1) * 0.5) * height * 1.2 + options.size.y * (options.style === "warehouse" ? 0.08 : 0.1);
+      addChildBox(mesh, width * 0.76, height * (options.style === "glassTower" ? 0.86 : 0.66), GLASS_DEPTH, windowMaterial, {
+        x,
+        y,
+        z: frontLayerZ(options.size, GLASS_DEPTH, FRONT_GLASS_OFFSET + 0.004)
+      });
+      if (detail === "full") {
+        addChildBox(mesh, width * 0.82, Math.max(0.012, height * 0.04), DECAL_DEPTH, mullionMaterial, {
+          x,
+          y: y - height * 0.38,
+          z: frontLayerZ(options.size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.004)
+        });
       }
     }
   }
 
   if (options.style === "industrial" || options.style === "warehouse") {
-    addChildBox(mesh, options.size.x * 0.78, 0.035, 0.022, mullionMaterial, { y: -options.size.y * 0.08, z: options.size.z * 0.5 + 0.034 });
+    addChildBox(mesh, options.size.x * 0.78, 0.035, TRIM_DEPTH, mullionMaterial, {
+      y: -options.size.y * 0.08,
+      z: frontLayerZ(options.size, TRIM_DEPTH, FRONT_DECAL_OFFSET)
+    });
+    if (detail === "full" || options.floor === 0) {
+      addWarehouseFacadeMarks(mesh, options, mullionMaterial);
+    }
   }
   if (options.style === "apartment" && options.floor % 2 === 0) {
-    addChildBox(mesh, options.size.x * 0.72, 0.03, 0.055, material("balcony_rail"), { y: -options.size.y * 0.22, z: options.size.z * 0.5 + 0.064 });
+    addApartmentBalcony(mesh, options);
+  }
+}
+
+function addFacadeModule(
+  mesh: THREE.Mesh,
+  options: BuildingCellVisualOptions,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  variant: number,
+  detail: "full" | "standard" | "lean",
+  trimMaterial: THREE.Material
+): void {
+  const size = options.size;
+  const glassMaterial = facadeGlassMaterial(options.style, variant);
+  const frameZ = frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.006);
+  const glassZ = frontLayerZ(size, GLASS_DEPTH, FRONT_GLASS_OFFSET + 0.004);
+  const mullionZ = frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.004);
+  const frameWidth = Math.max(0.035, width);
+  const frameHeight = Math.max(0.055, height);
+  const glassWidthScale = options.style === "glassTower" ? 0.86 : 0.72;
+  const glassHeightScale = options.style === "glassTower" ? 0.86 : 0.68;
+
+  if (options.floor === 0 || options.floor === options.floors - 1 || detail === "full") {
+    addChildBox(mesh, frameWidth, frameHeight, TRIM_DEPTH, trimMaterial, { x, y, z: frameZ });
+  }
+  addChildBox(mesh, frameWidth * glassWidthScale, frameHeight * glassHeightScale, GLASS_DEPTH, glassMaterial, { x, y, z: glassZ });
+
+  const mullionWidth = Math.max(0.012, frameWidth * (options.style === "glassTower" ? 0.035 : 0.05));
+  const mullionHeight = Math.max(0.012, frameHeight * 0.055);
+  if (detail !== "lean") {
+    addChildBox(mesh, mullionWidth, frameHeight * 0.72, DECAL_DEPTH, trimMaterial, { x, y, z: mullionZ });
+    if (options.style !== "warehouse" && options.style !== "utility") {
+      addChildBox(mesh, frameWidth * 0.72, mullionHeight, DECAL_DEPTH, trimMaterial, { x, y, z: mullionZ + 0.003 });
+    }
+  }
+
+  if (detail === "full" && options.style !== "glassTower") {
+    const sillHeight = Math.max(0.016, frameHeight * 0.09);
+    addChildBox(mesh, frameWidth * 1.08, sillHeight, TRIM_DEPTH, trimMaterial, {
+      x,
+      y: y - frameHeight * 0.5 - sillHeight * 0.62,
+      z: frameZ + 0.004
+    });
+  }
+
+  if (variant % 13 === 0) {
+    addChildBox(mesh, frameWidth * 0.62, frameHeight * 0.58, DECAL_DEPTH, "dark_window", {
+      x,
+      y,
+      z: mullionZ + 0.006
+    });
+  }
+}
+
+function facadeGlassMaterial(style: BuildingVisualStyle, variant: number): string {
+  if (variant % 13 === 0) {
+    return "dark_window";
+  }
+  if (style === "glassTower" || style === "civic" || style === "utility") {
+    return "cool_window";
+  }
+  if (style === "market") {
+    return "shop_glass";
+  }
+  return "warm_window";
+}
+
+function addWarehouseFacadeMarks(mesh: THREE.Mesh, options: BuildingCellVisualOptions, trimMaterial: THREE.Material): void {
+  const size = options.size;
+  const z = frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.006);
+  const railCount = options.style === "warehouse" ? 3 : 2;
+  for (let index = 0; index < railCount; index += 1) {
+    const y = -size.y * 0.28 + index * size.y * 0.15;
+    addChildBox(mesh, size.x * 0.58, 0.012, DECAL_DEPTH, trimMaterial, { y, z });
+  }
+  if (options.floor === 0 && options.style === "warehouse") {
+    addChildBox(mesh, size.x * 0.42, size.y * 0.26, TRIM_DEPTH, trimMaterial, {
+      y: -size.y * 0.18,
+      z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.012)
+    });
+  }
+}
+
+function addApartmentBalcony(mesh: THREE.Mesh, options: BuildingCellVisualOptions): void {
+  const size = options.size;
+  const z = frontLayerZ(size, TRIM_DEPTH, FRONT_DECAL_OFFSET + 0.018);
+  const y = -size.y * 0.2;
+  addChildBox(mesh, size.x * 0.66, 0.024, 0.072, material("balcony_rail"), { y, z });
+  for (const x of [-0.28, 0, 0.28]) {
+    addChildBox(mesh, 0.014, 0.12, 0.044, material("balcony_rail"), {
+      x: size.x * x,
+      y: y + 0.05,
+      z: z + 0.006
+    });
   }
 }
 
@@ -836,13 +1062,23 @@ function addVerticalTrim(
   leftEdge: boolean,
   rightEdge: boolean
 ): void {
-  addChildBox(mesh, 0.035, size.y * 0.96, 0.024, materialRef, { x: -size.x * 0.46, z: size.z * 0.5 + 0.032 });
-  addChildBox(mesh, 0.035, size.y * 0.96, 0.024, materialRef, { x: size.x * 0.46, z: size.z * 0.5 + 0.032 });
+  addChildBox(mesh, 0.035, size.y * 0.96, TRIM_DEPTH, materialRef, {
+    x: -size.x * 0.46,
+    z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.006)
+  });
+  addChildBox(mesh, 0.035, size.y * 0.96, TRIM_DEPTH, materialRef, {
+    x: size.x * 0.46,
+    z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.006)
+  });
   if (leftEdge) {
-    addChildBox(mesh, 0.018, size.y * 0.78, size.z * 0.74, materialRef, { x: -size.x * 0.5 - 0.014 });
+    addChildBox(mesh, TRIM_DEPTH, size.y * 0.78, size.z * 0.74, materialRef, {
+      x: leftLayerX(size, TRIM_DEPTH, SIDE_TRIM_OFFSET)
+    });
   }
   if (rightEdge) {
-    addChildBox(mesh, 0.018, size.y * 0.78, size.z * 0.74, materialRef, { x: size.x * 0.5 + 0.014 });
+    addChildBox(mesh, TRIM_DEPTH, size.y * 0.78, size.z * 0.74, materialRef, {
+      x: rightLayerX(size, TRIM_DEPTH, SIDE_TRIM_OFFSET)
+    });
   }
 }
 
@@ -851,18 +1087,75 @@ function addStorefront(
   size: THREE.Vector3,
   signMaterial: THREE.Material,
   style: BuildingVisualStyle,
-  column: number
+  column: number,
+  trimMaterial: THREE.Material
 ): void {
   if (style === "industrial" && column % 2 === 0) {
-    addChildBox(mesh, size.x * 0.72, 0.09, 0.03, signMaterial, { y: -size.y * 0.24, z: size.z * 0.5 + 0.045 });
-    addChildBox(mesh, 0.035, size.y * 0.72, 0.035, material("service_pipe"), { x: -size.x * 0.38, y: 0, z: size.z * 0.5 + 0.056 });
+    addChildBox(mesh, size.x * 0.72, 0.09, DECAL_DEPTH, signMaterial, {
+      y: -size.y * 0.24,
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET)
+    });
+    addChildBox(mesh, size.x * 0.42, size.y * 0.24, TRIM_DEPTH, trimMaterial, {
+      y: -size.y * 0.08,
+      z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.012)
+    });
+    addChildBox(mesh, 0.035, size.y * 0.72, 0.035, material("service_pipe"), {
+      x: -size.x * 0.38,
+      y: 0,
+      z: frontLayerZ(size, 0.035, FRONT_DECAL_OFFSET + 0.012)
+    });
+  } else if (style === "warehouse") {
+    addChildBox(mesh, size.x * 0.66, 0.07, DECAL_DEPTH, signMaterial, {
+      y: -size.y * 0.28,
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET)
+    });
+    addChildBox(mesh, size.x * 0.54, size.y * 0.28, TRIM_DEPTH, trimMaterial, {
+      y: -size.y * 0.08,
+      z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.012)
+    });
+    for (const y of [-0.17, -0.08, 0.01]) {
+      addChildBox(mesh, size.x * 0.5, 0.012, DECAL_DEPTH, trimMaterial, {
+        y: size.y * y,
+        z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.008)
+      });
+    }
   } else if (style === "market" || style === "apartment") {
-    addChildBox(mesh, size.x * 0.78, 0.08, 0.035, signMaterial, { y: -size.y * 0.26, z: size.z * 0.5 + 0.046 });
-    addChildBox(mesh, size.x * 0.58, 0.17, 0.022, material("shop_glass"), { y: -size.y * 0.06, z: size.z * 0.5 + 0.038 });
-    addChildBox(mesh, size.x * 0.72, 0.045, 0.1, material("awning_red"), { y: -size.y * 0.17, z: size.z * 0.5 + 0.08, rotationX: Math.PI * 0.04 });
+    addChildBox(mesh, size.x * 0.78, 0.08, DECAL_DEPTH, signMaterial, {
+      y: -size.y * 0.26,
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET)
+    });
+    addChildBox(mesh, size.x * 0.62, 0.19, TRIM_DEPTH, trimMaterial, {
+      y: -size.y * 0.06,
+      z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.014)
+    });
+    addChildBox(mesh, size.x * 0.44, 0.15, GLASS_DEPTH, material("shop_glass"), {
+      y: -size.y * 0.055,
+      z: frontLayerZ(size, GLASS_DEPTH, FRONT_GLASS_OFFSET + 0.006)
+    });
+    addChildBox(mesh, 0.055, 0.18, DECAL_DEPTH, trimMaterial, {
+      x: size.x * 0.18,
+      y: -size.y * 0.065,
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.006)
+    });
+    addChildBox(mesh, size.x * 0.72, 0.045, 0.1, material("awning_red"), {
+      y: -size.y * 0.17,
+      z: frontLayerZ(size, 0.1, FRONT_DECAL_OFFSET + 0.03),
+      rotationX: Math.PI * 0.04
+    });
   } else if (style === "civic" || style === "utility") {
-    addChildBox(mesh, size.x * 0.64, 0.07, 0.026, signMaterial, { y: -size.y * 0.26, z: size.z * 0.5 + 0.04 });
-    addChildBox(mesh, 0.035, size.y * 0.82, 0.035, material("service_pipe"), { x: size.x * 0.38, y: 0, z: size.z * 0.5 + 0.056 });
+    addChildBox(mesh, size.x * 0.64, 0.07, DECAL_DEPTH, signMaterial, {
+      y: -size.y * 0.26,
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET)
+    });
+    addChildBox(mesh, size.x * 0.28, size.y * 0.22, TRIM_DEPTH, trimMaterial, {
+      y: -size.y * 0.08,
+      z: frontLayerZ(size, TRIM_DEPTH, FRONT_TRIM_OFFSET + 0.012)
+    });
+    addChildBox(mesh, 0.035, size.y * 0.82, 0.035, material("service_pipe"), {
+      x: size.x * 0.38,
+      y: 0,
+      z: frontLayerZ(size, 0.035, FRONT_DECAL_OFFSET + 0.012)
+    });
   }
 }
 
@@ -947,32 +1240,38 @@ function addRoofDetail(mesh: THREE.Mesh, options: BuildingCellVisualOptions, roo
   }
 }
 
-function addPremiumFacadeDetails(mesh: THREE.Mesh, options: BuildingCellVisualOptions, signMaterial: THREE.Material): void {
+function addPremiumFacadeDetails(
+  mesh: THREE.Mesh,
+  options: BuildingCellVisualOptions,
+  signMaterial: THREE.Material
+): void {
+  const size = options.size;
+  const prominentCell = options.floor === 0 || options.floor === options.floors - 1 || (Boolean(options.brand) && options.column === 0);
   if (options.brand && options.column === 0 && (options.floor === 0 || options.floor === options.floors - 1)) {
-    addFauxBrandSign(mesh, options.size, options.brand, options.floor === options.floors - 1 ? "crown" : "storefront");
+    addFauxBrandSign(mesh, size, options.brand, options.floor === options.floors - 1 ? "crown" : "storefront");
   }
-  if (options.scoreRole === "target") {
-    addChildBox(mesh, options.size.x * 0.52, 0.08, 0.022, material("hazard_chevron"), {
-      y: options.size.y * 0.22,
-      z: options.size.z * 0.5 + 0.046
+  if (options.scoreRole === "target" && prominentCell) {
+    addChildBox(mesh, size.x * 0.52, 0.08, DECAL_DEPTH, material("hazard_chevron"), {
+      y: size.y * 0.22,
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.008)
     });
   }
-  if (options.style === "glassTower") {
-    addChildBox(mesh, 0.028, options.size.y * 0.74, 0.024, material("neon_cyan"), {
-      x: options.size.x * 0.38,
+  if (options.style === "glassTower" && prominentCell) {
+    addChildBox(mesh, 0.028, size.y * 0.74, DECAL_DEPTH, material("neon_cyan"), {
+      x: size.x * 0.38,
       y: 0,
-      z: options.size.z * 0.5 + 0.044
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET)
     });
-    addChildBox(mesh, 0.028, options.size.y * 0.74, 0.024, material("neon_cyan"), {
-      x: -options.size.x * 0.38,
+    addChildBox(mesh, 0.028, size.y * 0.74, DECAL_DEPTH, material("neon_cyan"), {
+      x: -size.x * 0.38,
       y: 0,
-      z: options.size.z * 0.5 + 0.044
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET)
     });
   }
   if (options.floor === 0 && options.column % 2 === 0) {
-    addChildBox(mesh, options.size.x * 0.36, 0.045, 0.026, signMaterial, {
-      y: -options.size.y * 0.34,
-      z: options.size.z * 0.5 + 0.052
+    addChildBox(mesh, size.x * 0.36, 0.045, DECAL_DEPTH, signMaterial, {
+      y: -size.y * 0.34,
+      z: frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.012)
     });
   }
   if (options.brand && options.column === 0) {
@@ -982,15 +1281,15 @@ function addPremiumFacadeDetails(mesh: THREE.Mesh, options: BuildingCellVisualOp
 
 function addFacadeDepthBreaks(mesh: THREE.Mesh, options: BuildingCellVisualOptions, trimMaterial: THREE.Material): void {
   const size = options.size;
-  const z = size.z * 0.5 + 0.047;
+  const z = frontLayerZ(size, TRIM_DEPTH, FRONT_DECAL_OFFSET + 0.002);
   if (options.floors >= 6 && (options.floor % 2 === 1 || options.floor === options.floors - 1)) {
-    addChildBox(mesh, size.x * 0.82, 0.022, 0.018, trimMaterial, {
+    addChildBox(mesh, size.x * 0.82, 0.022, TRIM_DEPTH, trimMaterial, {
       y: -size.y * 0.42,
       z
     });
   }
   if (options.columns >= 4 && (options.column === 0 || options.column === options.columns - 1)) {
-    addChildBox(mesh, 0.026, size.y * 0.78, 0.018, material("shadow_reveal"), {
+    addChildBox(mesh, 0.026, size.y * 0.78, DECAL_DEPTH, material("shadow_reveal"), {
       x: options.column === 0 ? size.x * 0.42 : -size.x * 0.42,
       y: -size.y * 0.02,
       z: z + 0.004
@@ -1005,11 +1304,11 @@ function addFacadeDepthBreaks(mesh: THREE.Mesh, options: BuildingCellVisualOptio
 }
 
 function addFauxBrandSign(mesh: THREE.Mesh, size: THREE.Vector3, brand: BuildingBrand, placement: "storefront" | "crown"): void {
-  const z = size.z * 0.5 + 0.062;
+  const z = frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.014);
   const y = placement === "crown" ? size.y * 0.28 : -size.y * 0.3;
   const panelWidth = placement === "crown" ? size.x * 0.44 : size.x * 0.5;
   const panelHeight = placement === "crown" ? size.y * 0.16 : size.y * 0.12;
-  addChildBox(mesh, panelWidth, Math.max(0.052, panelHeight), 0.026, material(`${brand}_brand_panel`), { y, z });
+  addChildBox(mesh, panelWidth, Math.max(0.052, panelHeight), DECAL_DEPTH, material(`${brand}_brand_panel`), { y, z });
 
   if (brand === "pear") {
     addChildSphere(mesh, Math.max(0.035, panelHeight * 0.28), "pear_logo_body", {
