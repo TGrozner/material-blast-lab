@@ -6,7 +6,6 @@ import { materialAtlasTile } from "./visualAssets";
 const LAUNCH_MUZZLE_CLEARANCE = 0.58;
 const CANNON_MODEL_PATH = "assets/models/cannon-quaternius/cannon.glb";
 const CANNON_MUZZLE_LOCAL_Y = 0.38;
-const CANNON_MUZZLE_DISTANCE = 0.42;
 // Matches the static "High siege battery" deck: top y=-0.38, front edge z=-0.5 in cannon-local space.
 const CANNON_DECK_TOP_LOCAL_Y = -0.38;
 const CANNON_DECK_FRONT_EDGE_LOCAL_Z = -0.5;
@@ -15,6 +14,8 @@ const CANNON_MODEL_CONTACT_MIN_Z = -1.9519;
 const CANNON_MODEL_DECK_CONTACT_MARGIN_Z = 0.04;
 const CANNON_MODEL_OFFSET_Y = CANNON_DECK_TOP_LOCAL_Y;
 const CANNON_MODEL_OFFSET_Z = CANNON_DECK_FRONT_EDGE_LOCAL_Z - CANNON_MODEL_CONTACT_MIN_Z + CANNON_MODEL_DECK_CONTACT_MARGIN_Z;
+const CANNON_TURRET_PIVOT_LOCAL_Z = CANNON_MODEL_OFFSET_Z;
+const CANNON_MUZZLE_DISTANCE = 1.91;
 const CANNON_MODEL_SCALE = new THREE.Vector3(2.4, 1.75, 3.6);
 const CANNON_MODEL_FORWARD_ROTATION = Math.PI;
 const CANNON_MODEL_MATERIAL_COLORS: Record<string, number> = {
@@ -29,9 +30,12 @@ export type CannonVisualState = "loading" | "ready" | "fallback";
 export class Cannon {
   readonly group = new THREE.Group();
 
-  private readonly fallbackVisuals = new THREE.Group();
+  private readonly fallbackBaseVisuals = new THREE.Group();
+  private readonly fallbackTurretVisuals = new THREE.Group();
   private readonly barrelShell = new THREE.Group();
-  private readonly modelMount = new THREE.Group();
+  private readonly modelBaseMount = new THREE.Group();
+  private readonly modelTurretMount = new THREE.Group();
+  private readonly turretYawPivot = new THREE.Group();
   private readonly barrelPivot = new THREE.Group();
   private readonly barrel = new THREE.Mesh(
     new THREE.CylinderGeometry(0.24, 0.42, 3.5, 28),
@@ -66,7 +70,7 @@ export class Cannon {
     base.castShadow = true;
     base.receiveShadow = true;
     base.position.y = -0.19;
-    this.fallbackVisuals.add(base);
+    this.fallbackBaseVisuals.add(base);
 
     const yoke = new THREE.Mesh(
       new THREE.BoxGeometry(1.78, 0.62, 0.68),
@@ -74,7 +78,7 @@ export class Cannon {
     );
     yoke.castShadow = true;
     yoke.position.y = 0.42;
-    this.fallbackVisuals.add(yoke);
+    this.fallbackTurretVisuals.add(yoke);
 
     this.barrel.rotation.x = Math.PI * 0.5;
     this.barrel.position.z = -1.18;
@@ -99,10 +103,14 @@ export class Cannon {
     muzzleBand.position.z = -2.62;
     this.barrelShell.add(this.barrel, muzzle, leftRail, rightRail, rearBand, muzzleBand);
     this.barrelPivot.position.y = CANNON_MUZZLE_LOCAL_Y;
-    this.modelMount.position.set(0, CANNON_MODEL_OFFSET_Y, CANNON_MODEL_OFFSET_Z);
-    this.modelMount.visible = false;
+    this.modelBaseMount.position.set(0, CANNON_MODEL_OFFSET_Y, CANNON_MODEL_OFFSET_Z);
+    this.modelBaseMount.visible = false;
+    this.turretYawPivot.position.z = CANNON_TURRET_PIVOT_LOCAL_Z;
+    this.modelTurretMount.position.set(0, CANNON_MODEL_OFFSET_Y, 0);
+    this.modelTurretMount.visible = false;
     this.barrelPivot.add(this.barrelShell);
-    this.group.add(this.modelMount, this.fallbackVisuals, this.barrelPivot);
+    this.turretYawPivot.add(this.modelTurretMount, this.fallbackTurretVisuals, this.barrelPivot);
+    this.group.add(this.modelBaseMount, this.fallbackBaseVisuals, this.turretYawPivot);
     this.scene.add(this.group);
     this.loadCannonModel();
 
@@ -150,7 +158,7 @@ export class Cannon {
     trajectoryMaterial.color.copy(projectile.color);
     trajectoryMaterial.opacity = THREE.MathUtils.clamp(0.64 + pressure * 0.1 + chargePulse * 0.08, 0.55, 0.9);
     this.barrel.position.z = -1.18 + this.recoil;
-    this.modelMount.position.z = CANNON_MODEL_OFFSET_Z + this.recoil * 0.32;
+    this.modelTurretMount.position.z = this.recoil * 0.32;
     const barrelPressure = 1 + (powerScale - 1) * 0.045 + (sizeScale - 1) * 0.035;
     this.barrel.scale.set(1 + (sizeScale - 1) * 0.045, barrelPressure, 1);
     const nextTrajectoryKey = `${projectile.id}:${powerScale.toFixed(3)}:${sizeScale.toFixed(3)}`;
@@ -205,7 +213,7 @@ export class Cannon {
   }
 
   private updateTransforms(): void {
-    this.group.rotation.y = -this.yaw;
+    this.turretYawPivot.rotation.y = -this.yaw;
     this.barrelPivot.rotation.x = this.pitch;
   }
 
@@ -228,16 +236,27 @@ export class Cannon {
           object.frustumCulled = false;
           applyModelMaterialSettings(object.material);
         });
-        this.modelMount.add(model);
-        this.modelMount.visible = true;
-        this.fallbackVisuals.visible = false;
+        const baseNode = model.getObjectByName("Turret_Cannon_Base");
+        const topNode = model.getObjectByName("Turret_Cannon_Top");
+        if (baseNode && topNode) {
+          addNormalizedModelPart(model, baseNode, this.modelBaseMount);
+          addNormalizedModelPart(model, topNode, this.modelTurretMount);
+        } else {
+          this.modelTurretMount.add(model);
+        }
+        this.modelBaseMount.visible = Boolean(baseNode && topNode);
+        this.modelTurretMount.visible = true;
+        this.fallbackBaseVisuals.visible = false;
+        this.fallbackTurretVisuals.visible = false;
         this.barrelShell.visible = false;
         this.modelLoadState = "ready";
       },
       undefined,
       () => {
-        this.modelMount.visible = false;
-        this.fallbackVisuals.visible = true;
+        this.modelBaseMount.visible = false;
+        this.modelTurretMount.visible = false;
+        this.fallbackBaseVisuals.visible = true;
+        this.fallbackTurretVisuals.visible = true;
         this.barrelShell.visible = true;
         this.modelLoadState = "fallback";
       }
@@ -245,7 +264,7 @@ export class Cannon {
   }
 
   private getPivotOrigin(): THREE.Vector3 {
-    return this.group.position.clone().add(new THREE.Vector3(0, CANNON_MUZZLE_LOCAL_Y, 0));
+    return this.group.position.clone().add(new THREE.Vector3(0, CANNON_MUZZLE_LOCAL_Y, CANNON_TURRET_PIVOT_LOCAL_Z));
   }
 
   private solveBallisticPitch(directionToTarget: THREE.Vector3, muzzleSpeed?: number): number {
@@ -324,6 +343,12 @@ function normalizeModelToDeck(model: THREE.Object3D): void {
   const center = new THREE.Vector3();
   bounds.getCenter(center);
   model.position.set(-center.x, -bounds.min.y, -center.z);
+}
+
+function addNormalizedModelPart(model: THREE.Object3D, part: THREE.Object3D, target: THREE.Object3D): void {
+  model.updateMatrix();
+  part.applyMatrix4(model.matrix);
+  target.add(part);
 }
 
 function isMesh(object: THREE.Object3D): object is THREE.Mesh {

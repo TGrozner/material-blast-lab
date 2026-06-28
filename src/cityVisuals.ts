@@ -100,6 +100,7 @@ export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisu
   addWindowRows(mesh, options, profile);
   addVerticalTrim(mesh, options.size, palette.trim, options.column === 0, options.column === options.columns - 1);
   addPremiumFacadeDetails(mesh, options, palette.sign);
+  addFacadeWeathering(mesh, options, profile, detail);
 
   if (options.floor === 0) {
     addStorefront(mesh, options.size, palette.sign, options.style, options.column, palette.trim, profile);
@@ -139,6 +140,9 @@ function decorateNeutralBuildingCell(
   }
   if (options.brand && options.column === 0 && isTop) {
     addFacadeDepthBreaks(mesh, options, palette.trim);
+  }
+  if ((options.brand && (isGround || isTop)) || (isTop && isEdgeColumn)) {
+    addFacadeWeathering(mesh, options, profile, options.brand ? "standard" : "lean");
   }
   if (isTop) {
     addNeutralRoofDetail(mesh, options.size, palette.roof, profile);
@@ -1357,6 +1361,7 @@ function addRoofDetail(
       y: size.y * 0.5 + 0.144
     });
   }
+  addRoofSilhouetteAccents(mesh, options, profile);
 }
 
 function addPremiumFacadeDetails(
@@ -1395,6 +1400,91 @@ function addPremiumFacadeDetails(
   }
   if (options.brand && options.column === 0) {
     addFacadeDepthBreaks(mesh, options, signMaterial);
+  }
+}
+
+function addFacadeWeathering(
+  mesh: THREE.Mesh,
+  options: BuildingCellVisualOptions,
+  profile: BuildingKitProfile,
+  _detail: "full" | "standard" | "lean"
+): void {
+  const size = options.size;
+  const variant = buildingVariant(options);
+  const targetFeatureCell =
+    options.scoreRole === "target" &&
+    options.column === 0 &&
+    (options.floor === 0 || options.floor === options.floors - 1);
+  const brandFeatureCell = Boolean(options.brand) && options.column === 0 && (options.floor === 0 || options.floor === options.floors - 1);
+  const signatureCell = brandFeatureCell || targetFeatureCell;
+  if (!signatureCell) {
+    return;
+  }
+
+  const z = frontLayerZ(size, DECAL_DEPTH, FRONT_DECAL_OFFSET + 0.018);
+  const grimeCount = signatureCell ? Math.min(3, profile.weathering.grime.length) : Math.min(1, profile.weathering.grime.length);
+  for (let index = 0; index < grimeCount; index += 1) {
+    const xRatio = profile.weathering.grime[index];
+    const height = size.y * THREE.MathUtils.clamp(0.18 + profile.weathering.soot * 0.16 - index * 0.025, 0.14, 0.32);
+    addChildBox(mesh, Math.max(0.018, size.x * 0.026), height, DECAL_DEPTH, "shadow_reveal", {
+      x: size.x * xRatio,
+      y: size.y * (0.24 - index * 0.12),
+      z
+    });
+  }
+
+  if (options.floor === options.floors - 1 && profile.weathering.soot > 0.42) {
+    addChildBox(mesh, size.x * 0.62, Math.max(0.025, size.y * 0.04), DECAL_DEPTH, "shadow_reveal", {
+      y: size.y * 0.36,
+      z: z + 0.004
+    });
+  }
+
+  if (_detail !== "lean" && profile.weathering.brokenWindows > 0.12 && variant % 7 < Math.ceil(profile.weathering.brokenWindows * 10)) {
+    addChildBox(mesh, size.x * 0.16, size.y * 0.12, DECAL_DEPTH, "dark_window", {
+      x: size.x * (((variant >>> 3) % 5) - 2) * 0.12,
+      y: size.y * ((((variant >>> 6) % 3) - 1) * 0.18 + profile.windows.yOffset),
+      z: z + 0.006
+    });
+  }
+
+  if (profile.weathering.litWindows > 0.12 && signatureCell && variant % 11 < Math.ceil(profile.weathering.litWindows * 10)) {
+    addChildBox(mesh, size.x * 0.12, size.y * 0.085, DECAL_DEPTH, "warm_window", {
+      x: size.x * (((variant >>> 2) % 3) - 1) * 0.18,
+      y: size.y * (profile.windows.yOffset + 0.16),
+      z: z + 0.008
+    });
+  }
+}
+
+function addRoofSilhouetteAccents(mesh: THREE.Mesh, options: BuildingCellVisualOptions, profile: BuildingKitProfile): void {
+  const size = options.size;
+  const silhouette = profile.silhouette;
+  const edgeColumn = options.column === 0 || options.column === options.columns - 1;
+  const prominent = Boolean(options.brand) && edgeColumn;
+  if (!prominent) {
+    return;
+  }
+
+  if (silhouette.crownInset > 0.04) {
+    addChildBox(mesh, size.x * Math.max(0.32, 1 - silhouette.crownInset * 2.2), 0.036, size.z * Math.max(0.18, 0.26 + silhouette.setbackDepth), material("mechanical_screen"), {
+      y: size.y * 0.5 + 0.168,
+      z: -size.z * 0.18
+    });
+  }
+  if (silhouette.sideBladeHeight > 0.32 && edgeColumn) {
+    addChildBox(mesh, 0.035, silhouette.sideBladeHeight, 0.065, material("roof_rail"), {
+      x: options.column === 0 ? -size.x * 0.43 : size.x * 0.43,
+      y: size.y * 0.5 + silhouette.sideBladeHeight * 0.5,
+      z: size.z * 0.18
+    });
+  }
+  if (silhouette.antennaHeight > 0.18 && (options.column + options.floors) % 2 === 0) {
+    addChildCylinder(mesh, 0.01, 0.016, silhouette.antennaHeight, material("roof_rail"), {
+      x: size.x * 0.24,
+      y: size.y * 0.5 + 0.18 + silhouette.antennaHeight * 0.5,
+      z: -size.z * 0.24
+    });
   }
 }
 

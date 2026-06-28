@@ -3890,8 +3890,14 @@ function addRoadDecals(context: LevelContext): void {
     { name: "east curb scuff", x: 13.25, z: -4.65, width: 0.5, depth: 1.55, tile: 7, color: 0x8c969b, opacity: 0.3, rotation: -0.08 },
     { name: "north tanker tire sweep", x: -5.4, z: -7.24, width: 2.8, depth: 0.34, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: -0.08 },
     { name: "east service tire sweep", x: 10.16, z: -5.2, width: 0.34, depth: 2.7, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: 0.04 },
+    { name: "central avenue bus brake left", x: -0.34, z: -5.85, width: 0.3, depth: 2.55, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: 0.02 },
+    { name: "central avenue bus brake right", x: 0.28, z: -5.78, width: 0.3, depth: 2.48, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: 0.03 },
+    { name: "cross boulevard turn skid", x: -4.2, z: -1.55, width: 2.6, depth: 0.3, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: -0.08 },
+    { name: "south service delivery skid", x: 3.45, z: 5.05, width: 2.15, depth: 0.28, tile: 9, color: 0x0c1114, opacity: 0.36, rotation: 0.04 },
     { name: "west road asphalt patch", x: -10.68, z: -1.05, width: 0.72, depth: 1.22, tile: 12, color: 0x182128, opacity: 0.45, rotation: -0.12 },
     { name: "central avenue asphalt patch", x: 0.12, z: 2.85, width: 0.86, depth: 1.45, tile: 12, color: 0x182128, opacity: 0.42, rotation: 0.08 },
+    { name: "north service asphalt scar", x: 6.4, z: -7.22, width: 1.5, depth: 0.5, tile: 12, color: 0x182128, opacity: 0.42, rotation: 0.04 },
+    { name: "east service patched stop", x: 10.08, z: 4.4, width: 0.62, depth: 1.35, tile: 12, color: 0x182128, opacity: 0.42, rotation: -0.02 },
     { name: "south service repair seam", x: 7.1, z: 5.04, width: 2.25, depth: 0.18, tile: 7, color: 0x98a7ad, opacity: 0.24, rotation: 0.02 },
     { name: "battery deck grime fan", x: 0.55, z: 16.85, width: 4.2, depth: 1.6, tile: 9, color: 0x0d1114, opacity: 0.28, rotation: -0.05 },
     { name: "gas station hazard paint", x: -6.8, z: -3.85, width: 1.75, depth: 0.44, tile: 3, color: 0xffc75c, opacity: 0.36, rotation: -0.18 },
@@ -3901,6 +3907,8 @@ function addRoadDecals(context: LevelContext): void {
     { name: "south apron cargo stain", x: -5.6, z: 11.85, width: 1.55, depth: 0.62, tile: 9, color: 0x10161b, opacity: 0.32, rotation: 0.22 },
     { name: "east depot drain", x: 12.15, z: 7.15, width: 0.5, depth: 0.5, tile: 10, color: 0x7b8990, opacity: 0.42, rotation: -Math.PI * 0.18 },
     { name: "west curb repair marker", x: -13.2, z: 6.75, width: 0.48, depth: 1.8, tile: 7, color: 0x8c969b, opacity: 0.26, rotation: 0.08 },
+    { name: "north curb repair marker", x: 4.8, z: -8.56, width: 1.65, depth: 0.42, tile: 7, color: 0x8c969b, opacity: 0.26, rotation: -0.02 },
+    { name: "east curb loading scuff", x: 13.2, z: 1.35, width: 0.42, depth: 1.65, tile: 7, color: 0x8c969b, opacity: 0.26, rotation: 0.04 },
     { name: "central crosswalk soot", x: 2.7, z: -1.28, width: 1.1, depth: 0.24, tile: 9, color: 0x0d1114, opacity: 0.24, rotation: 0 },
     { name: "battery access road arrow", x: -6.25, z: 8.35, width: 1.05, depth: 0.4, tile: 5, color: 0xffd873, opacity: 0.36, rotation: Math.PI * 0.5 }
   ] as const;
