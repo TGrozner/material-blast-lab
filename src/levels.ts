@@ -3910,7 +3910,12 @@ function addRoadDecals(context: LevelContext): void {
     { name: "north curb repair marker", x: 4.8, z: -8.56, width: 1.65, depth: 0.42, tile: 7, color: 0x8c969b, opacity: 0.26, rotation: -0.02 },
     { name: "east curb loading scuff", x: 13.2, z: 1.35, width: 0.42, depth: 1.65, tile: 7, color: 0x8c969b, opacity: 0.26, rotation: 0.04 },
     { name: "central crosswalk soot", x: 2.7, z: -1.28, width: 1.1, depth: 0.24, tile: 9, color: 0x0d1114, opacity: 0.24, rotation: 0 },
-    { name: "battery access road arrow", x: -6.25, z: 8.35, width: 1.05, depth: 0.4, tile: 5, color: 0xffd873, opacity: 0.36, rotation: Math.PI * 0.5 }
+    { name: "battery access road arrow", x: -6.25, z: 8.35, width: 1.05, depth: 0.4, tile: 5, color: 0xffd873, opacity: 0.36, rotation: Math.PI * 0.5 },
+    { name: "cross boulevard loading stencil", x: -3.6, z: -1.05, width: 1.55, depth: 0.76, tile: 15, color: 0xd8e2e5, opacity: 0.34, rotation: 0 },
+    { name: "east depot loading stencil", x: 11.95, z: 4.25, width: 0.72, depth: 1.55, tile: 15, color: 0xd8e2e5, opacity: 0.3, rotation: Math.PI * 0.5 },
+    { name: "central bus stop ghost paint", x: -0.9, z: -5.75, width: 1.5, depth: 0.48, tile: 15, color: 0xf0c96a, opacity: 0.28, rotation: 0 },
+    { name: "underpass broken glass", x: 3.85, z: -6.05, width: 1.12, depth: 0.58, tile: 8, color: 0xaeefff, opacity: 0.24, rotation: -0.24 },
+    { name: "south apron scorch bloom", x: 4.9, z: 10.85, width: 1.34, depth: 0.9, tile: 4, color: 0x0a0d0f, opacity: 0.28, rotation: 0.12 }
   ] as const;
   const decalBatches = new Map<string, { color: THREE.ColorRepresentation; opacity: number; geometries: THREE.BufferGeometry[] }>();
   const atlasTexture = graphicTexture("decalAtlas", {
@@ -4321,6 +4326,7 @@ function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, 
   if (existing) {
     return existing;
   }
+  const groundMap = groundPanelMaterialMap(color, opacity);
   const material =
     opacity < 1
       ? new THREE.MeshBasicMaterial({
@@ -4336,6 +4342,7 @@ function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, 
         })
       : new THREE.MeshStandardMaterial({
           color,
+          map: groundMap,
           roughness: 0.86,
           metalness: 0.08,
           depthWrite: true,
@@ -4346,6 +4353,19 @@ function panelRenderMaterial(color: THREE.ColorRepresentation, opacity: number, 
         });
   panelRenderMaterials.set(key, material);
   return material;
+}
+
+function groundPanelMaterialMap(color: THREE.ColorRepresentation, opacity: number): THREE.Texture | undefined {
+  if (opacity < 1 || typeof color !== "number") {
+    return undefined;
+  }
+  if (color === CITY_ROAD_SURFACE_COLOR) {
+    return materialAtlasTile(6);
+  }
+  if (color === CITY_GROUND_COLOR || color === CITY_BLOCK_APRON_COLOR || color === 0x171f25) {
+    return materialAtlasTile(12);
+  }
+  return undefined;
 }
 
 function sharedLevelMaterial(key: string, create: () => THREE.Material): THREE.Material {

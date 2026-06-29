@@ -790,6 +790,8 @@ function createDistantAtmosphereTexture(): THREE.CanvasTexture {
   context.fillStyle = haze;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
+  paintDistantSkyline(context, canvas.width, canvas.height);
+
   context.save();
   context.translate(canvas.width * 0.5, canvas.height * 0.68);
   context.rotate(-0.04);
@@ -810,6 +812,76 @@ function createDistantAtmosphereTexture(): THREE.CanvasTexture {
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   return texture;
+}
+
+function paintDistantSkyline(context: CanvasRenderingContext2D, width: number, height: number): void {
+  const skylineBase = height * 0.9;
+  const rearTowers = [
+    [18, 34, 96],
+    [78, 46, 142],
+    [146, 28, 112],
+    [212, 64, 164],
+    [318, 38, 136],
+    [392, 76, 182],
+    [512, 32, 118],
+    [594, 58, 152],
+    [690, 42, 104],
+    [760, 84, 172],
+    [900, 42, 126],
+    [962, 34, 96]
+  ] as const;
+  const frontTowers = [
+    [44, 42, 78],
+    [118, 60, 104],
+    [242, 44, 92],
+    [288, 74, 118],
+    [442, 62, 102],
+    [552, 94, 132],
+    [668, 44, 86],
+    [826, 66, 108],
+    [936, 56, 92]
+  ] as const;
+
+  context.save();
+  context.fillStyle = "rgba(30, 48, 55, 0.2)";
+  for (const [x, towerWidth, towerHeight] of rearTowers) {
+    paintSkylineTower(context, x, skylineBase, towerWidth, towerHeight, 0.2);
+  }
+  context.fillStyle = "rgba(20, 34, 42, 0.26)";
+  for (const [x, towerWidth, towerHeight] of frontTowers) {
+    paintSkylineTower(context, x, skylineBase + 8, towerWidth, towerHeight, 0.32);
+  }
+  context.restore();
+
+  const skylineFade = context.createLinearGradient(0, height * 0.5, 0, height);
+  skylineFade.addColorStop(0, "rgba(188, 226, 234, 0)");
+  skylineFade.addColorStop(0.68, "rgba(188, 226, 234, 0.06)");
+  skylineFade.addColorStop(1, "rgba(232, 207, 158, 0.12)");
+  context.fillStyle = skylineFade;
+  context.fillRect(0, height * 0.45, width, height * 0.55);
+}
+
+function paintSkylineTower(context: CanvasRenderingContext2D, x: number, baseY: number, width: number, height: number, windowOpacity: number): void {
+  const towerFill = context.fillStyle;
+  const topY = baseY - height;
+  context.fillRect(x, topY, width, height);
+  if (height > 130) {
+    context.fillRect(x + width * 0.42, topY - 28, width * 0.16, 28);
+  }
+  context.fillStyle = "rgba(180, 226, 232, 0.08)";
+  context.fillRect(x + width * 0.08, topY + 8, width * 0.08, height - 12);
+  context.fillStyle = `rgba(245, 222, 158, ${windowOpacity})`;
+  const columns = Math.max(2, Math.floor(width / 14));
+  const rows = Math.max(3, Math.floor(height / 18));
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      if ((row * 7 + column * 11 + Math.floor(x)) % 5 === 0) {
+        continue;
+      }
+      context.fillRect(x + 7 + column * ((width - 14) / columns), topY + 14 + row * 15, Math.max(2, width * 0.055), 3);
+    }
+  }
+  context.fillStyle = towerFill;
 }
 
 function createIndustrialHazeTexture(): THREE.CanvasTexture {
@@ -6550,14 +6622,14 @@ function graphicsLightingProfile(quality: GraphicsQuality): GraphicsLightingProf
         fog: 0xcfd2c5,
         fogNear: 58,
         fogFar: 138,
-        exposure: 1.02,
+        exposure: 1.09,
         ambientSky: 0x9fd1dc,
         ambientGround: 0xa47b4a,
-        ambientIntensity: 0.68,
+        ambientIntensity: 0.86,
         sunColor: 0xffc474,
         sunIntensity: 3.02,
         skyFillColor: 0x6faec6,
-        skyFillIntensity: 0.2,
+        skyFillIntensity: 0.34,
         shadowMapSize: 1536
       };
     case "balanced":
@@ -6566,14 +6638,14 @@ function graphicsLightingProfile(quality: GraphicsQuality): GraphicsLightingProf
         fog: 0xcac8b7,
         fogNear: 52,
         fogFar: 128,
-        exposure: 1.04,
+        exposure: 1.13,
         ambientSky: 0x93c8d8,
         ambientGround: 0x9e7242,
-        ambientIntensity: 0.66,
+        ambientIntensity: 0.88,
         sunColor: 0xffb85f,
         sunIntensity: 3.18,
         skyFillColor: 0x64a8c2,
-        skyFillIntensity: 0.21,
+        skyFillIntensity: 0.37,
         shadowMapSize: 1536
       };
     case "cinematic":
@@ -6582,14 +6654,14 @@ function graphicsLightingProfile(quality: GraphicsQuality): GraphicsLightingProf
         fog: 0xc7bca3,
         fogNear: 46,
         fogFar: 118,
-        exposure: 1.06,
+        exposure: 1.19,
         ambientSky: 0x8ec1d0,
         ambientGround: 0x9a6a3a,
-        ambientIntensity: 0.62,
+        ambientIntensity: 0.92,
         sunColor: 0xffad55,
         sunIntensity: 3.34,
         skyFillColor: 0x5d9fbd,
-        skyFillIntensity: 0.18,
+        skyFillIntensity: 0.42,
         shadowMapSize: 2048
       };
   }
