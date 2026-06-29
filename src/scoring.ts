@@ -24,6 +24,8 @@ export interface ScoreBreakdown {
   collateralChaos: number;
   chainReactionBonus: number;
   remainingDebrisMotion: number;
+  weakPointBreakCount: number;
+  bossBreakCount: number;
   goldenEggDestroyed: boolean;
   goldenEggMultiplier: number;
   goldenEggBonus: number;
@@ -48,6 +50,8 @@ export class ShotScoreTracker {
   private maxChainCombo = 0;
   private goldenEggDestroyed = false;
   private readonly scoredObjects = new Map<number, number>();
+  private readonly weakPointBreakObjectIds = new Set<number>();
+  private readonly bossBreakObjectIds = new Set<number>();
 
   beginShot(projectile: ProjectileDefinition): void {
     this.targetDamage = 0;
@@ -58,6 +62,8 @@ export class ShotScoreTracker {
     this.goldenEggDestroyed = false;
     this.currentProjectile = projectile;
     this.scoredObjects.clear();
+    this.weakPointBreakObjectIds.clear();
+    this.bossBreakObjectIds.clear();
   }
 
   addExplosion(result: ExplosionResult): ScoreEvent[] {
@@ -65,6 +71,7 @@ export class ShotScoreTracker {
     if (result.affectedObjects.some((object) => isGoldenEggObject(object) && object.fractured)) {
       this.goldenEggDestroyed = true;
     }
+    this.recordSpecialBreaks(result);
     const target = this.dedupPositive(result);
     this.targetDamage += target.points;
     this.collateralChaos += result.materialChaos;
@@ -133,6 +140,8 @@ export class ShotScoreTracker {
       collateralChaos: Math.round(this.collateralChaos * modifier),
       chainReactionBonus: Math.round(this.chainReactionBonus * modifier),
       remainingDebrisMotion: Math.round(remainingDebrisMotion * modifier),
+      weakPointBreakCount: this.weakPointBreakObjectIds.size,
+      bossBreakCount: this.bossBreakObjectIds.size,
       goldenEggDestroyed: this.goldenEggDestroyed,
       goldenEggMultiplier,
       goldenEggBonus: Math.max(0, Math.round(modifiedRaw * (goldenEggMultiplier - 1))),
@@ -164,6 +173,20 @@ export class ShotScoreTracker {
       }
     }
     return { points, events: events.sort(sortScoreEvents).slice(0, 7) };
+  }
+
+  private recordSpecialBreaks(result: ExplosionResult): void {
+    for (const object of result.affectedObjects) {
+      if (!object.fractured || isGoldenEggObject(object)) {
+        continue;
+      }
+      if (isWeakPointObject(object)) {
+        this.weakPointBreakObjectIds.add(object.id);
+      }
+      if (isBossObject(object)) {
+        this.bossBreakObjectIds.add(object.id);
+      }
+    }
   }
 
   private collateralEvents(result: ExplosionResult): ScoreEvent[] {
@@ -198,6 +221,33 @@ function isGoldenEggObject(object: ExplosionAffectedObject): boolean {
   return zone.includes("golden-egg") || label.includes("golden egg");
 }
 
+function isWeakPointObject(object: ExplosionAffectedObject): boolean {
+  const text = searchableObjectText(object);
+  return (
+    text.includes("weak-point") ||
+    text.includes("weak point") ||
+    text.includes("shear pin") ||
+    text.includes("hoist pin") ||
+    text.includes("latch") ||
+    text.includes("coupler") ||
+    text.includes("support column") ||
+    text.includes("support pier") ||
+    text.includes("release")
+  );
+}
+
+function isBossObject(object: ExplosionAffectedObject): boolean {
+  if (isGoldenEggObject(object)) {
+    return false;
+  }
+  const text = searchableObjectText(object);
+  return text.includes("unique-boss") || text.includes("breaker-boss") || text.includes("archive-boss") || text.includes(" boss");
+}
+
+function searchableObjectText(object: ExplosionAffectedObject): string {
+  return `${object.label} ${object.zoneId ?? ""}`.toLowerCase();
+}
+
 function scoreEventFromObject(kind: ScoreEventKind, label: string, points: number, object: ExplosionAffectedObject): ScoreEvent {
   return {
     kind,
@@ -213,7 +263,7 @@ function sortScoreEvents(a: ScoreEvent, b: ScoreEvent): number {
 
 function chainLabel(combo: number): string {
   if (combo >= 4) {
-    return `COMBO x${combo}`;
+    return `MAYHEM COMBO x${combo}`;
   }
   if (combo >= 3) {
     return `CASCADE x${combo}`;
@@ -221,7 +271,7 @@ function chainLabel(combo: number): string {
   if (combo >= 2) {
     return `CHAIN x${combo}`;
   }
-  return "CHAIN";
+  return "CHAIN START";
 }
 
 function chainSourceLabel(label: string, combo: number): string {
@@ -230,9 +280,38 @@ function chainSourceLabel(label: string, combo: number): string {
 
 function objectScoreLabel(object: ExplosionAffectedObject): string {
   if (object.scoreRole === "target") {
+    if (isWeakPointObject(object)) {
+      return `${weakPointLabel(object)} ${object.fractured ? "BREAK" : "HIT"}`;
+    }
+    if (isBossObject(object)) {
+      return object.fractured ? "BOSS BREAK" : "BOSS HIT";
+    }
     return object.fractured ? "TARGET BREAK" : "TARGET HIT";
   }
   return `${materialLabel(object.materialId)} ${object.fractured ? fracturedVerb(object.materialId) : damagedVerb(object.materialId)}`;
+}
+
+function weakPointLabel(object: ExplosionAffectedObject): string {
+  const text = searchableObjectText(object);
+  if (text.includes("shear pin")) {
+    return "SHEAR PIN";
+  }
+  if (text.includes("hoist pin")) {
+    return "HOIST PIN";
+  }
+  if (text.includes("latch")) {
+    return "LATCH";
+  }
+  if (text.includes("coupler")) {
+    return "COUPLER";
+  }
+  if (text.includes("support column") || text.includes("support pier")) {
+    return "SUPPORT";
+  }
+  if (text.includes("release")) {
+    return "RELEASE";
+  }
+  return "WEAK POINT";
 }
 
 function materialLabel(materialId: ExplosionAffectedObject["materialId"]): string {

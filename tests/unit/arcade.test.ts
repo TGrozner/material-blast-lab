@@ -234,6 +234,8 @@ function score(overrides: Partial<ScoreBreakdown> = {}): ScoreBreakdown {
     collateralChaos: 0,
     chainReactionBonus: 0,
     remainingDebrisMotion: 0,
+    weakPointBreakCount: 0,
+    bossBreakCount: 0,
     goldenEggDestroyed: false,
     goldenEggMultiplier: 1,
     goldenEggBonus: 0,

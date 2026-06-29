@@ -390,6 +390,7 @@ function setupBreakerYardCity(context: LevelContext): void {
   spawnVacantLotInfill(context);
   spawnBreakerYardCore(context);
   spawnBreakerYardRelayWeb(context);
+  spawnBreakerBossCapacitor(context);
   spawnBreakerYardStreetActivity(context);
   spawnPowerGrid(context);
   spawnStreetSetpieces(context);
@@ -402,6 +403,7 @@ function setupSwitchbackCrushCity(context: LevelContext): void {
   spawnVacantLotInfill(context);
   spawnSwitchbackArchiveCore(context);
   spawnSwitchbackRedirectors(context);
+  spawnArchiveBossLens(context);
   spawnSwitchbackStreetActivity(context);
   spawnStreetSetpieces(context);
 }
@@ -570,6 +572,67 @@ function spawnBreakerYardRelayWeb(context: LevelContext): void {
   });
 }
 
+function spawnBreakerBossCapacitor(context: LevelContext): void {
+  const rotationY = Math.PI * 0.06;
+  const base = alignCityObjectToRoadEdges(
+    new THREE.Vector3(4.92, 0, -5.24),
+    new THREE.Vector3(1.52, 2.9, 1.18),
+    rotationY,
+    0.32
+  );
+  const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0));
+  const support: BossSupportOptions = {
+    supportGroupId: "breaker-boss-capacitor-collapse",
+    supportReleaseRadius: 4.25,
+    supportReleaseHeight: 3.9,
+    supportReleaseLowerHeight: 0.9,
+    supportReleaseFallDirection: new THREE.Vector3(-0.62, 0, 0.38)
+  };
+  const coreSize = new THREE.Vector3(1.16, 2.64, 0.88);
+  const core = addBossCoreBox(context, {
+    label: "Breaker boss capacitor stack",
+    materialId: "metal",
+    renderMaterial: bossCoreMaterial("breaker-capacitor", 0x415461, 0x33d6ff),
+    position: bossWorldPosition(base, rotationY, new THREE.Vector3(0, coreSize.y * 0.5, 0)),
+    size: coreSize,
+    rotation,
+    zoneId: "breaker-boss capacitor-bank hazard-relay explosive power-grid",
+    scoreValue: 980,
+    kind: "electric",
+    support,
+    fractureResistance: 0.42
+  });
+  decorateBossCore(core, coreSize, "breaker");
+
+  for (const weakPoint of [
+    { label: "Breaker boss shear pin", local: new THREE.Vector3(-0.68, 0.72, 0.5), size: new THREE.Vector3(0.32, 0.24, 0.26), scoreValue: 260 },
+    { label: "Breaker boss support coupler", local: new THREE.Vector3(0.66, 1.52, 0.5), size: new THREE.Vector3(0.34, 0.22, 0.28), scoreValue: 280 },
+    { label: "Breaker boss release latch", local: new THREE.Vector3(0.02, 2.46, -0.5), size: new THREE.Vector3(0.38, 0.22, 0.24), scoreValue: 320 }
+  ] as const) {
+    addReadableWeakPoint(context, {
+      label: weakPoint.label,
+      position: bossWorldPosition(base, rotationY, weakPoint.local),
+      size: weakPoint.size,
+      rotation,
+      zoneId: "breaker-boss weak-point capacitor-bank hazard-core",
+      scoreValue: weakPoint.scoreValue,
+      kind: "electric",
+      support
+    });
+  }
+
+  addBossRelayCanister(context, {
+    label: "Breaker boss overcharge canister",
+    position: bossWorldPosition(base, rotationY, new THREE.Vector3(0.86, 0.46, -0.18)),
+    size: new THREE.Vector3(0.38, 0.72, 0.38),
+    rotation,
+    zoneId: "breaker-boss hazard-relay explosive power-grid",
+    scoreValue: 230,
+    kind: "explosive",
+    support
+  });
+}
+
 function spawnBreakerYardStreetActivity(context: LevelContext): void {
   addRoutedCityVehicle(context, "Breaker fuel tanker", NORTH_TRAFFIC_LOOP, 0.86, 1, 0.28, 0.36, new THREE.Vector3(0.54, 0.44, 1.18), 0xffd66b, {
     zoneId: "breaker-yard fuel gas-line moving-vehicles",
@@ -717,6 +780,67 @@ function spawnSwitchbackRedirectors(context: LevelContext): void {
   ] as const) {
     addHazardRelay(context, type, label, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
   }
+}
+
+function spawnArchiveBossLens(context: LevelContext): void {
+  const rotationY = -Math.PI * 0.12;
+  const base = alignCityObjectToRoadEdges(
+    new THREE.Vector3(7.38, 0, -4.52),
+    new THREE.Vector3(1.56, 2.62, 1.22),
+    rotationY,
+    0.32
+  );
+  const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0));
+  const support: BossSupportOptions = {
+    supportGroupId: "archive-boss-lens-collapse",
+    supportReleaseRadius: 4.05,
+    supportReleaseHeight: 3.55,
+    supportReleaseLowerHeight: 0.82,
+    supportReleaseFallDirection: new THREE.Vector3(-0.48, 0, 0.58)
+  };
+  const coreSize = new THREE.Vector3(1.1, 2.36, 0.78);
+  const core = addBossCoreBox(context, {
+    label: "Archive boss prism lens",
+    materialId: "glass",
+    renderMaterial: bossGlassMaterial("archive-prism", 0x93f1ff, 0xff6b93),
+    position: bossWorldPosition(base, rotationY, new THREE.Vector3(0, coreSize.y * 0.5, 0)),
+    size: coreSize,
+    rotation,
+    zoneId: "archive-boss glass-depot hazard-relay explosive",
+    scoreValue: 1_020,
+    kind: "explosive",
+    support,
+    fractureResistance: 0.3
+  });
+  decorateBossCore(core, coreSize, "archive");
+
+  for (const weakPoint of [
+    { label: "Archive boss shear pin", local: new THREE.Vector3(-0.62, 0.66, 0.46), size: new THREE.Vector3(0.3, 0.22, 0.24), scoreValue: 280 },
+    { label: "Archive boss lens latch", local: new THREE.Vector3(0.62, 1.34, 0.44), size: new THREE.Vector3(0.32, 0.2, 0.24), scoreValue: 300 },
+    { label: "Archive boss support column", local: new THREE.Vector3(0, 2.18, -0.45), size: new THREE.Vector3(0.36, 0.22, 0.24), scoreValue: 320 }
+  ] as const) {
+    addReadableWeakPoint(context, {
+      label: weakPoint.label,
+      position: bossWorldPosition(base, rotationY, weakPoint.local),
+      size: weakPoint.size,
+      rotation,
+      zoneId: "archive-boss weak-point glass-depot hazard-core",
+      scoreValue: weakPoint.scoreValue,
+      kind: "explosive",
+      support
+    });
+  }
+
+  addBossRelayCanister(context, {
+    label: "Archive boss pressure bulb",
+    position: bossWorldPosition(base, rotationY, new THREE.Vector3(0.82, 0.44, -0.14)),
+    size: new THREE.Vector3(0.36, 0.68, 0.36),
+    rotation,
+    zoneId: "archive-boss hazard-relay explosive glass-depot",
+    scoreValue: 240,
+    kind: "explosive",
+    support
+  });
 }
 
 function spawnSwitchbackStreetActivity(context: LevelContext): void {
@@ -1706,15 +1830,21 @@ function spawnStrategicHazards(context: LevelContext): void {
       rotationY
     });
   }
-  for (const x of [5.55, 6.15, 6.75]) {
+  for (const [x, showReadableMarker] of [
+    [5.55, false],
+    [6.15, true],
+    [6.75, false]
+  ] as const) {
     addStrategicHazardBox(context, {
-      label: "Gas pump",
+      label: "Gas pump release valve weak point",
       materialId: "rubber",
       position: new THREE.Vector3(x, 0.32, 3.2),
       size: new THREE.Vector3(0.22, 0.64, 0.26),
-      zoneId: "gas-station fuel-pump",
-      scoreValue: 160,
-      kind: "combustible"
+      zoneId: "gas-station fuel-pump gas-line weak-point release",
+      scoreValue: 190,
+      kind: "combustible",
+      fractureResistance: 0.2,
+      showReadableMarker
     });
   }
 }
@@ -1882,20 +2012,22 @@ function spawnElectricSubstation(context: LevelContext): void {
     kind: "electric",
     rotationY: Math.PI * 0.5
   });
-  for (const [x, z, rotationY] of [
-    [-7.5, -4.42, Math.PI * 0.08],
-    [-6.55, -4.45, -Math.PI * 0.08],
-    [-7.08, -5.98, Math.PI * 0.5]
+  for (const [x, z, rotationY, showReadableMarker] of [
+    [-7.5, -4.42, Math.PI * 0.08, false],
+    [-6.55, -4.45, -Math.PI * 0.08, true],
+    [-7.08, -5.98, Math.PI * 0.5, false]
   ] as const) {
     addStrategicHazardBox(context, {
-      label: "Electric substation breaker rack",
+      label: "Electric substation breaker rack latch weak point",
       materialId: "glass",
       position: new THREE.Vector3(x, 0.39, z),
       size: new THREE.Vector3(0.36, 0.78, 0.34),
-      zoneId: "electric-substation power-grid",
-      scoreValue: 210,
+      zoneId: "electric-substation power-grid weak-point release",
+      scoreValue: 245,
       kind: "electric",
-      rotationY
+      rotationY,
+      fractureResistance: 0.18,
+      showReadableMarker
     });
   }
 }
@@ -1938,6 +2070,8 @@ function spawnParkingSilo(context: LevelContext): void {
   const rotationY = -Math.PI * 0.04;
   const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0));
   const base = alignCityObjectToRoadEdges(new THREE.Vector3(12.78, 0, 0.85), new THREE.Vector3(2.35, 2.05, 1.72), rotationY);
+  const supportGroupId = "parking-silo-pancake-collapse";
+  const supportReleaseFallDirection = new THREE.Vector3(-0.36, 0, 0.72);
   for (const [offsetX, offsetZ] of [
     [-0.98, -0.68],
     [0.98, -0.68],
@@ -1947,7 +2081,7 @@ function spawnParkingSilo(context: LevelContext): void {
     const local = new THREE.Vector3(offsetX, 0, offsetZ).applyQuaternion(rotation);
     const size = new THREE.Vector3(0.16, 1.88, 0.16);
     const object = context.physics.addDynamicBox({
-      label: "Parking silo support column",
+      label: "Parking silo support column weak point",
       material,
       renderMaterial,
       position: new THREE.Vector3(base.x + local.x, 1.02, base.z + local.z),
@@ -1955,21 +2089,33 @@ function spawnParkingSilo(context: LevelContext): void {
       rotation,
       category: "structure",
       scoreRole: "target",
-      zoneId: "parking-silo parking-garage moving-vehicles",
+      zoneId: "parking-silo parking-garage moving-vehicles weak-point support-column",
+      supportGroupId,
+      supportReleaseRadius: 3.25,
+      supportReleaseHeight: 3.1,
+      supportReleaseLowerHeight: 0.72,
+      supportReleaseFallDirection,
+      supportReleaseImpulseScale: 1.12,
+      supportReleaseTorqueScale: 1.24,
+      supportReleaseMassScale: 0.72,
       canFracture: true,
       destructible: true,
       bodyType: "fixed",
       chainSource: true,
-      scoreValue: 140
+      fractureResistance: 0.2,
+      scoreValue: 240
     });
     decorateHazardIndicator(object.mesh, { size, kind: "combustible" });
+    if (offsetX < 0 && offsetZ > 0) {
+      decorateReadableWeakPointMarker(object.mesh, size, "parking");
+    }
     object.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(object.mesh.material);
   }
 
   for (let deck = 0; deck < 4; deck += 1) {
     const size = new THREE.Vector3(2.28, 0.16, 1.68);
     const object = context.physics.addDynamicBox({
-      label: deck === 3 ? "Parking silo roof deck" : "Parking silo collapse deck",
+      label: deck === 3 ? "Parking silo roof deck signature slab" : "Parking silo pancake collapse deck",
       material,
       renderMaterial,
       position: new THREE.Vector3(base.x, 0.62 + deck * 0.42, base.z),
@@ -1977,15 +2123,27 @@ function spawnParkingSilo(context: LevelContext): void {
       rotation,
       category: "structure",
       scoreRole: "target",
-      zoneId: "parking-silo parking-garage moving-vehicles",
+      zoneId: deck === 3 ? "parking-silo parking-garage moving-vehicles signature-debris" : "parking-silo parking-garage moving-vehicles collapse-deck",
+      supportGroupId,
+      supportReleaseRadius: 3.45,
+      supportReleaseHeight: 3.1,
+      supportReleaseLowerHeight: 0.72,
+      supportReleaseFallDirection,
+      supportReleaseImpulseScale: 0.92,
+      supportReleaseTorqueScale: 1.04,
+      supportReleaseMassScale: deck === 3 ? 2.2 : 1.65,
       canFracture: true,
       destructible: true,
       bodyType: "fixed",
       chainSource: true,
+      fractureResistance: deck === 3 ? 0.34 : 0.48,
       scoreValue: deck === 3 ? 340 : 260
     });
     decorateHazardIndicator(object.mesh, { size, kind: "combustible" });
     decorateStrategicHazard(object.mesh, { label: object.label, size, kind: "combustible" });
+    if (deck === 3) {
+      decorateSignatureDebrisMarker(object.mesh, size, "parking");
+    }
     object.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(object.mesh.material);
   }
 
@@ -2296,8 +2454,14 @@ function spawnCentralSkyneedle(context: LevelContext): void {
   for (const [index, tier] of towerTiers.entries()) {
     const { height, width, depth, material, renderMaterial, materialId } = tier;
     const size = new THREE.Vector3(width, height, depth);
+    const isCrownTier = index === towerTiers.length - 1;
+    const isSignatureTier = index >= towerTiers.length - 3;
     const section = context.physics.addDynamicBox({
-      label: index === towerTiers.length - 1 ? "Central skyneedle crown tier" : "Central skyneedle taper tier",
+      label: isCrownTier
+        ? "Central skyneedle crown release weak point"
+        : isSignatureTier
+          ? "Central skyneedle signature glass shard"
+          : "Central skyneedle taper tier",
       material,
       renderMaterial,
       position: new THREE.Vector3(base.x, yBase + height * 0.5, base.z),
@@ -2305,7 +2469,7 @@ function spawnCentralSkyneedle(context: LevelContext): void {
       rotation,
       category: "structure",
       scoreRole: "target",
-      zoneId,
+      zoneId: isCrownTier ? `${zoneId} weak-point release signature-debris` : isSignatureTier ? `${zoneId} signature-debris` : zoneId,
       canFracture: true,
       destructible: true,
       bodyType: "dynamic",
@@ -2314,13 +2478,13 @@ function spawnCentralSkyneedle(context: LevelContext): void {
       supportReleaseMassScale: 1.2,
       supportReleaseImpulseScale: 1 + index * 0.08,
       supportReleaseTorqueScale: 0.9 + index * 0.08,
-      fractureResistance: materialId === "glass" ? 0.26 : 0.58,
+      fractureResistance: isCrownTier ? 0.2 : materialId === "glass" ? 0.26 : 0.58,
       sleeping: true,
       linearDamping: 0.52,
       angularDamping: 0.78,
       additionalMass: size.x * size.y * size.z * (materialId === "glass" ? 1.05 : 4.1),
       ccd: materialId !== "glass",
-      scoreValue: index === towerTiers.length - 1 ? 420 : 320
+      scoreValue: isCrownTier ? 520 : isSignatureTier ? 360 : 320
     });
     decorateBuildingCell(section.mesh, {
       size,
@@ -2332,13 +2496,16 @@ function spawnCentralSkyneedle(context: LevelContext): void {
       floors: towerTiers.length,
       columns: 1
     });
+    if (isCrownTier) {
+      decorateReadableWeakPointMarker(section.mesh, size, "skyneedle");
+    }
     section.mesh.userData.disposeMaterial = false;
     yBase += height;
   }
 
   const spireSize = new THREE.Vector3(0.18, 2.45, 0.18);
   const spire = context.physics.addDynamicBox({
-    label: "Central skyneedle spire",
+    label: "Central skyneedle antenna spear signature debris",
     material: metalMaterial,
     renderMaterial: towerMetalRenderMaterial,
     position: new THREE.Vector3(base.x, yBase + spireSize.y * 0.5, base.z),
@@ -2346,7 +2513,7 @@ function spawnCentralSkyneedle(context: LevelContext): void {
     rotation,
     category: "structure",
     scoreRole: "target",
-    zoneId,
+    zoneId: `${zoneId} signature-debris`,
     canFracture: true,
     destructible: true,
     bodyType: "dynamic",
@@ -2361,7 +2528,7 @@ function spawnCentralSkyneedle(context: LevelContext): void {
     angularDamping: 0.92,
     additionalMass: 0.55,
     ccd: true,
-    scoreValue: 260
+    scoreValue: 320
   });
   spire.mesh.userData.disposeMaterial = false;
   decorateSkyneedleBeacon(spire.mesh, spireSize);
@@ -2387,6 +2554,8 @@ function addStrategicHazardBox(
     scoreValue: number;
     kind: "electric" | "combustible" | "explosive";
     rotationY?: number;
+    fractureResistance?: number;
+    showReadableMarker?: boolean;
   }
 ): void {
   const material = context.materials.get(options.materialId);
@@ -2403,6 +2572,7 @@ function addStrategicHazardBox(
     zoneId: options.zoneId,
     canFracture: true,
     destructible: true,
+    fractureResistance: options.fractureResistance,
     scoreValue: options.scoreValue,
     chainSource: true,
     restitution: options.kind === "combustible" ? 0.18 : 0.1,
@@ -2412,7 +2582,295 @@ function addStrategicHazardBox(
   });
   decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
   decorateStrategicHazard(object.mesh, { label: options.label, size: options.size, kind: options.kind });
+  if (options.showReadableMarker ?? isReadableWeakPoint(options.label, options.zoneId)) {
+    decorateReadableWeakPointMarker(object.mesh, options.size, options.kind === "electric" ? "electric" : "hazard");
+  }
   object.mesh.userData.disposeMaterial = shouldDisposeRenderMaterial(object.mesh.material);
+}
+
+type ReadableWeakPointTheme = "electric" | "hazard" | "parking" | "skyneedle";
+type SignatureDebrisTheme = "parking" | "skyneedle";
+
+function isReadableWeakPoint(label: string, zoneId: string): boolean {
+  const text = `${label} ${zoneId}`.toLowerCase();
+  return (
+    text.includes("weak-point") ||
+    text.includes("weak point") ||
+    text.includes("release") ||
+    text.includes("latch") ||
+    text.includes("shear pin") ||
+    text.includes("support-column") ||
+    text.includes("support column")
+  );
+}
+
+function decorateReadableWeakPointMarker(mesh: THREE.Mesh, size: THREE.Vector3, theme: ReadableWeakPointTheme): void {
+  const accent = readableWeakPointAccent(theme);
+  const marker = setpieceAccentMaterial(`weak-point:${theme}`, accent);
+  const frontZ = size.z * 0.5 + 0.026;
+  const width = THREE.MathUtils.clamp(size.x * 0.62, 0.12, 0.64);
+  const bandHeight = THREE.MathUtils.clamp(size.y * 0.07, 0.035, 0.09);
+
+  const band = new THREE.Mesh(sharedLevelBoxGeometry(width, bandHeight, 0.032), marker);
+  band.name = `${mesh.name || "setpiece"} readable weak point band`;
+  band.position.set(0, size.y * 0.1, frontZ);
+  band.userData.disposeMaterial = false;
+  mesh.add(band);
+}
+
+function decorateSignatureDebrisMarker(mesh: THREE.Mesh, size: THREE.Vector3, theme: SignatureDebrisTheme): void {
+  const accent = theme === "skyneedle" ? 0x9bf7ff : 0xffc241;
+  const stripeMaterial = setpieceGlowMaterial(`signature-debris:${theme}`, accent, theme === "skyneedle" ? 0.54 : 0.46);
+  const frontZ = size.z * 0.5 + 0.024;
+  const stripeWidth = THREE.MathUtils.clamp(size.x * 0.72, 0.12, 0.92);
+  const stripe = new THREE.Mesh(sharedLevelBoxGeometry(stripeWidth, 0.034, 0.028), stripeMaterial);
+  stripe.name = `${mesh.name || "setpiece"} signature debris stripe`;
+  stripe.position.set(0, size.y * 0.23, frontZ);
+  stripe.userData.disposeMaterial = false;
+  mesh.add(stripe);
+}
+
+function readableWeakPointAccent(theme: ReadableWeakPointTheme): THREE.ColorRepresentation {
+  switch (theme) {
+    case "electric":
+      return 0x5de7ff;
+    case "parking":
+      return 0xffc241;
+    case "skyneedle":
+      return 0x9bf7ff;
+    case "hazard":
+      return 0xff7048;
+  }
+}
+
+function setpieceAccentMaterial(key: string, color: THREE.ColorRepresentation): THREE.Material {
+  return sharedLevelMaterial(
+    `setpiece-accent:${key}`,
+    () => new THREE.MeshStandardMaterial({ color, roughness: 0.24, metalness: 0.48, emissive: color, emissiveIntensity: 0.3, map: materialAtlasTile(10) })
+  );
+}
+
+function setpieceGlowMaterial(key: string, color: THREE.ColorRepresentation, opacity: number): THREE.Material {
+  return sharedLevelMaterial(
+    `setpiece-glow:${key}`,
+    () => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })
+  );
+}
+
+interface BossSupportOptions {
+  supportGroupId: string;
+  supportReleaseRadius: number;
+  supportReleaseHeight: number;
+  supportReleaseLowerHeight?: number;
+  supportReleaseFallDirection: THREE.Vector3;
+}
+
+interface BossCoreOptions {
+  label: string;
+  materialId: MaterialId;
+  renderMaterial: THREE.Material;
+  position: THREE.Vector3;
+  size: THREE.Vector3;
+  rotation: THREE.Quaternion;
+  zoneId: string;
+  scoreValue: number;
+  kind: "electric" | "explosive";
+  support: BossSupportOptions;
+  fractureResistance: number;
+}
+
+function addBossCoreBox(context: LevelContext, options: BossCoreOptions): THREE.Mesh {
+  const object = context.physics.addDynamicBox({
+    label: options.label,
+    material: context.materials.get(options.materialId),
+    renderMaterial: options.renderMaterial,
+    position: options.position,
+    size: options.size,
+    rotation: options.rotation,
+    category: "structure",
+    scoreRole: "target",
+    zoneId: options.zoneId,
+    supportGroupId: options.support.supportGroupId,
+    supportReleaseRadius: options.support.supportReleaseRadius,
+    supportReleaseHeight: options.support.supportReleaseHeight,
+    supportReleaseLowerHeight: options.support.supportReleaseLowerHeight,
+    supportReleaseFallDirection: options.support.supportReleaseFallDirection,
+    supportReleaseImpulseScale: 1.04,
+    supportReleaseTorqueScale: 1.18,
+    supportReleaseMassScale: 1.1,
+    canFracture: true,
+    destructible: true,
+    fractureResistance: options.fractureResistance,
+    bodyType: "fixed",
+    chainSource: true,
+    scoreValue: options.scoreValue,
+    restitution: options.materialId === "glass" ? 0.18 : 0.1
+  });
+  decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
+  decorateStrategicHazard(object.mesh, { label: options.label, size: options.size, kind: options.kind });
+  object.mesh.userData.disposeMaterial = false;
+  disableSetpieceShadows(object.mesh);
+  return object.mesh;
+}
+
+function addReadableWeakPoint(
+  context: LevelContext,
+  options: {
+    label: string;
+    position: THREE.Vector3;
+    size: THREE.Vector3;
+    rotation: THREE.Quaternion;
+    zoneId: string;
+    scoreValue: number;
+    kind: "electric" | "explosive";
+    support: BossSupportOptions;
+  }
+): void {
+  const object = context.physics.addDynamicBox({
+    label: options.label,
+    material: context.materials.get("metal"),
+    renderMaterial: scaffoldWeakPointMaterial(),
+    position: options.position,
+    size: options.size,
+    rotation: options.rotation,
+    category: "structure",
+    scoreRole: "target",
+    zoneId: options.zoneId,
+    supportGroupId: options.support.supportGroupId,
+    supportReleaseRadius: options.support.supportReleaseRadius,
+    supportReleaseHeight: options.support.supportReleaseHeight,
+    supportReleaseLowerHeight: options.support.supportReleaseLowerHeight,
+    supportReleaseFallDirection: options.support.supportReleaseFallDirection,
+    supportReleaseImpulseScale: 1.18,
+    supportReleaseTorqueScale: 1.36,
+    supportReleaseMassScale: 0.48,
+    canFracture: true,
+    destructible: true,
+    fractureResistance: 0.14,
+    bodyType: "fixed",
+    chainSource: true,
+    scoreValue: options.scoreValue,
+    restitution: 0.08
+  });
+  object.mesh.userData.disposeMaterial = false;
+  disableSetpieceShadows(object.mesh);
+  decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
+}
+
+function addBossRelayCanister(
+  context: LevelContext,
+  options: {
+    label: string;
+    position: THREE.Vector3;
+    size: THREE.Vector3;
+    rotation: THREE.Quaternion;
+    zoneId: string;
+    scoreValue: number;
+    kind: "electric" | "explosive";
+    support: BossSupportOptions;
+  }
+): void {
+  const object = context.physics.addDynamicBox({
+    label: options.label,
+    material: context.materials.get("glass"),
+    renderMaterial: scaffoldCanisterMaterial(),
+    position: options.position,
+    size: options.size,
+    rotation: options.rotation,
+    category: "structure",
+    scoreRole: "target",
+    zoneId: options.zoneId,
+    supportGroupId: options.support.supportGroupId,
+    supportReleaseRadius: options.support.supportReleaseRadius,
+    supportReleaseHeight: options.support.supportReleaseHeight,
+    supportReleaseLowerHeight: options.support.supportReleaseLowerHeight,
+    supportReleaseFallDirection: options.support.supportReleaseFallDirection,
+    supportReleaseImpulseScale: 0.86,
+    supportReleaseTorqueScale: 1.04,
+    supportReleaseMassScale: 0.42,
+    canFracture: true,
+    destructible: true,
+    fractureResistance: 0.18,
+    bodyType: "fixed",
+    chainSource: true,
+    scoreValue: options.scoreValue,
+    restitution: 0.18
+  });
+  object.mesh.userData.disposeMaterial = false;
+  disableSetpieceShadows(object.mesh);
+  decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
+}
+
+function bossWorldPosition(base: THREE.Vector3, rotationY: number, local: THREE.Vector3): THREE.Vector3 {
+  return base.clone().add(local.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rotationY));
+}
+
+function decorateBossCore(mesh: THREE.Mesh, size: THREE.Vector3, theme: "breaker" | "archive"): void {
+  const accent = theme === "breaker" ? 0x61e9ff : 0xff6b93;
+  const trim = bossTrimMaterial(theme, accent);
+  const glow = bossGlowMaterial(theme, accent);
+  const frontZ = size.z * 0.5 + 0.018;
+  for (const [x, y, height] of [
+    [-size.x * 0.32, size.y * 0.12, size.y * 0.68],
+    [size.x * 0.32, size.y * 0.16, size.y * 0.56]
+  ] as const) {
+    const fin = new THREE.Mesh(sharedLevelBoxGeometry(0.055, height, 0.055), trim);
+    fin.name = `${theme} boss vertical bus bar`;
+    fin.position.set(x, y, frontZ);
+    fin.userData.disposeMaterial = false;
+    mesh.add(fin);
+  }
+  for (const y of [-size.y * 0.26, size.y * 0.28]) {
+    const band = new THREE.Mesh(sharedLevelBoxGeometry(size.x * 0.86, 0.055, 0.065), trim);
+    band.name = `${theme} boss pressure band`;
+    band.position.set(0, y, frontZ + 0.01);
+    band.userData.disposeMaterial = false;
+    mesh.add(band);
+  }
+  const eye = new THREE.Mesh(sharedLevelBoxGeometry(size.x * 0.48, 0.2, 0.07), glow);
+  eye.name = `${theme} boss weakpoint glow strip`;
+  eye.position.set(0, size.y * 0.42, frontZ + 0.02);
+  eye.userData.disposeMaterial = false;
+  mesh.add(eye);
+}
+
+function bossCoreMaterial(key: string, color: THREE.ColorRepresentation, emissive: THREE.ColorRepresentation): THREE.Material {
+  return sharedLevelMaterial(
+    `boss-core:${key}`,
+    () => new THREE.MeshStandardMaterial({ color, roughness: 0.32, metalness: 0.76, emissive, emissiveIntensity: 0.16, map: materialAtlasTile(10) })
+  );
+}
+
+function bossGlassMaterial(key: string, color: THREE.ColorRepresentation, emissive: THREE.ColorRepresentation): THREE.Material {
+  return sharedLevelMaterial(
+    `boss-glass:${key}`,
+    () =>
+      new THREE.MeshPhysicalMaterial({
+        color,
+        roughness: 0.12,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.72,
+        emissive,
+        emissiveIntensity: 0.22,
+        map: materialAtlasTile(8),
+        envMapIntensity: 1.2
+      })
+  );
+}
+
+function bossTrimMaterial(theme: "breaker" | "archive", color: THREE.ColorRepresentation): THREE.Material {
+  return sharedLevelMaterial(
+    `boss-trim:${theme}`,
+    () => new THREE.MeshStandardMaterial({ color, roughness: 0.26, metalness: 0.82, emissive: color, emissiveIntensity: 0.18, map: materialAtlasTile(10) })
+  );
+}
+
+function bossGlowMaterial(theme: "breaker" | "archive", color: THREE.ColorRepresentation): THREE.Material {
+  return sharedLevelMaterial(
+    `boss-glow:${theme}`,
+    () => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.86, depthWrite: false })
+  );
 }
 
 function spawnRadioTower(context: LevelContext): void {

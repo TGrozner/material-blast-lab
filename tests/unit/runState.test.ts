@@ -54,6 +54,8 @@ function fakeScore(): ScoreBreakdown {
     chainReactionCount: 0,
     maxChainCombo: 0,
     remainingDebrisMotion: 0,
+    weakPointBreakCount: 0,
+    bossBreakCount: 0,
     goldenEggDestroyed: false,
     goldenEggMultiplier: 1,
     goldenEggBonus: 0,

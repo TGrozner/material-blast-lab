@@ -60,6 +60,7 @@ interface ChainImpactOptions {
   result: ExplosionResult;
   relativeSpeed: number;
   materialId: MaterialId;
+  role?: "chain" | "surface" | "penetration";
 }
 
 interface AudioMixSettings {
@@ -132,7 +133,7 @@ const DEFAULT_MIX: AudioMixSettings = {
 };
 const PRIMARY_IMPACT_TRANSIENT_GAIN = 0.16;
 const PRIMARY_IMPACT_TRANSIENT_DURATION = 0.075;
-const CHAIN_IMPACT_TRANSIENT_GAIN = 0.045;
+const CHAIN_IMPACT_TRANSIENT_GAIN = 0.018;
 const HAZARD_WARNING_COOLDOWN_MS = 95;
 
 export class DestructionAudio {
@@ -276,44 +277,66 @@ export class DestructionAudio {
       pan,
       lowpass: 900
     });
-    this.playMaterialHits(materialIds, intensity, pan, 0.05, Math.min(7, 2 + options.result.fracturedBodies));
+    const collapseWeight = this.collapseWeight(options.result);
+    const materialHitCount = Math.min(4, Math.max(1, Math.ceil(options.result.fracturedBodies / 3)));
+    this.playMaterialHits(materialIds, intensity, pan, 0.05, materialHitCount, collapseWeight >= 5.5 ? 0.82 : 0.58);
     this.playRumble(0.4 * intensity, 1.35 + intensity * 0.46, 38, 14, pan, 0.02);
     this.playNoiseBurst(0.18 * intensity, 0.48, pan, 160, 1800, 0.035);
 
-    if (options.result.fracturedBodies >= 4 || options.projectileId === "gravity") {
+    if (collapseWeight >= 3.2 || options.projectileId === "gravity") {
       this.playDebrisTail(materialIds, intensity, pan);
-      this.playCollapseLayer(materialIds, intensity, pan, options.result.fracturedBodies >= 8 ? "major" : "medium", 0.08);
+      this.playCollapseLayer(materialIds, intensity, pan, collapseWeight >= 7.5 ? "major" : "medium", 0.08);
+    }
+    if (role === "primary" && (collapseWeight >= 5.8 || intensity > 1.35)) {
+      this.playBuffer(this.pick(["massiveWallCollapseTail", "urbanExplosion"]), {
+        gain: 0.2 * intensity,
+        rate: this.randomRange(0.52, 0.7),
+        delay: 0.2,
+        pan,
+        lowpass: 680
+      });
+      this.playRumble(0.18 * intensity, 1.8, 28, 8, pan, 0.16);
     }
   }
 
   playChainImpact(options: ChainImpactOptions): void {
-    if (!this.canPlay("chain", 72)) {
+    const role = options.role ?? "chain";
+    const collapseWeight = this.collapseWeight(options.result);
+    const audibleThreshold = role === "surface" ? 4.2 : role === "penetration" ? 2.4 : 3.1;
+    const speedThreshold = role === "surface" ? 12.5 : role === "penetration" ? 8.4 : 10.2;
+    if (collapseWeight < audibleThreshold && options.relativeSpeed < speedThreshold) {
+      return;
+    }
+    if (!this.canPlay(`chain-${role}`, role === "surface" ? 150 : 110)) {
       return;
     }
     const pan = this.panFromPoint(options.point);
     const intensity = THREE.MathUtils.clamp(
-      0.34 + options.relativeSpeed * 0.055 + options.result.fracturedBodies * 0.12,
-      0.38,
-      1.28
+      0.26 + options.relativeSpeed * 0.045 + options.result.fracturedBodies * 0.1 + collapseWeight * 0.035,
+      0.32,
+      1.42
     );
-    this.playBuffer(this.pick(MATERIAL_SAMPLES[options.materialId]), {
-      gain: 0.28 * intensity,
-      rate: this.randomRange(0.78, 1.12),
-      pan,
-      highpass: 90,
-      lowpass: 4200
-    });
-    this.playImpactTransient(options.point, intensity, options.materialId, "secondary", 0.006);
-    this.playNoiseBurst(0.06 * intensity, 0.16, pan, 420, 3400, 0.012);
-    if (options.result.fracturedBodies >= 2 || options.relativeSpeed > 8.5) {
-      this.playCollapseLayer([options.materialId], intensity, pan, "small", 0.04);
+    if (collapseWeight >= 4.6 || options.relativeSpeed > 12.8) {
+      this.playBuffer(this.pick(MATERIAL_SAMPLES[options.materialId]), {
+        gain: (role === "surface" ? 0.08 : 0.12) * intensity,
+        rate: this.randomRange(0.58, 0.86),
+        pan,
+        highpass: options.materialId === "glass" ? 160 : 36,
+        lowpass: options.materialId === "glass" ? 4600 : 1800
+      });
+      this.playImpactTransient(options.point, intensity * 0.8, options.materialId, "secondary", 0.01);
+    }
+    this.playNoiseBurst(0.028 * intensity, 0.2, pan, 120, 1300, 0.018);
+    if (collapseWeight >= 5.2 || options.result.fracturedBodies >= 3 || options.relativeSpeed > 13.5) {
+      this.playCollapseLayer([options.materialId], intensity, pan, collapseWeight >= 7.2 ? "major" : "medium", 0.045);
+      this.playRumble(0.07 * intensity, 0.55, 42, 14, pan, 0.04);
     }
   }
 
   playScatterBurst(point: THREE.Vector3, intensity: number): void {
     const pan = this.panFromPoint(point);
-    this.playMaterialHits(["metal", "metal", "glass"], THREE.MathUtils.clamp(intensity, 0.75, 1.8), pan, 0.02, 5);
-    this.playNoiseBurst(0.1 * intensity, 0.22, pan, 900, 5200, 0.015);
+    this.playMaterialHits(["metal", "glass"], THREE.MathUtils.clamp(intensity, 0.7, 1.55), pan, 0.02, 3, 0.54);
+    this.playNoiseBurst(0.072 * intensity, 0.22, pan, 760, 4200, 0.015);
   }
 
   playGravityCrush(point: THREE.Vector3, intensity: number): void {
@@ -443,31 +466,31 @@ export class DestructionAudio {
     source.start(time);
   }
 
-  private playMaterialHits(materialIds: MaterialId[], intensity: number, pan: number, startDelay: number, count: number): void {
+  private playMaterialHits(materialIds: MaterialId[], intensity: number, pan: number, startDelay: number, count: number, gainScale = 1): void {
     for (let i = 0; i < count; i += 1) {
       const materialId = materialIds[i % materialIds.length] ?? "concrete";
       this.playBuffer(this.pick(MATERIAL_SAMPLES[materialId]), {
-        gain: (0.11 + Math.random() * 0.08) * intensity,
-        rate: this.randomRange(0.72, 1.18),
-        delay: startDelay + i * this.randomRange(0.035, 0.095),
-        pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.18, 0.18), -0.85, 0.85),
-        highpass: materialId === "glass" ? 320 : 70,
-        lowpass: materialId === "glass" ? 6200 : 3600
+        gain: (0.085 + Math.random() * 0.045) * intensity * gainScale,
+        rate: this.randomRange(0.62, 0.98),
+        delay: startDelay + i * this.randomRange(0.055, 0.13),
+        pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.12, 0.12), -0.85, 0.85),
+        highpass: materialId === "glass" ? 220 : 44,
+        lowpass: materialId === "glass" ? 5200 : 2400
       });
     }
   }
 
   private playDebrisTail(materialIds: MaterialId[], intensity: number, pan: number): void {
     this.playCollapseLayer(materialIds, intensity, pan, "medium", 0.12);
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 2; i += 1) {
       const materialId = materialIds[i % materialIds.length] ?? "concrete";
       this.playBuffer(this.pick(MATERIAL_SAMPLES[materialId]), {
-        gain: (0.055 + Math.random() * 0.035) * intensity,
-        rate: this.randomRange(0.64, 1.08),
-        delay: 0.35 + i * this.randomRange(0.12, 0.24),
-        pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.34, 0.34), -0.9, 0.9),
-        highpass: 120,
-        lowpass: 2800
+        gain: (0.028 + Math.random() * 0.018) * intensity,
+        rate: this.randomRange(0.54, 0.86),
+        delay: 0.42 + i * this.randomRange(0.18, 0.32),
+        pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.22, 0.22), -0.9, 0.9),
+        highpass: 42,
+        lowpass: materialId === "glass" ? 4600 : 1900
       });
     }
   }
@@ -479,23 +502,23 @@ export class DestructionAudio {
     }
     const material = materialIds[0] ?? "concrete";
     const sample = material === "glass" ? "glassRubbleCollapse" : scale === "major" ? "massiveWallCollapseTail" : this.pick(COLLAPSE_SAMPLES);
-    const gainScale = scale === "major" ? 0.34 : scale === "medium" ? 0.22 : 0.12;
+    const gainScale = scale === "major" ? 0.42 : scale === "medium" ? 0.26 : 0.08;
     this.playBuffer(sample, {
       gain: gainScale * THREE.MathUtils.clamp(intensity, 0.58, 2.2),
-      rate: scale === "major" ? this.randomRange(0.72, 0.88) : this.randomRange(0.82, 1.06),
+      rate: scale === "major" ? this.randomRange(0.58, 0.76) : this.randomRange(0.72, 0.92),
       delay,
       pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.08, 0.08), -0.9, 0.9),
-      highpass: material === "glass" ? 80 : 28,
-      lowpass: material === "glass" ? 7600 : scale === "major" ? 2600 : 4800
+      highpass: material === "glass" ? 64 : 22,
+      lowpass: material === "glass" ? 6800 : scale === "major" ? 2100 : 3400
     });
     if (scale !== "major") {
       this.playBuffer(this.pick(SHORT_RUBBLE_SAMPLES), {
-        gain: 0.06 * THREE.MathUtils.clamp(intensity, 0.5, 1.6),
-        rate: this.randomRange(0.78, 1.12),
+        gain: 0.026 * THREE.MathUtils.clamp(intensity, 0.5, 1.6),
+        rate: this.randomRange(0.62, 0.92),
         delay: delay + this.randomRange(0.05, 0.16),
-        pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.18, 0.18), -0.9, 0.9),
-        highpass: 120,
-        lowpass: material === "glass" ? 8200 : 3600
+        pan: THREE.MathUtils.clamp(pan + this.randomRange(-0.12, 0.12), -0.9, 0.9),
+        highpass: 70,
+        lowpass: material === "glass" ? 6200 : 2600
       });
     }
   }
@@ -520,7 +543,7 @@ export class DestructionAudio {
       delay
     );
     this.playBuffer(this.pick(MATERIAL_SAMPLES[materialId]), {
-      gain: 0.052 * roleScale * THREE.MathUtils.clamp(intensity, 0.5, 1.8),
+      gain: 0.034 * roleScale * THREE.MathUtils.clamp(intensity, 0.5, 1.8),
       rate: materialId === "metal" ? this.randomRange(0.82, 0.98) : this.randomRange(0.88, 1.18),
       delay: delay + 0.004,
       pan,
@@ -699,6 +722,35 @@ export class DestructionAudio {
       ids.unshift(fallback);
     }
     return ids.length > 0 ? ids.slice(0, 6) : ["concrete"];
+  }
+
+  private collapseWeight(result: ExplosionResult): number {
+    const maxDamage = result.affectedObjects.reduce((max, object) => Math.max(max, object.weightedDamage), 0);
+    const structuralLabels = result.affectedObjects.filter((object) => {
+      if (!object.fractured) {
+        return false;
+      }
+      const text = `${object.label} ${object.zoneId ?? ""}`.toLowerCase();
+      return (
+        object.scoreRole === "target" ||
+        text.includes("silo") ||
+        text.includes("skyneedle") ||
+        text.includes("metro") ||
+        text.includes("crane") ||
+        text.includes("scaffold") ||
+        text.includes("reactor") ||
+        text.includes("substation") ||
+        text.includes("propane") ||
+        text.includes("boss")
+      );
+    }).length;
+    return (
+      result.fracturedBodies * 0.95 +
+      result.affectedBodies * 0.08 +
+      Math.min(7, (result.structureDamage + result.materialChaos) / 220) +
+      Math.min(5, maxDamage / 180) +
+      Math.min(4, structuralLabels * 0.9)
+    );
   }
 
   private panFromPoint(point: THREE.Vector3): number {

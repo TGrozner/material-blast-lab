@@ -88,7 +88,7 @@ describe("ShotScoreTracker", () => {
 
     expect(tracker.addChainReaction(100, new THREE.Vector3(0, 0, 0))[0]).toMatchObject({
       kind: "chain",
-      label: "CHAIN",
+      label: "CHAIN START",
       points: 100,
       combo: 1
     });
@@ -103,7 +103,7 @@ describe("ShotScoreTracker", () => {
       combo: 3
     });
     expect(tracker.addChainReaction(100, new THREE.Vector3(0, 0, 0))[0]).toMatchObject({
-      label: "COMBO x4",
+      label: "MAYHEM COMBO x4",
       points: 115,
       combo: 4
     });
@@ -165,6 +165,50 @@ describe("ShotScoreTracker", () => {
       label: "GAS LINE BLAST x2",
       points: 1008,
       combo: 2
+    });
+  });
+
+  test("highlights weak point and boss breaks without counting golden egg boss parts", () => {
+    const tracker = new ShotScoreTracker();
+    tracker.beginShot(PROJECTILES.slug);
+
+    const events = tracker.addExplosion(
+      result({
+        affectedObjects: [
+          affectedObject({
+            id: 11,
+            label: "Breaker boss shear pin",
+            zoneId: "breaker-boss weak-point",
+            scoreRole: "target",
+            weightedDamage: 100,
+            fractured: true
+          }),
+          affectedObject({
+            id: 12,
+            label: "Archive boss prism lens",
+            zoneId: "archive-boss glass-depot",
+            materialId: "glass",
+            scoreRole: "target",
+            weightedDamage: 80,
+            fractured: true
+          }),
+          affectedObject({
+            id: 99,
+            label: "Golden egg boss",
+            zoneId: "golden-egg-boss",
+            scoreRole: "target",
+            weightedDamage: 120_000,
+            fractured: true
+          })
+        ]
+      })
+    );
+
+    expect(events.map((event) => event.label)).toEqual(["SHEAR PIN BREAK", "BOSS BREAK"]);
+    expect(tracker.finalize(fakePhysics([]))).toMatchObject({
+      weakPointBreakCount: 1,
+      bossBreakCount: 2,
+      goldenEggDestroyed: true
     });
   });
 

@@ -715,6 +715,8 @@ function renderScore(state: UIState): string {
       <div><span>Collateral Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
       <div><span>Chain Score</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
       <div><span>Secondary Hits</span><strong>${score.chainReactionCount}${score.maxChainCombo > 1 ? ` / x${score.maxChainCombo}` : ""}</strong></div>
+      ${score.weakPointBreakCount > 0 ? `<div><span>Weak Points</span><strong>${score.weakPointBreakCount}</strong></div>` : ""}
+      ${score.bossBreakCount > 0 ? `<div><span>Boss Breaks</span><strong>${score.bossBreakCount}</strong></div>` : ""}
       ${score.goldenEggDestroyed ? `<div><span>Golden Egg</span><strong>x${score.goldenEggMultiplier.toFixed(2)} +${formatScoreNumber(score.goldenEggBonus)}</strong></div>` : ""}
       <div><span>Motion Bonus</span><strong>${formatScoreNumber(score.remainingDebrisMotion)}</strong></div>
     </div>
@@ -783,6 +785,33 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
       className: "is-bonus-complete",
       label: "Bonus goal",
       value: "Complete"
+    });
+  }
+  if (score.bossBreakCount > 0) {
+    callouts.push({
+      className: "is-boss-break",
+      label: "Boss breaks",
+      value: String(score.bossBreakCount)
+    });
+  }
+  if (score.weakPointBreakCount > 0) {
+    callouts.push({
+      className: "is-weakpoint-break",
+      label: "Weak points",
+      value: String(score.weakPointBreakCount)
+    });
+  }
+  if (score.maxChainCombo >= 4) {
+    callouts.push({
+      className: "is-chain-combo",
+      label: "Mayhem combo",
+      value: `x${score.maxChainCombo}`
+    });
+  } else if (score.chainReactionCount >= 20) {
+    callouts.push({
+      className: "is-chain-combo",
+      label: "Chain hits",
+      value: formatScoreNumber(score.chainReactionCount)
     });
   }
   return callouts;
@@ -1595,6 +1624,17 @@ function installStyles(): void {
     .hud__result-callouts .is-unlock {
       border-color: rgba(114, 240, 165, 0.58);
       background: rgba(114, 240, 165, 0.1);
+    }
+
+    .hud__result-callouts .is-boss-break {
+      border-color: rgba(255, 112, 88, 0.62);
+      background: rgba(255, 92, 64, 0.12);
+    }
+
+    .hud__result-callouts .is-weakpoint-break,
+    .hud__result-callouts .is-chain-combo {
+      border-color: rgba(120, 234, 255, 0.54);
+      background: rgba(88, 208, 255, 0.1);
     }
 
     .hud__result-callouts span,

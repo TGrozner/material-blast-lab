@@ -30,6 +30,11 @@ export class CameraRig {
   private shakeMagnitude = 0;
   private shakeScale = 1;
   private pixelRatioCap = 1.5;
+  private cinematicCutTime = 0;
+  private cinematicCutDuration = 0;
+  private cinematicCutStrength = 0;
+  private readonly cinematicCutPosition = new THREE.Vector3();
+  private readonly cinematicCutTarget = new THREE.Vector3();
 
   constructor(private readonly renderer: CameraRenderer) {
     this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 180);
@@ -85,6 +90,33 @@ export class CameraRig {
     this.desiredTarget.y = Math.max(1.0, this.desiredTarget.y);
   }
 
+  cinematicImpact(point: THREE.Vector3, intensity = 1, direction?: THREE.Vector3): void {
+    this.spectacle(point);
+    const clampedIntensity = THREE.MathUtils.clamp(intensity, 0.45, 2.2);
+    const impactDirection = direction && direction.lengthSq() > 0.001
+      ? direction.clone().normalize()
+      : new THREE.Vector3(Math.sin(this.spectacleYaw + 0.8), -0.18, Math.cos(this.spectacleYaw + 0.8)).normalize();
+    const side = new THREE.Vector3(-impactDirection.z, 0, impactDirection.x);
+    if (side.lengthSq() < 0.001) {
+      side.set(1, 0, 0);
+    }
+    side.normalize();
+    const portrait = this.camera.aspect < 0.75;
+    const trailingDistance = portrait ? 10.8 : THREE.MathUtils.lerp(8.4, 6.2, Math.min(1, clampedIntensity * 0.45));
+    const sideDistance = portrait ? 4.6 : THREE.MathUtils.lerp(3.8, 2.2, Math.min(1, clampedIntensity * 0.42));
+    const lift = portrait ? 7.6 : THREE.MathUtils.lerp(4.9, 3.3, Math.min(1, clampedIntensity * 0.38));
+    this.cinematicCutTarget.copy(point);
+    this.cinematicCutTarget.y = Math.max(1.05, Math.min(4.4, point.y + 0.58 + clampedIntensity * 0.28));
+    this.cinematicCutPosition
+      .copy(this.cinematicCutTarget)
+      .add(impactDirection.multiplyScalar(-trailingDistance))
+      .add(side.multiplyScalar(sideDistance))
+      .add(this.up.clone().multiplyScalar(lift));
+    this.cinematicCutDuration = THREE.MathUtils.lerp(0.64, 1.16, Math.min(1, clampedIntensity * 0.55));
+    this.cinematicCutTime = this.cinematicCutDuration;
+    this.cinematicCutStrength = clampedIntensity;
+  }
+
   setFocus(point: THREE.Vector3): void {
     this.spectacle(point);
   }
@@ -115,6 +147,9 @@ export class CameraRig {
     this.camera.position.sub(this.previousShake);
     this.previousShake.set(0, 0, 0);
     this.spectacleYaw = 0;
+    this.cinematicCutTime = 0;
+    this.cinematicCutDuration = 0;
+    this.cinematicCutStrength = 0;
     this.shakeTime = 0;
     this.shakeDuration = 0;
     this.shakeMagnitude = 0;
@@ -126,6 +161,9 @@ export class CameraRig {
     this.shakeTime = 0;
     this.shakeDuration = 0;
     this.shakeMagnitude = 0;
+    this.cinematicCutTime = 0;
+    this.cinematicCutDuration = 0;
+    this.cinematicCutStrength = 0;
     this.camera.position.copy(this.desiredPosition);
     this.currentTarget.copy(this.desiredTarget);
     this.camera.lookAt(this.currentTarget);
@@ -146,7 +184,15 @@ export class CameraRig {
         this.currentTarget.y + height,
         this.currentTarget.z + Math.cos(this.spectacleYaw) * radius
       );
-      this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-deltaSeconds * 2.15));
+      if (this.cinematicCutTime > 0 && this.cinematicCutDuration > 0) {
+        this.cinematicCutTime = Math.max(0, this.cinematicCutTime - deltaSeconds);
+        const hold = this.cinematicCutTime / this.cinematicCutDuration;
+        const cutBlend = THREE.MathUtils.smoothstep(hold, 0, 1) * THREE.MathUtils.clamp(this.cinematicCutStrength, 0.55, 1.8);
+        this.currentTarget.lerp(this.cinematicCutTarget, 1 - Math.exp(-deltaSeconds * 6.8));
+        this.camera.position.lerp(this.cinematicCutPosition, 1 - Math.exp(-deltaSeconds * (6.8 + cutBlend * 1.6)));
+      } else {
+        this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-deltaSeconds * 2.15));
+      }
     } else {
       const stiffness = this.mode === "projectile" ? 7.5 : this.mode === "aircraft" ? 5.9 : 4.6;
       this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-deltaSeconds * stiffness));

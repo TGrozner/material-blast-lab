@@ -88,6 +88,8 @@ const VOLATILE_TRIGGER_LIMIT_BY_DEPTH = [3, 1, 0] as const;
 const CAMERA_FOCUS_MIN_SCORE = 155;
 const CAMERA_FOCUS_LOCK_MS = 1100;
 const CAMERA_FOCUS_DECAY_MS = 3400;
+const MONEY_SHOT_LOCK_MS = 1250;
+const MONEY_SHOT_PRIORITY_MARGIN = 80;
 const PRIMARY_IMPACT_SHAKE_MAGNITUDE = 0.56;
 const PRIMARY_IMPACT_SHAKE_DURATION = 0.96;
 const PRIMARY_IMPACT_HIT_STOP_SECONDS = 0.072;
@@ -2316,6 +2318,8 @@ class Game {
   private nextChainCooldownSweep = 0;
   private spectacleFocusScore = 0;
   private spectacleFocusUpdatedAt = 0;
+  private moneyShotScore = 0;
+  private moneyShotLockedUntil = 0;
   private readonly projectileSpectacleFocus = new THREE.Vector3();
   private hasProjectileSpectacleFocus = false;
   private aircraftFlightStartedAt: number | null = null;
@@ -2693,6 +2697,8 @@ class Game {
     this.scoreAutoRevealAt = null;
     this.scoreSpectacleStartedAt = null;
     this.scoreSettleLastActivityAt = null;
+    this.moneyShotScore = 0;
+    this.moneyShotLockedUntil = 0;
   }
 
   private beginSpectacle(nowMs = performance.now()): void {
@@ -4309,6 +4315,9 @@ class Game {
       this.status = directResult
         ? `${projectile.name} impact: ${directResult.fracturedBodies} direct fractures, no blast.`
         : `${projectile.name} spent its velocity without detonating.`;
+      if (directResult) {
+        this.playCinematicImpact(point, directResult, directionVector, 180, true);
+      }
       return;
     }
 
@@ -4395,6 +4404,7 @@ class Game {
     this.status = `${options.statusName} impact: ${directFractures + result.fracturedBodies} fractures, ${
       directHits + result.affectedBodies
     } objects hit.`;
+    this.playCinematicImpact(point, result, directionVector, 190, true);
   }
 
   private applyDirectImpactImpulse(
@@ -4433,6 +4443,46 @@ class Game {
     this.spectacleFocusScore = focusScore;
     this.spectacleFocusUpdatedAt = now;
     this.cameraRig.spectacle(focus);
+  }
+
+  private playCinematicImpact(
+    point: THREE.Vector3,
+    result: ExplosionResult,
+    direction?: THREE.Vector3,
+    bonus = 0,
+    force = false
+  ): boolean {
+    if (!this.settings.motionEffects) {
+      return false;
+    }
+    if (this.currentLevel().id !== "hazard-junction") {
+      return false;
+    }
+    const score = explosionFocusScore(result) + bonus;
+    if (!force && score < CAMERA_FOCUS_MIN_SCORE + 110) {
+      return false;
+    }
+    const candidate = moneyShotCandidate(result, score, point);
+    if (!candidate) {
+      return false;
+    }
+
+    const now = performance.now();
+    if (now < this.moneyShotLockedUntil && candidate.priority < this.moneyShotScore + MONEY_SHOT_PRIORITY_MARGIN) {
+      return false;
+    }
+    this.moneyShotScore = candidate.priority;
+    this.moneyShotLockedUntil = now + (candidate.priority >= 900 ? MONEY_SHOT_LOCK_MS + 320 : MONEY_SHOT_LOCK_MS);
+
+    const intensity = THREE.MathUtils.clamp(0.62 + candidate.priority / 820, 0.78, 2.25);
+    const focus = candidate.focus.clone();
+    focus.y = THREE.MathUtils.clamp(focus.y + result.fracturedBodies * 0.025 + result.affectedBodies * 0.004, 0.95, 5.6);
+    this.cameraRig.cinematicImpact(focus, intensity * 1.18, direction);
+    this.slowMotionTimer = Math.max(this.slowMotionTimer, candidate.priority >= 900 ? 1.05 : 0.82);
+    this.hitStopTimer = Math.max(this.hitStopTimer, candidate.priority >= 900 ? 0.07 : 0.055);
+    this.cameraRig.shake(candidate.priority >= 900 ? 0.42 : 0.34, 0.72);
+    this.status = cinematicImpactStatus(result, score);
+    return true;
   }
 
   private markProjectileSpectacleFocus(point: THREE.Vector3, result: ExplosionResult): void {
@@ -4541,12 +4591,13 @@ class Game {
       });
     }
     this.particles.spark(point, hitObject.materialId === "glass" ? 0xb6fbff : active.definition.color, 0.55);
-    this.audio.playChainImpact({
-      point,
-      result,
-      relativeSpeed: impactSpeed,
-      materialId: hitObject.materialId
-    });
+      this.audio.playChainImpact({
+        point,
+        result,
+        relativeSpeed: impactSpeed,
+        materialId: hitObject.materialId,
+        role: "penetration"
+      });
 
     const retainedSpeed = speed * penetrationRetainedSpeed(active.definition.id, hitObject);
     const exitDistance = penetrationExitDistance(active, hitObject);
@@ -4748,6 +4799,7 @@ class Game {
       this.burningHazards.delete(hazard.id);
       const result = this.destruction.explode(hazard.origin, hazard.strength, hazard.radius);
       this.focusSpectacleOn(hazard.origin, result, hazard.mushroomCloud ? 260 : 145);
+      this.playCinematicImpact(hazard.origin, result, undefined, hazard.mushroomCloud ? 240 : 120);
       this.explosion.play(hazard.origin, hazard.radius * 1.24, result.dustColors, {
         projectileId: hazard.projectileId,
         result,
@@ -4907,8 +4959,10 @@ class Game {
         point: origin,
         result,
         relativeSpeed,
-        materialId: damaged.materialId
+        materialId: damaged.materialId,
+        role: "chain"
       });
+      this.playCinematicImpact(origin, result, relativeVelocity, 0);
       events.push(...this.applyExplosionResult(result));
       const points = Math.max(45, Math.round(damaged.weightedDamage * 0.85 + relativeSpeed * 8));
       events.push(...this.scoreTracker.addChainReaction(points, damaged.position, chainImpactLabel(damaged)));
@@ -4977,7 +5031,8 @@ class Game {
         point: origin,
         result,
         relativeSpeed: impactSpeed,
-        materialId: damaged.materialId
+        materialId: damaged.materialId,
+        role: "surface"
       });
       events.push(...this.applyExplosionResult(result));
       const points = Math.max(22, Math.round(damaged.weightedDamage * 0.45 + impactSpeed * 6));
@@ -6609,6 +6664,98 @@ function scoreStatus(score: ScoreBreakdown, result: ArcadeResult): string {
     return `Perfect run: ${score.totalScore}. 3/3 stars earned.`;
   }
   return `Mission complete: ${score.totalScore}. ${result.stars}/3 stars earned.`;
+}
+
+function cinematicImpactStatus(result: ExplosionResult, focusScore: number): string {
+  const topLabel = result.affectedObjects
+    .filter((object) => object.fractured)
+    .sort((a, b) => b.weightedDamage - a.weightedDamage)[0]?.label;
+  if (focusScore >= 720) {
+    return topLabel ? `Cinematic hit: ${topLabel} is driving a major collapse.` : "Cinematic hit: major collapse in progress.";
+  }
+  if (result.fracturedBodies >= 5) {
+    return topLabel ? `Cinematic hit: ${topLabel} triggered a chain break.` : "Cinematic hit: chain break triggered.";
+  }
+  return topLabel ? `Cinematic hit: ${topLabel} cracked open.` : "Cinematic hit: watching the damage unfold.";
+}
+
+interface MoneyShotCandidate {
+  priority: number;
+  focus: THREE.Vector3;
+}
+
+function moneyShotCandidate(result: ExplosionResult, focusScore: number, fallback: THREE.Vector3): MoneyShotCandidate | null {
+  let best: MoneyShotCandidate | null = null;
+  for (const object of result.affectedObjects) {
+    if (!object.fractured) {
+      continue;
+    }
+    const priority = moneyShotObjectPriority(object, result, focusScore);
+    if (priority <= 0) {
+      continue;
+    }
+    const candidate = {
+      priority: priority + Math.min(80, object.weightedDamage * 0.18),
+      focus: object.position.clone()
+    };
+    if (!best || candidate.priority > best.priority) {
+      best = candidate;
+    }
+  }
+
+  if (best) {
+    return best;
+  }
+
+  if (focusScore >= 860 || result.fracturedBodies >= 9) {
+    return { priority: Math.max(680, Math.min(780, focusScore * 0.88)), focus: fallback.clone() };
+  }
+  return null;
+}
+
+function moneyShotObjectPriority(
+  object: ExplosionResult["affectedObjects"][number],
+  result: ExplosionResult,
+  focusScore: number
+): number {
+  const text = `${object.label} ${object.zoneId ?? ""}`.toLowerCase();
+  let priority = 0;
+
+  if (text.includes("golden-egg") || text.includes("golden egg") || text.includes("unique-boss")) {
+    priority = 980;
+  } else if (text.includes("skyneedle") && (text.includes("crown") || text.includes("spire") || text.includes("signature-debris"))) {
+    priority = 900;
+  } else if (text.includes("weak-point") || text.includes("weak point") || text.includes("shear pin") || text.includes("release") || text.includes("latch")) {
+    priority = 860;
+  } else if (text.includes("support column") || text.includes("support-column")) {
+    priority = 820;
+  } else if (
+    text.includes("parking-silo") ||
+    text.includes("parking silo") ||
+    text.includes("elevated-metro") ||
+    text.includes("elevated metro") ||
+    text.includes("construction crane") ||
+    text.includes("construction-scaffold") ||
+    text.includes("skyneedle")
+  ) {
+    priority = 760;
+  } else if (
+    text.includes("nuclear-plant") ||
+    text.includes("reactor") ||
+    text.includes("substation") ||
+    text.includes("propane") ||
+    text.includes("gas-station")
+  ) {
+    priority = 700;
+  }
+
+  if (priority <= 0 && (focusScore >= 760 || result.fracturedBodies >= 7) && object.scoreRole === "target") {
+    priority = 650;
+  }
+  if (priority <= 0) {
+    return 0;
+  }
+  return Math.min(1040, priority + Math.min(70, result.fracturedBodies * 7) + Math.min(45, result.affectedBodies * 1.8));
 }
 
 function settingsStatus(settings: GameSettings): string {
