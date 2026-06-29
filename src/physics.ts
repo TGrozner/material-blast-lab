@@ -6,8 +6,8 @@ import { perfMonitor } from "./perf";
 const MAX_ACTIVE_DEBRIS = 144;
 const SETTLED_ACTIVE_DEBRIS_TARGET = 72;
 const MAX_FROZEN_RUBBLE = 780;
-const RUBBLE_FREEZE_INTERVAL_SECONDS = 0.18;
-const SETTLED_RUBBLE_MIN_AGE_MS = 520;
+const RUBBLE_FREEZE_INTERVAL_SECONDS = 0.12;
+const SETTLED_RUBBLE_MIN_AGE_MS = 440;
 const FORCED_RUBBLE_MIN_AGE_MS = 260;
 const MAX_RUBBLE_FREEZE_CENTER_Y = 0.78;
 const MAX_PHYSICS_SUBSTEPS_PER_FRAME = 2;
@@ -488,6 +488,12 @@ export class PhysicsWorld {
   }
 
   private queuePendingCollisionEvent(firstId: number, secondId: number, started: boolean): void {
+    const first = this.objects.get(firstId);
+    const second = this.objects.get(secondId);
+    if (!first || !second || !shouldQueueGameplayCollision(first, second)) {
+      perfMonitor.addCount("collision.chainEventsFiltered");
+      return;
+    }
     const key = collisionEventKey(firstId, secondId);
     if (this.pendingCollisionEventKeys.has(key)) {
       perfMonitor.addCount("collision.chainEventsCoalesced");
@@ -505,6 +511,11 @@ export class PhysicsWorld {
   }
 
   private queuePendingSurfaceCollisionEvent(objectId: number, surfaceLabel: string, started: boolean): void {
+    const object = this.objects.get(objectId);
+    if (!object || !shouldQueueSurfaceImpact(object)) {
+      perfMonitor.addCount("collision.surfaceEventsFiltered");
+      return;
+    }
     const key = surfaceCollisionEventKey(objectId, surfaceLabel);
     if (this.pendingSurfaceCollisionEventKeys.has(key)) {
       perfMonitor.addCount("collision.surfaceEventsCoalesced");
@@ -523,11 +534,7 @@ export class PhysicsWorld {
       surfaceLabel,
       started,
       key,
-      impactVelocity: this.preStepVelocities.get(objectId) ?? {
-        x: 0,
-        y: 0,
-        z: 0
-      }
+      impactVelocity: this.preStepVelocities.get(objectId) ?? fallbackSurfaceImpactVelocity(object)
     });
   }
 
@@ -2109,6 +2116,7 @@ export class PhysicsWorld {
         object.category !== "projectile" &&
         object.destructible &&
         object.canFracture &&
+        (object.chainSource || object.isDebris || object.scoreRole === "target") &&
         !object.body.isSleeping()
       ) {
         const velocity = object.body.linvel();
@@ -2256,15 +2264,15 @@ function isStaticDetailMeshBatchable(mesh: THREE.Mesh): mesh is THREE.Mesh<THREE
   if (mesh.geometry.userData.sharedGeometry !== true || mesh.userData.disposeMaterial === true) {
     return false;
   }
-  if (mesh.material.transparent || isEmissiveMaterial(mesh.material)) {
+  if (mesh.material.transparent || isStrongEmissiveMaterial(mesh.material)) {
     return false;
   }
   return true;
 }
 
-function isEmissiveMaterial(material: THREE.Material): boolean {
+function isStrongEmissiveMaterial(material: THREE.Material): boolean {
   const maybeEmissive = material as THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number };
-  return Boolean(maybeEmissive.emissive && maybeEmissive.emissive.getHex() !== 0 && (maybeEmissive.emissiveIntensity ?? 1) > 0);
+  return Boolean(maybeEmissive.emissive && maybeEmissive.emissive.getHex() !== 0 && (maybeEmissive.emissiveIntensity ?? 1) > 0.08);
 }
 
 function frozenRubbleBucketKey(part: FrozenRubblePart): string {
@@ -2668,6 +2676,49 @@ function defaultCollisionLayer(
     return chainSource ? "chain-debris" : "passive-debris";
   }
   return "structure";
+}
+
+function shouldQueueGameplayCollision(first: PhysicsObject, second: PhysicsObject): boolean {
+  if (isProjectileGameplayPair(first, second)) {
+    return true;
+  }
+  return isChainGameplayPair(first, second);
+}
+
+function isProjectileGameplayPair(first: PhysicsObject, second: PhysicsObject): boolean {
+  if (first.category === "projectile") {
+    return isProjectileCollisionTarget(second);
+  }
+  if (second.category === "projectile") {
+    return isProjectileCollisionTarget(first);
+  }
+  return false;
+}
+
+function isProjectileCollisionTarget(object: PhysicsObject): boolean {
+  return object.category !== "projectile" && !object.isDebris && object.zoneId !== "surface";
+}
+
+function isChainGameplayPair(first: PhysicsObject, second: PhysicsObject): boolean {
+  return (isQueuedChainSource(first) && isQueuedChainTarget(second)) || (isQueuedChainSource(second) && isQueuedChainTarget(first));
+}
+
+function isQueuedChainSource(object: PhysicsObject): boolean {
+  return object.chainSource && object.category !== "projectile" && object.bodyType === "dynamic";
+}
+
+function isQueuedChainTarget(object: PhysicsObject): boolean {
+  return object.category !== "projectile" && !object.isDebris && object.destructible && object.canFracture;
+}
+
+function shouldQueueSurfaceImpact(object: PhysicsObject): boolean {
+  return object.bodyType === "dynamic" && object.category !== "projectile" && object.destructible && object.canFracture;
+}
+
+function fallbackSurfaceImpactVelocity(object: PhysicsObject): MotionSample {
+  const velocity = object.body.linvel();
+  perfMonitor.addCount("collision.surfaceVelocityFallback");
+  return { x: velocity.x, y: velocity.y, z: velocity.z };
 }
 
 function collisionGroupsForLayer(layer: PhysicsCollisionLayer): number {

@@ -222,6 +222,9 @@ export class ParticleSystem {
   private readonly signatureLiftedDirection = new THREE.Vector3();
   private readonly responseDirection = new THREE.Vector3();
   private readonly radialRingVelocity = new THREE.Vector3();
+  private readonly flipbookVelocity = new THREE.Vector3();
+  private readonly spriteVelocity = new THREE.Vector3();
+  private readonly plumeDrift = new THREE.Vector3();
   private readonly explosionDustColor = new THREE.Color();
   private readonly explosionSmokeColor = new THREE.Color();
   private readonly cityDustColor = new THREE.Color();
@@ -1242,7 +1245,7 @@ export class ParticleSystem {
         isShockOnly ? 0.18 : 0.44,
         isShockOnly ? THREE.NormalBlending : THREE.AdditiveBlending,
         isShockOnly ? 1.35 : 1.1,
-        new THREE.Vector3(0, isShockOnly ? 0.2 : 0.48, 0),
+        this.flipbookVelocity.set(0, isShockOnly ? 0.2 : 0.48, 0),
         {
           startFrame: 1,
           frameSpan: isShockOnly ? 42 : 24,
@@ -1260,7 +1263,7 @@ export class ParticleSystem {
         isShockOnly ? 0.18 : 0.76,
         THREE.AdditiveBlending,
         0.92,
-        new THREE.Vector3(0, isShockOnly ? 0.28 : 0.82, 0),
+        this.flipbookVelocity.set(0, isShockOnly ? 0.28 : 0.82, 0),
         { startFrame: 4, frameSpan: 42, color: isShockOnly ? 0x61f4ff : isCrush ? 0x7b52ff : 0xffffff, fadeIn: 0.04 }
       );
     }
@@ -1272,11 +1275,6 @@ export class ParticleSystem {
       const originOffset = this.offsetOrigin(coreOrigin, Math.cos(angle) * distance, lift, Math.sin(angle) * distance);
       const start = visualRadius * THREE.MathUtils.randFloat(0.18, 0.34) * heat;
       const end = start * THREE.MathUtils.randFloat(isShockOnly ? 2.2 : 2.6, isShockOnly ? 3.7 : 4.8);
-      const velocity = new THREE.Vector3(
-        Math.cos(angle) * THREE.MathUtils.randFloat(0.18, 0.52),
-        THREE.MathUtils.randFloat(0.28, 0.96),
-        Math.sin(angle) * THREE.MathUtils.randFloat(0.18, 0.52)
-      );
       this.spawnSprite(
         originOffset,
         CORE_TEXTURE,
@@ -1288,7 +1286,11 @@ export class ParticleSystem {
         THREE.MathUtils.randFloat(0.36, 0.95),
         THREE.AdditiveBlending,
         THREE.MathUtils.randFloat(0.68, 1.35),
-        velocity
+        this.spriteVelocity.set(
+          Math.cos(angle) * THREE.MathUtils.randFloat(0.18, 0.52),
+          THREE.MathUtils.randFloat(0.28, 0.96),
+          Math.sin(angle) * THREE.MathUtils.randFloat(0.18, 0.52)
+        )
       );
     }
 
@@ -1345,7 +1347,7 @@ export class ParticleSystem {
         0.72,
         THREE.NormalBlending,
         1.25,
-        new THREE.Vector3(0, 0.46, 0),
+        this.flipbookVelocity.set(0, 0.46, 0),
         {
           startFrame: 2,
           frameSpan: 54,
@@ -1365,7 +1367,7 @@ export class ParticleSystem {
         0.18,
         THREE.NormalBlending,
         1.45,
-        new THREE.Vector3(0, 0.18, 0),
+        this.flipbookVelocity.set(0, 0.18, 0),
         {
           startFrame: 1,
           frameSpan: 23,
@@ -1386,11 +1388,6 @@ export class ParticleSystem {
         Math.sin(angle) * distance
       );
       const startSize = THREE.MathUtils.randFloat(visualRadius * 0.24, visualRadius * 0.54) * amount;
-      const drift = new THREE.Vector3(
-        Math.cos(angle) * THREE.MathUtils.randFloat(0.08, 0.32),
-        THREE.MathUtils.randFloat(0.2, 0.72),
-        Math.sin(angle) * THREE.MathUtils.randFloat(0.08, 0.32)
-      );
       this.spawnSprite(
         lifted,
         SMOKE_TEXTURE,
@@ -1402,7 +1399,11 @@ export class ParticleSystem {
         THREE.MathUtils.randFloat(0.22, 0.62),
         THREE.NormalBlending,
         THREE.MathUtils.randFloat(0.7, 1.55),
-        drift,
+        this.plumeDrift.set(
+          Math.cos(angle) * THREE.MathUtils.randFloat(0.08, 0.32),
+          THREE.MathUtils.randFloat(0.2, 0.72),
+          Math.sin(angle) * THREE.MathUtils.randFloat(0.08, 0.32)
+        ),
         { delay: THREE.MathUtils.randFloat(0.1, 0.24), fadeIn: THREE.MathUtils.randFloat(0.16, 0.28) }
       );
     }

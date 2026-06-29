@@ -2302,36 +2302,58 @@ function addMetroRailDecoration(context: LevelContext, position: THREE.Vector3, 
   const railLength = isEastWest ? deckSize.x * 0.96 : deckSize.z * 0.96;
   const railThickness = 0.055;
   const railGauge = 0.28;
-  for (const offset of [-railGauge, railGauge]) {
-    const rail = new THREE.Mesh(
-      isEastWest
-        ? sharedLevelBoxGeometry(railLength, railThickness, railThickness)
-        : sharedLevelBoxGeometry(railThickness, railThickness, railLength),
-      railMaterial
-    );
-    rail.name = "elevated metro rail";
-    rail.position.set(isEastWest ? 0 : offset, deckSize.y * 0.74, isEastWest ? offset : 0);
-    rail.castShadow = true;
-    rail.receiveShadow = false;
-    rail.userData.disposeMaterial = false;
-    group.add(rail);
-  }
+  addMetroInstancedBoxes(
+    group,
+    "elevated metro rail batch",
+    isEastWest
+      ? sharedLevelBoxGeometry(railLength, railThickness, railThickness)
+      : sharedLevelBoxGeometry(railThickness, railThickness, railLength),
+    railMaterial,
+    [
+      new THREE.Vector3(isEastWest ? 0 : -railGauge, deckSize.y * 0.74, isEastWest ? -railGauge : 0),
+      new THREE.Vector3(isEastWest ? 0 : railGauge, deckSize.y * 0.74, isEastWest ? railGauge : 0)
+    ],
+    true
+  );
 
   const sleeperCount = Math.min(14, Math.max(6, Math.floor(railLength / 2.1)));
+  const sleeperPositions: THREE.Vector3[] = [];
   for (let index = 0; index < sleeperCount; index += 1) {
     const t = sleeperCount === 1 ? 0.5 : index / (sleeperCount - 1);
     const along = THREE.MathUtils.lerp(-railLength * 0.44, railLength * 0.44, t);
-    const sleeper = new THREE.Mesh(
-      isEastWest ? sharedLevelBoxGeometry(0.09, 0.045, 0.68) : sharedLevelBoxGeometry(0.68, 0.045, 0.09),
-      sleeperMaterial
-    );
-    sleeper.name = "elevated metro sleeper";
-    sleeper.position.set(isEastWest ? along : 0, deckSize.y * 0.68, isEastWest ? 0 : along);
-    sleeper.userData.disposeMaterial = false;
-    group.add(sleeper);
+    sleeperPositions.push(new THREE.Vector3(isEastWest ? along : 0, deckSize.y * 0.68, isEastWest ? 0 : along));
   }
+  addMetroInstancedBoxes(
+    group,
+    "elevated metro sleeper batch",
+    isEastWest ? sharedLevelBoxGeometry(0.09, 0.045, 0.68) : sharedLevelBoxGeometry(0.68, 0.045, 0.09),
+    sleeperMaterial,
+    sleeperPositions
+  );
 
   context.addDecoration(group);
+}
+
+function addMetroInstancedBoxes(
+  parent: THREE.Object3D,
+  name: string,
+  geometry: THREE.BoxGeometry,
+  material: THREE.Material,
+  positions: readonly THREE.Vector3[],
+  castShadow = false
+): void {
+  const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
+  mesh.name = name;
+  mesh.castShadow = castShadow;
+  mesh.receiveShadow = false;
+  mesh.userData.disposeMaterial = false;
+  const matrix = new THREE.Matrix4();
+  for (let index = 0; index < positions.length; index += 1) {
+    matrix.makeTranslation(positions[index].x, positions[index].y, positions[index].z);
+    mesh.setMatrixAt(index, matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  parent.add(mesh);
 }
 
 function spawnCentralSkyneedle(context: LevelContext): void {
