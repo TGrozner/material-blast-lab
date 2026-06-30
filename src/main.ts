@@ -131,7 +131,6 @@ const HAZARD_EXPLOSIONS_MAX_PER_FRAME = 1;
 const FIRE_SPREAD_MIN_DELAY_MS = 620;
 const FIRE_SPREAD_MAX_DELAY_MS = 1380;
 const FIRE_SPREAD_SCAN_INTERVAL_MS = 520;
-const FIRE_SPREAD_CANDIDATE_LIMIT = 3;
 const FIRE_SPREAD_MAX_CHILDREN = 1;
 const SCATTER_PHYSICAL_SHARD_COUNT = 8;
 const VOLATILE_TRIGGER_LIMIT_BY_DEPTH = [3, 1, 0] as const;
@@ -2288,6 +2287,7 @@ class Game {
   private readonly aimSurfaceHits: THREE.Intersection<THREE.Object3D>[] = [];
   private readonly projectileSegmentCandidates: PhysicsObject[] = [];
   private readonly fireSpreadCandidates: PhysicsObject[] = [];
+  private readonly burningHazardSnapshot: BurningHazard[] = [];
   private readonly projectileCurrentPosition = new THREE.Vector3();
   private readonly projectilePreviousPosition = new THREE.Vector3();
   private readonly chainSourcePosition = new THREE.Vector3();
@@ -2637,11 +2637,14 @@ class Game {
       this.updateHud();
       perfMonitor.addTiming("game.ui", startedAt);
       startedAt = perfMonitor.timeStart();
-      const programsBeforeRender = rendererProgramCount(this.renderer);
+      const shouldTrackProgramCreation = perfMonitor.isEnabled() && this.renderWarmupState.phase === "ready";
+      const programsBeforeRender = shouldTrackProgramCreation ? rendererProgramCount(this.renderer) : 0;
       this.renderer.render(this.scene, this.cameraRig.camera);
-      const programDelta = rendererProgramCount(this.renderer) - programsBeforeRender;
-      if (programDelta > 0 && this.renderWarmupState.phase === "ready") {
-        this.recordPostWarmupProgramCreation(programDelta);
+      if (shouldTrackProgramCreation) {
+        const programDelta = rendererProgramCount(this.renderer) - programsBeforeRender;
+        if (programDelta > 0) {
+          this.recordPostWarmupProgramCreation(programDelta);
+        }
       }
       perfMonitor.addTiming("renderer.render", startedAt);
     } finally {
@@ -4810,7 +4813,11 @@ class Game {
     }
     const now = performance.now();
     let detonationsThisFrame = 0;
-    for (const hazard of [...this.burningHazards.values()]) {
+    this.burningHazardSnapshot.length = 0;
+    for (const hazard of this.burningHazards.values()) {
+      this.burningHazardSnapshot.push(hazard);
+    }
+    for (const hazard of this.burningHazardSnapshot) {
       const sourceObject = this.physics.getObject(hazard.id);
       if (!sourceObject) {
         this.burningHazards.delete(hazard.id);
@@ -4882,16 +4889,23 @@ class Game {
     if (this.burningHazards.size >= MAX_BURNING_HAZARDS) {
       return [];
     }
-    const candidates = this.physics
-      .getBlastCandidatesInto(this.fireSpreadCandidates, hazard.origin, hazard.heatRadius)
-      .filter((candidate) => candidate.id !== hazard.id && !this.burningHazards.has(candidate.id) && canIgnitePhysicsObject(candidate))
-      .sort((a, b) => fireSpreadPriority(b, hazard.origin) - fireSpreadPriority(a, hazard.origin))
-      .slice(0, FIRE_SPREAD_CANDIDATE_LIMIT);
-    if (candidates.length === 0) {
+    let target: PhysicsObject | null = null;
+    let targetPriority = Number.NEGATIVE_INFINITY;
+    const candidates = this.physics.getBlastCandidatesInto(this.fireSpreadCandidates, hazard.origin, hazard.heatRadius);
+    for (const candidate of candidates) {
+      if (candidate.id === hazard.id || this.burningHazards.has(candidate.id) || !canIgnitePhysicsObject(candidate)) {
+        continue;
+      }
+      const priority = fireSpreadPriority(candidate, hazard.origin);
+      if (priority > targetPriority) {
+        target = candidate;
+        targetPriority = priority;
+      }
+    }
+    if (!target) {
       return [];
     }
 
-    const target = candidates[0];
     hazard.spreadCount += 1;
     const origin = ignitionOriginForObject(target);
     const pseudoAffected = affectedObjectFromPhysics(target, origin, hazard.strength * 0.42);

@@ -172,13 +172,23 @@ function countVisibleSceneMeshes(
     if (!(object instanceof THREE.Mesh) || !object.visible) {
       return;
     }
-    const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
-    const renderableMaterials = objectMaterials.filter((material) => material.visible);
-    if (renderableMaterials.length === 0) {
+    const material = object.material;
+    if (Array.isArray(material)) {
+      let hasRenderableMaterial = false;
+      for (const entry of material) {
+        if (!entry.visible) {
+          continue;
+        }
+        hasRenderableMaterial = true;
+        visibleMaterialsScratch.add(entry);
+      }
+      if (hasRenderableMaterial) {
+        visibleMeshes += 1;
+      }
       return;
     }
-    visibleMeshes += 1;
-    for (const material of renderableMaterials) {
+    if (material.visible) {
+      visibleMeshes += 1;
       visibleMaterialsScratch.add(material);
     }
   });

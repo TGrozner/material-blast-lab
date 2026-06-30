@@ -2,9 +2,11 @@ import { describe, expect, test } from "vitest";
 import * as THREE from "three";
 import { formatCompactScore } from "../../src/numberFormat";
 import {
+  captureFullRenderStats,
   captureFastRenderStats,
   createInitialRenderStats,
   levelCompositionLine,
+  type FullRenderStatsInput,
   type RenderStatsInput
 } from "../../src/renderStats";
 import { rendererDrawCalls, rendererProgramCount } from "../../src/renderer";
@@ -69,6 +71,28 @@ describe("renderer stats helpers", () => {
     expect(next.bodyCount).toBe(16);
     expect(next.visibleMeshes).toBe(2612);
     expect(next.visibleMaterials).toBe(278);
+  });
+
+  test("counts visible meshes and unique visible materials during full captures", () => {
+    const scene = new THREE.Scene();
+    const visibleMaterial = new THREE.MeshBasicMaterial();
+    const secondVisibleMaterial = new THREE.MeshBasicMaterial();
+    const hiddenMaterial = new THREE.MeshBasicMaterial({ visible: false });
+    const hiddenMeshMaterial = new THREE.MeshBasicMaterial();
+    const visibleMesh = new THREE.Mesh(new THREE.BoxGeometry(), visibleMaterial);
+    const multiMaterialMesh = new THREE.Mesh(new THREE.BoxGeometry(), [hiddenMaterial, secondVisibleMaterial]);
+    const hiddenMesh = new THREE.Mesh(new THREE.BoxGeometry(), hiddenMeshMaterial);
+    hiddenMesh.visible = false;
+    scene.add(visibleMesh, multiMaterialMesh, hiddenMesh);
+
+    const stats = captureFullRenderStats({
+      ...renderStatsInput(),
+      scene,
+      visibleMaterialsScratch: new Set()
+    } satisfies FullRenderStatsInput);
+
+    expect(stats.visibleMeshes).toBe(2);
+    expect(stats.visibleMaterials).toBe(2);
   });
 });
 
