@@ -266,6 +266,7 @@ test("starts the local daily contract as a cannon trial", async ({ page }) => {
   });
   await expect(page.locator(".hud__projectile").first()).toBeDisabled();
   await expect(page.getByRole("button", { name: "Heavy" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Heavy" })).toHaveAttribute("title", "Daily and weekly contracts use a fixed payload.");
   expect(consoleErrors).toEqual([]);
 });
 
@@ -431,6 +432,36 @@ test("selects a projectile, fires, then resets to a ready trial", async ({ page 
   const earlyFlightStats = await waitForRenderStats(page);
   expect(earlyFlightStats.fixedStructureCount).toBe(resetStats.fixedStructureCount);
   expect(earlyFlightStats.pendingSupportReleaseCount).toBe(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("unlocks Ignite as a campaign payload for the final district", async ({ page }) => {
+  test.setTimeout(LONG_TEST_TIMEOUT_MS);
+  const consoleErrors = trackRuntimeErrors(page);
+
+  await useSmokePerformanceSettings(page);
+  await seedArcadeProgress(page, {
+    "hazard-junction": 2,
+    "breaker-yard": 2,
+    "switchback-crush": 2,
+    "relay-gauntlet": 2,
+    "overdrive-core": 0
+  });
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto(SMOKE_URL);
+
+  await expect(levelCard(page, "Overdrive Core")).toBeEnabled();
+  await clickUi(levelCard(page, "Overdrive Core"));
+  await expectLevelReady(page, "Overdrive Core");
+  await expect(page.getByRole("button", { name: "Ignite" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ignite" })).toBeEnabled();
+
+  await clickUi(page.getByRole("button", { name: "Ignite" }));
+  await expectSelectedProjectile(page, "Ignite");
+
+  await clickUi(page.getByRole("button", { name: "Heavy" }));
+  await page.keyboard.press("5");
+  await expectSelectedProjectile(page, "Ignite");
   expect(consoleErrors).toEqual([]);
 });
 

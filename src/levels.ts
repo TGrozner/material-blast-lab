@@ -441,6 +441,7 @@ function setupBreakerYardCity(context: LevelContext): void {
   spawnBreakerYardCore(context);
   spawnBreakerYardRelayWeb(context);
   spawnBreakerBossCapacitor(context);
+  spawnBreakerYardDensityInfill(context);
   spawnBreakerYardStreetActivity(context);
   spawnPowerGrid(context);
   spawnStreetSetpieces(context);
@@ -454,6 +455,7 @@ function setupSwitchbackCrushCity(context: LevelContext): void {
   spawnSwitchbackArchiveCore(context);
   spawnSwitchbackRedirectors(context);
   spawnArchiveBossLens(context);
+  spawnSwitchbackArchiveDensityInfill(context);
   spawnSwitchbackStreetActivity(context);
   spawnStreetSetpieces(context);
 }
@@ -468,6 +470,7 @@ function setupRelayGauntletCity(context: LevelContext): void {
   spawnBreakerBossCapacitor(context, { phaseReadout: true });
   spawnRelayGauntletRoutePaint(context);
   spawnRelayGauntletCapacitorRoute(context);
+  spawnRelayGauntletDensityInfill(context);
   spawnRelayGauntletTraffic(context);
   spawnPowerGrid(context);
   spawnStreetSetpieces(context);
@@ -483,6 +486,7 @@ function setupOverdriveCoreCity(context: LevelContext): void {
   spawnArchiveBossLens(context, { phaseReadout: true });
   spawnOverdriveCoreRoutePaint(context);
   spawnOverdriveCoreSetpieces(context);
+  spawnOverdriveCoreDensityInfill(context);
   spawnOverdriveCoreTraffic(context);
   spawnStreetSetpieces(context);
 }
@@ -781,6 +785,119 @@ function spawnBreakerYardStreetActivity(context: LevelContext): void {
   addBillboard(context, -6.85, 5.9, 0xffd66b);
 }
 
+function spawnBreakerYardDensityInfill(context: LevelContext): void {
+  const buildings: BuildingSpec[] = [
+    {
+      label: "Switchyard control annex",
+      materialId: "metal",
+      position: new THREE.Vector3(-8.95, 0, -1.7),
+      size: new THREE.Vector3(0.5, 0.46, 0.52),
+      floors: 4,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "breaker-yard-fill switchyard",
+      scoreValue: 32,
+      style: "warehouse",
+      stagger: 0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Breaker cable warehouse",
+      materialId: "concrete",
+      position: new THREE.Vector3(8.75, 0, -1.95),
+      size: new THREE.Vector3(0.54, 0.5, 0.58),
+      floors: 5,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "breaker-yard-fill switchyard",
+      scoreValue: 34,
+      style: "industrial",
+      stagger: -0.04,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Coolant shed stack",
+      materialId: "wood",
+      position: new THREE.Vector3(-7.35, 0, 4.05),
+      size: new THREE.Vector3(0.5, 0.42, 0.5),
+      floors: 3,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "breaker-yard-fill coolant-kiosk",
+      scoreValue: 28,
+      style: "utility",
+      stagger: -0.06,
+      rotationY: -Math.PI * 0.06
+    },
+    {
+      label: "Meter shop row",
+      materialId: "glass",
+      position: new THREE.Vector3(6.85, 0, 5.15),
+      size: new THREE.Vector3(0.46, 0.5, 0.48),
+      floors: 4,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "breaker-yard-fill relay-booth",
+      scoreValue: 30,
+      style: "utility",
+      stagger: 0.06,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "South battery shopfront",
+      materialId: "concrete",
+      position: new THREE.Vector3(-2.75, 0, 7.2),
+      size: new THREE.Vector3(0.5, 0.46, 0.5),
+      floors: 4,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "breaker-yard-fill battery-road",
+      scoreValue: 30,
+      style: "market",
+      stagger: 0.04
+    }
+  ];
+
+  for (const building of buildings) {
+    spawnCityBuildingStack(context, building);
+  }
+
+  for (const [label, materialId, x, z, width, height, depth, rotationY] of [
+    ["Switchyard cable tray", "rubber", -8.1, 0.65, 1.6, 0.1, 0.12, Math.PI * 0.5],
+    ["Switchyard cable tray", "rubber", 8.05, -0.45, 1.75, 0.1, 0.12, Math.PI * 0.5],
+    ["Meter cabinet row", "glass", -6.85, 1.6, 0.48, 0.62, 0.46, Math.PI * 0.5],
+    ["Transformer pallet cluster", "metal", 6.35, 1.75, 0.84, 0.48, 0.58, -Math.PI * 0.08],
+    ["Coolant barrel stack", "foam", -6.2, 5.35, 0.82, 0.4, 0.58, Math.PI * 0.18],
+    ["Breaker timber stop", "wood", 4.45, 6.45, 0.86, 0.42, 0.6, -Math.PI * 0.18],
+    ["Rubber conductor bundle", "rubber", 1.15, 6.95, 1.55, 0.12, 0.14, Math.PI * 0.5],
+    ["Metal relay crate", "metal", -4.8, -6.55, 0.74, 0.48, 0.5, Math.PI * 0.12]
+  ] as const) {
+    addStreetCargo(context, label, materialId, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  for (const [type, label, x, z, width, height, depth, rotationY] of [
+    ["transformer", "Switchyard spare transformer", -8.2, -4.25, 0.54, 0.74, 0.46, Math.PI * 0.08],
+    ["shockCanister", "Coolant arc canister", -7.55, 2.7, 0.4, 0.64, 0.4, Math.PI * 0.5],
+    ["springPad", "Breaker lane rebound pad", 7.55, 3.15, 0.82, 0.2, 0.6, -Math.PI * 0.12]
+  ] as const) {
+    addHazardRelay(context, type, label, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  addRoutedCityVehicle(context, "Breaker cable flatbed", BATTERY_TRAFFIC_LOOP, 0.82, 0, 0.74, 0.32, new THREE.Vector3(0.52, 0.38, 1.0), 0x5de7ff, {
+    zoneId: "breaker-yard switchyard moving-vehicles",
+    scoreValue: 92,
+    hazardKind: "electric",
+    detail: "full"
+  });
+  addRoutedCityVehicle(context, "Breaker yard taxi", INNER_BELT_TRAFFIC_LOOP, 1.18, 3, 0.58, 0.28, new THREE.Vector3(0.38, 0.32, 0.72), 0xffc241, {
+    scoreValue: 42
+  });
+  addBillboard(context, 8.55, 5.55, 0x5de7ff);
+  addStreetLight(context, -8.35, 2.0);
+  addStreetLight(context, 8.2, 2.45);
+  addStreetLight(context, -3.15, 7.35);
+}
+
 function spawnRelayGauntletRoutePaint(context: LevelContext): void {
   for (const [label, x, z, width, depth, color, opacity] of [
     ["Relay gauntlet north entry stripe", -4.65, -6.28, 5.8, 0.34, 0x5de7ff, 0.34],
@@ -879,6 +996,120 @@ function spawnRelayGauntletTraffic(context: LevelContext): void {
     zoneId: "relay-gauntlet traffic-loop moving-vehicles",
     scoreValue: 48
   });
+}
+
+function spawnRelayGauntletDensityInfill(context: LevelContext): void {
+  const buildings: BuildingSpec[] = [
+    {
+      label: "Relay lane operator stack",
+      materialId: "metal",
+      position: new THREE.Vector3(-8.55, 0, -3.95),
+      size: new THREE.Vector3(0.5, 0.5, 0.5),
+      floors: 5,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "relay-gauntlet-fill route-operator",
+      scoreValue: 34,
+      style: "industrial",
+      stagger: 0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Capacitor service row",
+      materialId: "concrete",
+      position: new THREE.Vector3(8.8, 0, -1.75),
+      size: new THREE.Vector3(0.5, 0.46, 0.54),
+      floors: 4,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "relay-gauntlet-fill capacitor-bank",
+      scoreValue: 32,
+      style: "warehouse",
+      stagger: -0.04,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "South relay depot",
+      materialId: "wood",
+      position: new THREE.Vector3(7.05, 0, 5.65),
+      size: new THREE.Vector3(0.52, 0.42, 0.5),
+      floors: 3,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "relay-gauntlet-fill south-cashout",
+      scoreValue: 28,
+      style: "utility",
+      stagger: 0.06,
+      rotationY: -Math.PI * 0.06
+    },
+    {
+      label: "Traffic bait kiosk",
+      materialId: "glass",
+      position: new THREE.Vector3(-6.85, 0, 4.05),
+      size: new THREE.Vector3(0.44, 0.5, 0.46),
+      floors: 4,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "relay-gauntlet-fill traffic-bait",
+      scoreValue: 30,
+      style: "glassTower",
+      stagger: -0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Route marshal block",
+      materialId: "foam",
+      position: new THREE.Vector3(1.1, 0, 7.35),
+      size: new THREE.Vector3(0.5, 0.4, 0.5),
+      floors: 3,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "relay-gauntlet-fill route-bumper",
+      scoreValue: 26,
+      style: "market",
+      stagger: 0.04
+    }
+  ];
+
+  for (const building of buildings) {
+    spawnCityBuildingStack(context, building);
+  }
+
+  for (const [type, label, x, z, width, height, depth, rotationY] of [
+    ["transformer", "Relay north gate pylon", -6.95, -5.75, 0.44, 0.82, 0.38, Math.PI * 0.08],
+    ["transformer", "Relay capacitor side pylon", 8.05, -3.35, 0.44, 0.82, 0.38, -Math.PI * 0.5],
+    ["shockCanister", "Relay phase marker canister", 7.45, 2.2, 0.4, 0.66, 0.4, Math.PI * 0.5],
+    ["springPad", "Relay south timing pad", 3.95, 5.35, 0.86, 0.2, 0.6, -Math.PI * 0.14]
+  ] as const) {
+    addHazardRelay(context, type, label, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  for (const [label, materialId, x, z, width, height, depth, rotationY] of [
+    ["Relay overhead cable tray", "rubber", -6.15, -4.02, 1.65, 0.1, 0.12, Math.PI * 0.5],
+    ["Relay phase cable tray", "rubber", 6.62, -1.75, 1.75, 0.1, 0.12, Math.PI * 0.5],
+    ["Relay traffic barrier crate", "wood", 5.85, 0.88, 0.84, 0.42, 0.58, Math.PI * 0.12],
+    ["Relay capacitor meter cart", "glass", 7.05, -4.95, 0.52, 0.58, 0.48, -Math.PI * 0.08],
+    ["Relay route bumper pair", "foam", 2.7, 5.05, 0.94, 0.36, 0.56, Math.PI * 0.18],
+    ["Relay service pallet", "metal", -2.85, 5.85, 0.78, 0.46, 0.52, -Math.PI * 0.12],
+    ["Relay cable ballast", "rubber", -7.7, 0.82, 1.35, 0.12, 0.14, Math.PI * 0.5],
+    ["Relay fuse crate", "glass", 0.85, -6.35, 0.5, 0.58, 0.48, Math.PI * 0.08]
+  ] as const) {
+    addStreetCargo(context, label, materialId, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  addRoutedCityVehicle(context, "Relay gauntlet hazard coupe", INNER_BELT_TRAFFIC_LOOP, 1.16, 1, 0.52, 0.28, new THREE.Vector3(0.38, 0.32, 0.72), 0xffc241, {
+    zoneId: "relay-gauntlet traffic-bait moving-vehicles",
+    scoreValue: 52,
+    hazardKind: "combustible"
+  });
+  addRoutedCityVehicle(context, "Relay utility loader", CITY_BELT_TRAFFIC_LOOP, 0.82, 3, 0.42, 0.32, new THREE.Vector3(0.48, 0.38, 0.78), 0x93f1ff, {
+    zoneId: "relay-gauntlet utility-cargo moving-vehicles",
+    scoreValue: 64
+  });
+  addBillboard(context, -7.95, -4.9, 0x5de7ff);
+  addBillboard(context, 7.8, 5.35, 0xffb23f);
+  addStreetLight(context, -6.5, -5.85);
+  addStreetLight(context, 6.45, 0.85);
 }
 
 function spawnSwitchbackArchiveCore(context: LevelContext): void {
@@ -1140,6 +1371,119 @@ function spawnSwitchbackStreetActivity(context: LevelContext): void {
   addBillboard(context, 6.9, 4.65, 0xffd66b);
 }
 
+function spawnSwitchbackArchiveDensityInfill(context: LevelContext): void {
+  const buildings: BuildingSpec[] = [
+    {
+      label: "Archive side-stack library",
+      materialId: "concrete",
+      position: new THREE.Vector3(-8.6, 0, -2.45),
+      size: new THREE.Vector3(0.5, 0.5, 0.52),
+      floors: 5,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "switchback-fill archive-wing",
+      scoreValue: 34,
+      style: "apartment",
+      stagger: -0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Mirror records annex",
+      materialId: "glass",
+      position: new THREE.Vector3(8.45, 0, -2.75),
+      size: new THREE.Vector3(0.44, 0.56, 0.46),
+      floors: 4,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "switchback-fill glass-archive",
+      scoreValue: 32,
+      style: "glassTower",
+      stagger: 0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Foam baffle workshop",
+      materialId: "foam",
+      position: new THREE.Vector3(-6.9, 0, 5.2),
+      size: new THREE.Vector3(0.52, 0.4, 0.54),
+      floors: 3,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "switchback-fill switchback-foam",
+      scoreValue: 28,
+      style: "market",
+      stagger: 0.06,
+      rotationY: -Math.PI * 0.08
+    },
+    {
+      label: "Archive service dock",
+      materialId: "metal",
+      position: new THREE.Vector3(7.75, 0, 4.35),
+      size: new THREE.Vector3(0.52, 0.46, 0.58),
+      floors: 4,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "switchback-fill switchback-service",
+      scoreValue: 30,
+      style: "warehouse",
+      stagger: -0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "South archive kiosk row",
+      materialId: "wood",
+      position: new THREE.Vector3(0.35, 0, 7.35),
+      size: new THREE.Vector3(0.5, 0.42, 0.5),
+      floors: 3,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "switchback-fill archive-service",
+      scoreValue: 26,
+      style: "utility",
+      stagger: 0.04
+    }
+  ];
+
+  for (const building of buildings) {
+    spawnCityBuildingStack(context, building);
+  }
+
+  for (const [label, materialId, x, z, width, height, depth, rotationY] of [
+    ["Archive shelf rack", "wood", -7.25, -0.75, 0.82, 0.5, 0.46, Math.PI * 0.5],
+    ["Glass file cabinet", "glass", 7.15, -1.05, 0.48, 0.6, 0.46, -Math.PI * 0.08],
+    ["Foam baffle pair", "foam", -4.95, 2.35, 1.02, 0.36, 0.58, Math.PI * 0.24],
+    ["Foam baffle pair", "foam", 4.85, 2.05, 1.02, 0.36, 0.58, -Math.PI * 0.2],
+    ["Archive service cart", "metal", -1.15, 5.62, 0.74, 0.46, 0.52, Math.PI * 0.12],
+    ["Glass return crate", "glass", 2.15, 5.85, 0.52, 0.58, 0.48, -Math.PI * 0.12],
+    ["Wood archive pallet", "wood", -6.05, -5.8, 0.78, 0.44, 0.56, Math.PI * 0.16],
+    ["Foam corner wedge", "foam", 6.65, 5.75, 0.86, 0.36, 0.56, -Math.PI * 0.18]
+  ] as const) {
+    addStreetCargo(context, label, materialId, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  for (const [type, label, x, z, width, height, depth, rotationY] of [
+    ["shockCanister", "Archive pressure canister", -7.85, 1.65, 0.4, 0.64, 0.4, Math.PI * 0.5],
+    ["shockCanister", "Archive lens canister", 7.65, 1.25, 0.4, 0.64, 0.4, -Math.PI * 0.5],
+    ["springPad", "Archive service rebound pad", -3.55, 5.35, 0.86, 0.2, 0.6, Math.PI * 0.2]
+  ] as const) {
+    addHazardRelay(context, type, label, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  addRoutedCityVehicle(context, "Archive records truck", CITY_BELT_TRAFFIC_LOOP, 0.84, 2, 0.52, 0.34, new THREE.Vector3(0.56, 0.44, 0.98), 0xf4f7ff, {
+    zoneId: "switchback-crush archive-service moving-vehicles",
+    scoreValue: 68,
+    detail: "full"
+  });
+  addRoutedCityVehicle(context, "Switchback foam cart", INNER_BELT_TRAFFIC_LOOP, 0.94, 0, 0.68, 0.28, new THREE.Vector3(0.38, 0.32, 0.72), 0xff6b93, {
+    zoneId: "switchback-crush switchback-foam moving-vehicles",
+    scoreValue: 46
+  });
+  addBillboard(context, -7.75, 4.95, 0xff6b93);
+  addStreetLight(context, -7.55, -1.15);
+  addStreetLight(context, 7.55, -1.35);
+  addStreetLight(context, 0.2, 7.45);
+}
+
 function spawnOverdriveCoreRoutePaint(context: LevelContext): void {
   for (const [label, x, z, width, depth, color, opacity] of [
     ["Overdrive boss lens entry stripe", 5.4, -6.05, 4.4, 0.38, 0xff6b93, 0.34],
@@ -1238,6 +1582,121 @@ function spawnOverdriveCoreTraffic(context: LevelContext): void {
     zoneId: "overdrive-core switchback-service moving-vehicles",
     scoreValue: 46
   });
+}
+
+function spawnOverdriveCoreDensityInfill(context: LevelContext): void {
+  const buildings: BuildingSpec[] = [
+    {
+      label: "Prism service tower",
+      materialId: "glass",
+      position: new THREE.Vector3(8.95, 0, -1.45),
+      size: new THREE.Vector3(0.46, 0.58, 0.48),
+      floors: 5,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "overdrive-core-fill prism-service",
+      scoreValue: 34,
+      style: "glassTower",
+      stagger: 0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Left archive ballast wing",
+      materialId: "concrete",
+      position: new THREE.Vector3(-8.75, 0, 1.15),
+      size: new THREE.Vector3(0.52, 0.52, 0.54),
+      floors: 5,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "overdrive-core-fill archive-boss",
+      scoreValue: 34,
+      style: "apartment",
+      stagger: -0.05,
+      rotationY: Math.PI * 0.5
+    },
+    {
+      label: "Pressure bulb pump house",
+      materialId: "metal",
+      position: new THREE.Vector3(6.85, 0, 6.05),
+      size: new THREE.Vector3(0.52, 0.46, 0.58),
+      floors: 4,
+      columns: 4,
+      scoreRole: "neutral",
+      zoneId: "overdrive-core-fill pressure-bulb",
+      scoreValue: 32,
+      style: "warehouse",
+      stagger: 0.04,
+      rotationY: -Math.PI * 0.08
+    },
+    {
+      label: "Mirror baffle station",
+      materialId: "foam",
+      position: new THREE.Vector3(-5.95, 0, 5.6),
+      size: new THREE.Vector3(0.52, 0.4, 0.52),
+      floors: 3,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "overdrive-core-fill mirror-baffle",
+      scoreValue: 28,
+      style: "market",
+      stagger: -0.04,
+      rotationY: Math.PI * 0.12
+    },
+    {
+      label: "Center rebound kiosk",
+      materialId: "wood",
+      position: new THREE.Vector3(-0.75, 0, 6.85),
+      size: new THREE.Vector3(0.5, 0.42, 0.5),
+      floors: 3,
+      columns: 5,
+      scoreRole: "neutral",
+      zoneId: "overdrive-core-fill center-rebound",
+      scoreValue: 26,
+      style: "utility",
+      stagger: 0.04
+    }
+  ];
+
+  for (const building of buildings) {
+    spawnCityBuildingStack(context, building);
+  }
+
+  for (const [label, materialId, x, z, width, height, depth, rotationY] of [
+    ["Overdrive prism service rack", "glass", 7.72, -1.25, 0.58, 0.64, 0.46, -Math.PI * 0.1],
+    ["Overdrive mirror bumper", "foam", 6.55, 1.75, 1.02, 0.36, 0.58, -Math.PI * 0.2],
+    ["Overdrive mirror bumper", "foam", -5.85, 2.95, 1.02, 0.36, 0.58, Math.PI * 0.22],
+    ["Pressure bulb service cart", "metal", 5.55, 5.58, 0.78, 0.48, 0.52, Math.PI * 0.14],
+    ["Archive prism crate", "glass", -6.95, 4.65, 0.54, 0.6, 0.5, -Math.PI * 0.16],
+    ["Center rebound cable coil", "rubber", 0.58, 5.55, 1.35, 0.12, 0.14, Math.PI * 0.5],
+    ["Archive ballast pallet", "wood", -7.85, -1.25, 0.82, 0.44, 0.56, Math.PI * 0.5],
+    ["Prism shard crate", "glass", 3.25, -5.92, 0.52, 0.58, 0.48, Math.PI * 0.08]
+  ] as const) {
+    addStreetCargo(context, label, materialId, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  for (const [type, label, x, z, width, height, depth, rotationY] of [
+    ["shockCanister", "Overdrive pressure reserve bulb", 8.05, 2.78, 0.4, 0.68, 0.4, -Math.PI * 0.5],
+    ["shockCanister", "Overdrive mirror reserve bulb", -7.25, 2.48, 0.4, 0.68, 0.4, Math.PI * 0.5],
+    ["transformer", "Overdrive route stabilizer", 1.25, 4.6, 0.54, 0.76, 0.46, -Math.PI * 0.08]
+  ] as const) {
+    addHazardRelay(context, type, label, new THREE.Vector3(x, height * 0.5, z), new THREE.Vector3(width, height, depth), rotationY);
+  }
+
+  addRoutedCityVehicle(context, "Overdrive pressure flatbed", BATTERY_TRAFFIC_LOOP_OPPOSITE, 0.82, 3, 0.58, 0.32, new THREE.Vector3(0.52, 0.38, 0.98), 0xffd66b, {
+    zoneId: "overdrive-core pressure-bulb moving-vehicles",
+    scoreValue: 82,
+    hazardKind: "combustible",
+    detail: "full"
+  });
+  addRoutedCityVehicle(context, "Overdrive mirror taxi", INNER_BELT_TRAFFIC_LOOP, 1.14, 1, 0.36, 0.28, new THREE.Vector3(0.38, 0.32, 0.72), 0xffc241, {
+    zoneId: "overdrive-core mirror-baffle moving-vehicles",
+    scoreValue: 46
+  });
+  addBillboard(context, 8.45, 1.8, 0xff6b93);
+  addBillboard(context, -7.95, 4.05, 0x93f1ff);
+  addStreetLight(context, 6.5, 5.75);
+  addStreetLight(context, -6.45, 5.05);
+  addStreetLight(context, 0.95, 5.65);
 }
 
 function spawnTargetDistrict(context: LevelContext): void {

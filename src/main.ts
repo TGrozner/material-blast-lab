@@ -39,7 +39,14 @@ import {
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
-import { PROJECTILES, ProjectileSystem, type ActiveProjectile, type ProjectileDefinition, type ProjectileId } from "./projectile";
+import {
+  PROJECTILES,
+  ProjectileSystem,
+  projectileOrderForUnlockedLevels,
+  type ActiveProjectile,
+  type ProjectileDefinition,
+  type ProjectileId
+} from "./projectile";
 import { SeededRandom, createRunSeed, randomRange } from "./random";
 import { ShotRunState } from "./runState";
 import { ScorePopupLayer } from "./scorePopups";
@@ -2836,6 +2843,7 @@ class Game {
     this.ui.update({
       projectileId: this.selectedProjectile,
       projectile: PROJECTILES[this.selectedProjectile],
+      availableProjectiles: this.availableProjectileIds(),
       shotAvailable: this.runState.shotAvailable,
       canFinishRun: this.runState.phase === "spectacle" && !this.runState.score && this.scoreReadyToFinalize,
       bodyCount: this.physics.getDynamicBodyCount(),
@@ -3458,6 +3466,9 @@ class Game {
     } else {
       this.runSeed = createRunSeed();
       this.runVariant = runVariantForSeed(level.id, this.runSeed);
+      if (!this.availableProjectileIds().includes(this.selectedProjectile)) {
+        this.selectedProjectile = "slug";
+      }
     }
     this.rng.reset(this.runSeed);
     if (import.meta.env.DEV) {
@@ -5369,7 +5380,12 @@ class Game {
       return;
     }
     if (this.activeFixedContract()) {
-      this.status = "Fixed contract locks this payload.";
+      this.status = "Daily and weekly contracts use a fixed payload.";
+      this.audio.playUiReject();
+      return;
+    }
+    if (!this.availableProjectileIds().includes(id)) {
+      this.status = `${PROJECTILES[id].name} unlocks with the final district.`;
       this.audio.playUiReject();
       return;
     }
@@ -5467,6 +5483,11 @@ class Game {
       locked: index > this.arcadeProgress.highestUnlockedLevel
     }));
     return this.levelOptionsCache;
+  }
+
+  private availableProjectileIds(): readonly ProjectileId[] {
+    const unlockedLevelCount = Math.max(1, Math.min(TEST_CHAMBERS.length, this.arcadeProgress.highestUnlockedLevel + 1));
+    return projectileOrderForUnlockedLevels(unlockedLevelCount);
   }
 
   private resize(): void {

@@ -108,7 +108,8 @@ export class InputController {
       "1": "slug",
       "2": "scatter",
       "3": "pulse",
-      "4": "gravity"
+      "4": "gravity",
+      "5": "ignite"
     };
     const projectile = projectileByKey[event.key];
     if (projectile) {

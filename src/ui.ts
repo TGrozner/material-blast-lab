@@ -2,7 +2,7 @@ import type { ArcadeContractObjectiveResult, ArcadeLevelProgress, ArcadeResult }
 import type { ArcadeMissionFields } from "./levels";
 import type { DailyResultMeta, RunFeedback } from "./mayhemFeatures";
 import type { ProjectileDefinition, ProjectileId } from "./projectile";
-import { LATE_GAME_PROJECTILE_ORDER, PROJECTILE_ORDER, PROJECTILES } from "./projectile";
+import { LATE_GAME_PROJECTILE_ORDER, PROJECTILES } from "./projectile";
 import type { ScoreBreakdown } from "./scoring";
 import {
   COMFORT_GAME_SETTINGS,
@@ -37,6 +37,7 @@ export interface UILiveMastery {
 interface UIState {
   projectileId: ProjectileId;
   projectile: ProjectileDefinition;
+  availableProjectiles: readonly ProjectileId[];
   shotAvailable: boolean;
   canFinishRun: boolean;
   bodyCount: number;
@@ -129,7 +130,6 @@ export class GameUI {
   private screen: UIScreen = "home";
   private scoreWasVisible = false;
   private renderedScore: ScoreBreakdown | null = null;
-  private activeProjectileId: ProjectileId | null = null;
   private currentState: UIState | null = null;
   private renderedHomeKey = "";
   private renderedSettingsKey = "";
@@ -315,7 +315,7 @@ export class GameUI {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "hud__projectile";
-      button.hidden = !PROJECTILE_ORDER.includes(id);
+      button.hidden = true;
       button.setAttribute("aria-label", definition.shortName);
       button.title = `${definition.key}: ${definition.name} - ${definition.role}. ${definition.description}`;
       button.style.setProperty("--projectile", `#${definition.color.getHexString()}`);
@@ -447,23 +447,20 @@ export class GameUI {
     this.root.classList.toggle("can-finish-run", state.canFinishRun && !state.score);
     this.root.classList.toggle("has-shot-available", state.shotAvailable && !state.score);
 
-    if (this.activeProjectileId !== state.projectileId) {
-      for (const [id, button] of this.projectileButtons) {
-        const active = id === state.projectileId;
-        const visible = PROJECTILE_ORDER.includes(id) || active;
-        if (button.hidden !== !visible) {
-          button.hidden = !visible;
-        }
-        button.classList.toggle("is-active", active);
-        button.setAttribute("aria-pressed", String(active));
+    for (const [id, button] of this.projectileButtons) {
+      const active = id === state.projectileId;
+      const visible = state.availableProjectiles.includes(id) || active;
+      if (button.hidden !== !visible) {
+        button.hidden = !visible;
       }
-      this.activeProjectileId = state.projectileId;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
     }
     for (const [id, button] of this.projectileButtons) {
       const locked = state.loadoutLocked;
       button.disabled = locked;
       button.title = locked
-        ? "Fixed contract locks this payload."
+        ? "Daily and weekly contracts use a fixed payload."
         : `${PROJECTILES[id].key}: ${PROJECTILES[id].name} - ${PROJECTILES[id].role}. ${PROJECTILES[id].description}`;
     }
 
