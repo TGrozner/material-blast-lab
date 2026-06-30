@@ -164,6 +164,16 @@ const SUN_DIRECTION = new THREE.Vector3(-0.24, 0.22, -0.95).normalize();
 const PREMIUM_DAYLIGHT_RENDER_ORDER = 6;
 const PREMIUM_ATMOSPHERE_RENDER_ORDER = 1;
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
+const ADAPTIVE_PERF_LOW_FPS = 24;
+const ADAPTIVE_PERF_CRITICAL_FPS = 16;
+const ADAPTIVE_PERF_RECOVERY_FPS = 40;
+const ADAPTIVE_PERF_LOW_SECONDS = 1.15;
+const ADAPTIVE_PERF_CRITICAL_SECONDS = 0.7;
+const ADAPTIVE_PERF_RECOVERY_SECONDS = 8;
+const ADAPTIVE_PERF_LEVEL_ONE_DPR_CAP = 1.05;
+const ADAPTIVE_PERF_LEVEL_TWO_DPR_CAP = 0.8;
+
+type AdaptivePerformanceLevel = 0 | 1 | 2;
 
 interface BurningHazard {
   id: number;
@@ -2514,6 +2524,10 @@ class Game {
   private fpsSampleElapsed = 0;
   private fpsSampleFrames = 0;
   private displayedFps = 0;
+  private adaptivePerfLevel: AdaptivePerformanceLevel = 0;
+  private adaptivePerfLowElapsed = 0;
+  private adaptivePerfCriticalElapsed = 0;
+  private adaptivePerfRecoveryElapsed = 0;
   private aimTrafficAccumulator = 0;
   private nextChainCooldownSweep = 0;
   private spectacleFocusScore = 0;
@@ -2568,6 +2582,7 @@ class Game {
     }
 
     this.settings = settings;
+    this.adaptivePerfLevel = initialAdaptivePerformanceLevel(settings);
     this.renderer = rendererBundle.renderer;
     this.rendererBackend = rendererBundle.backend;
     this.renderer.domElement.dataset.rendererBackend = this.rendererBackend;
@@ -2753,7 +2768,7 @@ class Game {
     try {
       this.updateFps(frameDelta);
       this.physics.flushStagedVisualActivations();
-      const motionEffectsActive = this.settings.motionEffects;
+      const motionEffectsActive = this.settings.motionEffects && this.adaptivePerfLevel < 2;
       const hitStopped = motionEffectsActive && this.hitStopTimer > 0;
       const slowMotionActive = motionEffectsActive && this.slowMotionTimer > 0;
       const timeScale = hitStopped ? 0 : slowMotionActive ? 0.32 : 1;
@@ -2801,10 +2816,10 @@ class Game {
       this.updatePhase(simulationDelta * timeScale);
       perfMonitor.addTiming("game.updatePhase", startedAt);
       startedAt = perfMonitor.timeStart();
-      this.destruction.processQueuedFractures(FRACTURE_PROCESS_MAX_PER_FRAME, FRACTURE_PROCESS_TIME_BUDGET_MS);
+      this.destruction.processQueuedFractures(FRACTURE_PROCESS_MAX_PER_FRAME, this.fractureTimeBudgetMs());
       this.physics.flushPendingSupportReleases();
       this.destruction.updateVisualFragments(delta * visualScale);
-      this.physics.flushStagedVisualActivations(8, 0.25);
+      this.physics.flushStagedVisualActivations(this.stagedVisualActivationBudget(), this.stagedVisualActivationTimeBudgetMs());
       this.destruction.flushFragmentInstanceBounds();
       this.physics.flushInstancedRenderBounds();
       perfMonitor.addTiming("game.flushWork", startedAt);
@@ -3117,9 +3132,49 @@ class Game {
     this.fpsSampleElapsed += delta;
     this.fpsSampleFrames += 1;
     if (this.fpsSampleElapsed >= 0.35) {
+      const sampleElapsed = this.fpsSampleElapsed;
       this.displayedFps = Math.round(this.fpsSampleFrames / this.fpsSampleElapsed);
       this.fpsSampleElapsed = 0;
       this.fpsSampleFrames = 0;
+      this.updateAdaptivePerformance(this.displayedFps, sampleElapsed);
+    }
+  }
+
+  private updateAdaptivePerformance(fps: number, sampleElapsed: number): void {
+    if (!Number.isFinite(fps) || fps <= 0 || this.frozenForCapture) {
+      return;
+    }
+
+    if (fps < ADAPTIVE_PERF_LOW_FPS) {
+      this.adaptivePerfLowElapsed += sampleElapsed;
+      this.adaptivePerfRecoveryElapsed = 0;
+    } else {
+      this.adaptivePerfLowElapsed = 0;
+      this.adaptivePerfRecoveryElapsed = fps >= ADAPTIVE_PERF_RECOVERY_FPS
+        ? this.adaptivePerfRecoveryElapsed + sampleElapsed
+        : 0;
+    }
+
+    this.adaptivePerfCriticalElapsed = fps < ADAPTIVE_PERF_CRITICAL_FPS
+      ? this.adaptivePerfCriticalElapsed + sampleElapsed
+      : 0;
+
+    let nextLevel = this.adaptivePerfLevel;
+    if (this.adaptivePerfCriticalElapsed >= ADAPTIVE_PERF_CRITICAL_SECONDS) {
+      nextLevel = 2;
+    } else if (this.adaptivePerfLowElapsed >= ADAPTIVE_PERF_LOW_SECONDS) {
+      nextLevel = Math.max(nextLevel, 1) as AdaptivePerformanceLevel;
+    } else if (this.adaptivePerfRecoveryElapsed >= ADAPTIVE_PERF_RECOVERY_SECONDS && nextLevel > 0) {
+      nextLevel = (nextLevel - 1) as AdaptivePerformanceLevel;
+      this.adaptivePerfRecoveryElapsed = 0;
+    }
+
+    if (nextLevel !== this.adaptivePerfLevel) {
+      this.adaptivePerfLevel = nextLevel;
+      this.applySettings();
+      if (nextLevel > 0) {
+        this.status = nextLevel === 2 ? "Low-FPS guard: ultra-light visuals." : "Low-FPS guard: lighter visuals.";
+      }
     }
   }
 
@@ -3203,7 +3258,7 @@ class Game {
   }
 
   private applyGraphicsQualityLighting(): void {
-    const profile = graphicsLightingProfile(this.settings.graphicsQuality);
+    const profile = graphicsLightingProfile(this.effectiveGraphicsQuality());
     this.renderer.toneMappingExposure = profile.exposure;
     if (this.scene.background instanceof THREE.Color) {
       this.scene.background.set(profile.background);
@@ -3229,6 +3284,92 @@ class Game {
       this.skyFillLight.color.set(profile.skyFillColor);
       this.skyFillLight.intensity = profile.skyFillIntensity;
     }
+  }
+
+  private effectiveGraphicsQuality(): GraphicsQuality {
+    if (this.adaptivePerfLevel >= 2) {
+      return "performance";
+    }
+    if (this.adaptivePerfLevel >= 1) {
+      if (this.settings.graphicsQuality === "cinematic") {
+        return "balanced";
+      }
+      if (this.settings.graphicsQuality === "balanced") {
+        return "performance";
+      }
+    }
+    return this.settings.graphicsQuality;
+  }
+
+  private effectivePixelRatioCap(effectiveQuality = this.effectiveGraphicsQuality()): number {
+    const baseCap = graphicsPixelRatioCap(effectiveQuality);
+    if (this.adaptivePerfLevel >= 2) {
+      return Math.min(baseCap, ADAPTIVE_PERF_LEVEL_TWO_DPR_CAP);
+    }
+    if (this.adaptivePerfLevel >= 1) {
+      return Math.min(baseCap, ADAPTIVE_PERF_LEVEL_ONE_DPR_CAP);
+    }
+    return baseCap;
+  }
+
+  private effectiveFlashScale(): number {
+    if (!this.settings.motionEffects) {
+      return 0;
+    }
+    if (this.adaptivePerfLevel >= 2) {
+      return 0;
+    }
+    if (this.adaptivePerfLevel >= 1) {
+      return 0.45;
+    }
+    return 1;
+  }
+
+  private runtimeVfxDensityScale(): number {
+    if (this.adaptivePerfLevel >= 2) {
+      return 0.36;
+    }
+    if (this.adaptivePerfLevel >= 1 || this.effectiveGraphicsQuality() === "performance") {
+      return 0.62;
+    }
+    return 1;
+  }
+
+  private fractureTimeBudgetMs(): number {
+    return this.adaptivePerfLevel >= 2 ? 0.75 : this.adaptivePerfLevel >= 1 ? 1.25 : FRACTURE_PROCESS_TIME_BUDGET_MS;
+  }
+
+  private stagedVisualActivationBudget(): number {
+    return this.adaptivePerfLevel >= 2 ? 3 : this.adaptivePerfLevel >= 1 ? 5 : 8;
+  }
+
+  private stagedVisualActivationTimeBudgetMs(): number {
+    return this.adaptivePerfLevel >= 2 ? 0.1 : this.adaptivePerfLevel >= 1 ? 0.16 : 0.25;
+  }
+
+  private hazardFxIntervalMs(remainingMs: number): number {
+    const base = remainingMs < 820 ? 110 : 180;
+    return Math.round(base * (this.adaptivePerfLevel >= 2 ? 2.8 : this.adaptivePerfLevel >= 1 ? 1.75 : 1));
+  }
+
+  private chainImpactMaxPerFrame(): number {
+    return this.adaptivePerfLevel >= 2 ? 8 : this.adaptivePerfLevel >= 1 ? 10 : CHAIN_IMPACT_MAX_PER_FRAME;
+  }
+
+  private chainImpactVfxMaxPerFrame(): number {
+    return this.adaptivePerfLevel >= 2 ? 1 : this.effectiveGraphicsQuality() === "performance" ? 2 : CHAIN_IMPACT_VFX_MAX_PER_FRAME;
+  }
+
+  private surfaceCollisionMaxPerFrame(): number {
+    return this.adaptivePerfLevel >= 2 ? 80 : this.adaptivePerfLevel >= 1 ? 120 : SURFACE_COLLISION_MAX_PER_FRAME;
+  }
+
+  private surfaceImpactMaxPerFrame(): number {
+    return this.adaptivePerfLevel >= 2 ? 3 : this.adaptivePerfLevel >= 1 ? 4 : SURFACE_IMPACT_MAX_PER_FRAME;
+  }
+
+  private surfaceImpactVfxMaxPerFrame(): number {
+    return this.adaptivePerfLevel >= 2 ? 0 : this.effectiveGraphicsQuality() === "performance" ? 1 : SURFACE_IMPACT_VFX_MAX_PER_FRAME;
   }
 
   private buildArena(): void {
@@ -3519,6 +3660,7 @@ class Game {
     level.setup({
       physics: this.physics,
       materials: this.materials,
+      visualDetail: this.effectiveGraphicsQuality() === "performance" ? "performance" : "standard",
       addDecoration: (object) => this.addDecoration(object)
     });
     this.physics.batchStaticDetails();
@@ -4591,7 +4733,7 @@ class Game {
     bonus = 0,
     force = false
   ): boolean {
-    if (!this.settings.motionEffects) {
+    if (!this.settings.motionEffects || this.adaptivePerfLevel >= 2) {
       return false;
     }
     if (this.currentLevel().id !== "hazard-junction") {
@@ -4617,9 +4759,10 @@ class Game {
     const focus = candidate.focus.clone();
     focus.y = THREE.MathUtils.clamp(focus.y + result.fracturedBodies * 0.025 + result.affectedBodies * 0.004, 0.95, 5.6);
     this.cameraRig.cinematicImpact(focus, intensity * 1.18, direction);
-    this.slowMotionTimer = Math.max(this.slowMotionTimer, candidate.priority >= 900 ? 1.05 : 0.82);
-    this.hitStopTimer = Math.max(this.hitStopTimer, candidate.priority >= 900 ? 0.07 : 0.055);
-    this.cameraRig.shake(candidate.priority >= 900 ? 0.42 : 0.34, 0.72);
+    const adaptiveScale = this.adaptivePerfLevel === 1 ? 0.55 : 1;
+    this.slowMotionTimer = Math.max(this.slowMotionTimer, (candidate.priority >= 900 ? 1.05 : 0.82) * adaptiveScale);
+    this.hitStopTimer = Math.max(this.hitStopTimer, (candidate.priority >= 900 ? 0.07 : 0.055) * adaptiveScale);
+    this.cameraRig.shake((candidate.priority >= 900 ? 0.42 : 0.34) * adaptiveScale, 0.72 * adaptiveScale);
     this.status = cinematicImpactStatus(result, score);
     return true;
   }
@@ -4915,13 +5058,17 @@ class Game {
       const remainingMs = hazard.explodeAt - now;
       const burnAge = THREE.MathUtils.clamp((now - hazard.ignitedAt) / Math.max(1, hazard.explodeAt - hazard.ignitedAt), 0, 1);
       if (now >= hazard.nextFxAt) {
-        this.particles.fireLick(hazard.origin, 0.56 + burnAge * 0.5);
+        if (this.adaptivePerfLevel < 2) {
+          this.particles.fireLick(hazard.origin, (0.56 + burnAge * 0.5) * this.runtimeVfxDensityScale());
+        }
         if (remainingMs < 820) {
           const warningProgress = 1 - Math.max(0, remainingMs) / 820;
-          this.particles.armingPulse(hazard.origin, warningProgress, ignitionWarningColor(hazard));
+          if (this.adaptivePerfLevel < 2) {
+            this.particles.armingPulse(hazard.origin, warningProgress, ignitionWarningColor(hazard));
+          }
           this.audio.playHazardWarning(hazard.origin, warningProgress, hazard.materialId);
         }
-        hazard.nextFxAt = now + (remainingMs < 820 ? 110 : 180);
+        hazard.nextFxAt = now + this.hazardFxIntervalMs(remainingMs);
       }
       if (now >= hazard.nextSpreadAt && remainingMs > 260 && hazard.spreadCount < hazard.maxSpreadCount) {
         events.push(...this.spreadBurningHazard(hazard));
@@ -4937,7 +5084,9 @@ class Game {
       detonationsThisFrame += 1;
       this.burningHazards.delete(hazard.id);
       const result = this.destruction.explode(hazard.origin, hazard.strength, hazard.radius);
-      this.particles.hazardDetonationCue(hazard.origin, hazard.color, hazard.powerScale, hazard.mushroomCloud);
+      if (this.adaptivePerfLevel < 2 || hazard.mushroomCloud) {
+        this.particles.hazardDetonationCue(hazard.origin, hazard.color, hazard.powerScale, hazard.mushroomCloud);
+      }
       this.focusSpectacleOn(hazard.origin, result, hazard.mushroomCloud ? 260 : 145);
       this.playCinematicImpact(hazard.origin, result, undefined, hazard.mushroomCloud ? 240 : 120);
       this.explosion.play(hazard.origin, hazard.radius * 1.24, result.dustColors, {
@@ -4945,12 +5094,12 @@ class Game {
         result,
         powerScale: hazard.powerScale,
         sizeScale: hazard.sizeScale,
-        densityScale: hazard.densityScale,
+        densityScale: hazard.densityScale * this.runtimeVfxDensityScale(),
         hitMaterialId: hazard.materialId,
         role: "ignition",
         variant: hazard.mushroomCloud ? "mushroom" : undefined
       });
-      this.particles.fireBurst(hazard.origin, hazard.mushroomCloud ? 2.7 : 1.25);
+      this.particles.fireBurst(hazard.origin, (hazard.mushroomCloud ? 2.7 : 1.25) * this.runtimeVfxDensityScale());
       this.audio.playProjectileImpact({
         point: hazard.origin,
         projectileId: hazard.projectileId,
@@ -5000,8 +5149,10 @@ class Game {
       return [];
     }
 
-    this.particles.fireBurst(origin, 0.72);
-    this.particles.fireLick(hazard.origin, 0.9);
+    if (this.adaptivePerfLevel < 2) {
+      this.particles.fireBurst(origin, 0.72 * this.runtimeVfxDensityScale());
+      this.particles.fireLick(hazard.origin, 0.9 * this.runtimeVfxDensityScale());
+    }
     const heatPulse = this.destruction.explode(hazard.origin, hazard.strength * 0.16, Math.min(hazard.heatRadius, hazard.radius * 0.78));
     if (heatPulse.affectedBodies === 0) {
       return [];
@@ -5037,7 +5188,7 @@ class Game {
     let projectileImpactHandled = false;
     const chainCollisionDrainLimit = secondaryImpactsLocked ? Number.POSITIVE_INFINITY : CHAIN_COLLISION_DRAIN_MAX_PER_FRAME;
     const chainCollisionsDrained = this.physics.drainCollisionEventsInto((collision) => {
-      if (projectileImpactHandled || impactsThisFrame >= CHAIN_IMPACT_MAX_PER_FRAME) {
+      if (projectileImpactHandled || impactsThisFrame >= this.chainImpactMaxPerFrame()) {
         return;
       }
       if (!collision.started) {
@@ -5117,7 +5268,7 @@ class Game {
       events.push(...this.applyExplosionResult(result));
       const points = Math.max(45, Math.round(damaged.weightedDamage * 0.85 + relativeSpeed * 8));
       events.push(...this.scoreTracker.addChainReaction(points, damaged.position, chainImpactLabel(damaged)));
-      if (impactVfxThisFrame < CHAIN_IMPACT_VFX_MAX_PER_FRAME) {
+      if (impactVfxThisFrame < this.chainImpactVfxMaxPerFrame()) {
         this.particles.spark(origin, 0xffd25c, Math.min(1.4, 0.55 + relativeSpeed * 0.045));
         if (result.dustColors.length > 0) {
           this.particles.cityDebrisSpray(origin, result.dustColors, 0.35 + result.fracturedBodies * 0.04);
@@ -5148,7 +5299,7 @@ class Game {
     let impactsThisFrame = 0;
     let impactVfxThisFrame = 0;
     const surfaceImpactsDrained = this.physics.drainSurfaceCollisionEventsInto((surfaceImpact) => {
-      if (surfaceCollisionsChecked >= SURFACE_COLLISION_MAX_PER_FRAME || impactsThisFrame >= SURFACE_IMPACT_MAX_PER_FRAME) {
+      if (surfaceCollisionsChecked >= this.surfaceCollisionMaxPerFrame() || impactsThisFrame >= this.surfaceImpactMaxPerFrame()) {
         return;
       }
       surfaceCollisionsChecked += 1;
@@ -5192,14 +5343,14 @@ class Game {
       events.push(...this.applyExplosionResult(result));
       const points = Math.max(22, Math.round(damaged.weightedDamage * 0.45 + impactSpeed * 6));
       events.push(...this.scoreTracker.addChainReaction(points, damaged.position, groundImpactLabel(damaged)));
-      if (impactVfxThisFrame < SURFACE_IMPACT_VFX_MAX_PER_FRAME && result.dustColors.length > 0) {
+      if (impactVfxThisFrame < this.surfaceImpactVfxMaxPerFrame() && result.dustColors.length > 0) {
         this.particles.cityDebrisSpray(origin, result.dustColors, 0.22 + result.fracturedBodies * 0.045);
         impactVfxThisFrame += 1;
       } else if (result.dustColors.length > 0) {
         perfMonitor.addCount("vfx.surfaceImpactSuppressed");
       }
       impactsThisFrame += 1;
-    }, SURFACE_COLLISION_MAX_PER_FRAME);
+    }, this.surfaceCollisionMaxPerFrame());
     perfMonitor.addCount("collision.surfaceDrained", surfaceImpactsDrained);
     return events;
   }
@@ -5296,9 +5447,9 @@ class Game {
       side.set(1, 0, 0);
     }
     side.normalize();
-    const performanceMode = this.settings.graphicsQuality === "performance";
-    const clusterCount = performanceMode ? 2 : 5;
-    const secondaryDensity = performanceMode ? 0.42 : 0.82;
+    const performanceMode = this.effectiveGraphicsQuality() === "performance";
+    const clusterCount = performanceMode ? (this.adaptivePerfLevel >= 2 ? 1 : 2) : 5;
+    const secondaryDensity = (performanceMode ? 0.42 : 0.82) * this.runtimeVfxDensityScale();
     for (let i = 0; i < clusterCount; i += 1) {
       const lateral = (i - (clusterCount - 1) * 0.5) * 0.74 * active.sizeScale;
       const depth = randomRange(this.rng, 0.35, 1.42) * active.sizeScale;
@@ -5452,25 +5603,26 @@ class Game {
   }
 
   private applySettings(): void {
-    const pixelRatioCap = graphicsPixelRatioCap(this.settings.graphicsQuality);
+    const effectiveQuality = this.effectiveGraphicsQuality();
+    const pixelRatioCap = this.effectivePixelRatioCap(effectiveQuality);
     this.cameraRig.setPixelRatioCap(pixelRatioCap);
     this.cameraRig.setShakeScale(this.settings.cameraShake);
     this.audio.setMasterVolume(this.settings.masterVolume);
-    this.particles.setFlashScale(this.settings.motionEffects ? 1 : 0);
-    this.particles.setQuality(this.settings.graphicsQuality);
+    this.particles.setFlashScale(this.effectiveFlashScale());
+    this.particles.setQuality(effectiveQuality);
     this.applyGraphicsQualityLighting();
     this.applyCanvasGrade();
-    this.scene.environment = this.settings.graphicsQuality === "performance" ? null : this.ensureSkyReflectionTexture();
-    this.renderer.shadowMap.enabled = this.settings.graphicsQuality === "cinematic";
+    this.scene.environment = effectiveQuality === "performance" ? null : this.ensureSkyReflectionTexture();
+    this.renderer.shadowMap.enabled = effectiveQuality === "cinematic";
     if (this.sunKeyLight) {
-      this.sunKeyLight.castShadow = this.settings.graphicsQuality === "cinematic";
+      this.sunKeyLight.castShadow = effectiveQuality === "cinematic";
     }
     setOptionalShadowMapFlag(this.renderer, "needsUpdate", true);
     this.resize();
   }
 
   private applyCanvasGrade(): void {
-    const grade = canvasGradeProfile(this.settings.graphicsQuality);
+    const grade = canvasGradeProfile(this.effectiveGraphicsQuality());
     this.renderer.domElement.style.filter = grade.filter;
     this.renderer.domElement.style.boxShadow = grade.boxShadow;
   }
@@ -7026,6 +7178,22 @@ function moneyShotObjectPriority(
 
 function settingsStatus(settings: GameSettings): string {
   return `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]}, WebGL renderer, ${Math.round(settings.masterVolume * 100)}% volume, ${Math.round(settings.cameraShake * 100)}% shake`;
+}
+
+function initialAdaptivePerformanceLevel(settings: GameSettings): AdaptivePerformanceLevel {
+  if (settings.graphicsQuality === "performance" || typeof navigator === "undefined") {
+    return 0;
+  }
+  const hardware = navigator as Navigator & { deviceMemory?: number };
+  const memoryGb = Number(hardware.deviceMemory ?? 0);
+  const coreCount = Number(hardware.hardwareConcurrency ?? 0);
+  if ((memoryGb > 0 && memoryGb <= 4) || (coreCount > 0 && coreCount <= 4)) {
+    return 2;
+  }
+  if ((memoryGb > 0 && memoryGb <= 6) || (coreCount > 0 && coreCount <= 6)) {
+    return 1;
+  }
+  return 0;
 }
 
 function graphicsLightingProfile(quality: GraphicsQuality): GraphicsLightingProfile {

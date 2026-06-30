@@ -523,7 +523,7 @@ test("records post-shot perf budgets", async ({ page }) => {
   await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.flushPerfLog("perf-smoke-first-shot"));
 
   const payload = await waitForPerfLog("perf-smoke-first-shot");
-  expectPerfBudget(payload, { checkSlowRatio: false });
+  expectPerfBudget(payload);
 
   await clickUi(page.locator("[data-action='result-retry']"));
   await expect(page.locator(".hud [data-role='score']")).toBeHidden();
@@ -543,18 +543,16 @@ test("records post-shot perf budgets", async ({ page }) => {
   await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.flushPerfLog("perf-smoke-post-reset-final"));
 
   const postResetPayload = await waitForPerfLog("perf-smoke-post-reset-final");
-  expectPerfBudget(postResetPayload, { checkSlowRatio: false });
+  expectPerfBudget(postResetPayload);
   expect(consoleErrors).toEqual([]);
 });
 
-function expectPerfBudget(payload: PerfLogPayload, options: { checkSlowRatio?: boolean } = {}): void {
+function expectPerfBudget(payload: PerfLogPayload): void {
   expect(payload.href).toContain("perfFull");
   expect(payload.summary.frameCount).toBeGreaterThan(0);
   expect(payload.summary.maxFrame?.totalMs ?? 0).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.maxFrameMs);
   expect(payload.summary.shotMax.totalMs).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.shotMaxFrameMs);
-  if (options.checkSlowRatio !== false) {
-    expect(payload.summary.slowRatioPercent).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.slowRatioPercent);
-  }
+  expect(payload.summary.slowRatioPercent).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.slowRatioPercent);
   expect(payload.summary.shotTotals.droppedSubsteps).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.maxDroppedSubsteps);
   expect(payload.stats.drawCalls).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.maxPostShotDrawCalls);
   expect(payload.stats.textures).toBeLessThanOrEqual(PERF_SMOKE_BUDGET.maxPostShotTextures);
@@ -747,13 +745,13 @@ async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   await expect(scorePanel.locator(".hud__total strong")).toHaveText(/\d+/);
   await expect(scorePanel.locator("[data-role='result-total']")).toHaveText(/\d+/);
   await expect(scorePanel.getByText("Damage", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Contract", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Next Shot", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Recipe", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Plan", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Chaos", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Hits", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Top Damage", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator(".hud__contract-head").getByText("Contract", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator(".hud__run-coach-head").getByText("Next Shot", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator(".hud__run-coach-recipe").getByText("Recipe", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator(".hud__coach-steps").getByText("Plan", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator(".hud__score-breakdown").getByText("Chaos", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator(".hud__score-breakdown").getByText("Hits", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator(".hud__damage-hotspots-head").getByText("Top Damage", { exact: true })).toBeVisible();
 }
 
 async function waitForPerfLog(reason?: string): Promise<PerfLogPayload> {

@@ -8,7 +8,8 @@ import {
   decorateStreetCargo,
   decorateTrafficBarricade,
   type BuildingBrand,
-  type BuildingVisualStyle
+  type BuildingVisualStyle,
+  type CityVisualDetail
 } from "./cityVisuals";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { PhysicsWorld, type ScoreRole, type TrafficRoute } from "./physics";
@@ -26,6 +27,7 @@ const sharedLevelRingGeometries = new Map<string, THREE.RingGeometry>();
 export interface LevelContext {
   physics: PhysicsWorld;
   materials: MaterialCatalog;
+  visualDetail: CityVisualDetail;
   addDecoration(object: THREE.Object3D): void;
 }
 
@@ -5831,6 +5833,7 @@ function spawnBuildingStack(context: LevelContext, spec: BuildingSpec): void {
         scoreRole: spec.scoreRole,
         style: spec.style,
         brand: spec.brand,
+        visualDetail: context.visualDetail,
         floor: floor + groupFloors - 1,
         column,
         floors: spec.floors,
@@ -6523,7 +6526,7 @@ function addCityVehicle(
     size,
     accent,
     kind: cityVehicleVisualKind(label),
-    detail: options.detail ?? (options.hazardKind ? "full" : "lean")
+    detail: context.visualDetail === "performance" ? "lean" : options.detail ?? (options.hazardKind ? "full" : "lean")
   });
   if (options.hazardKind) {
     decorateHazardIndicator(object.mesh, { size, kind: options.hazardKind });

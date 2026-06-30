@@ -552,7 +552,9 @@ export class ParticleSystem {
     );
     this.spawnImpactPunch(origin, coreOrigin, visualRadius, profile, dustColor, context, impactScale);
     this.spawnStagedPrimaryImpactLayers(origin, coreOrigin, visualRadius, profile, dustColor, smokeColor, context, impactScale);
-    this.spawnCinematicDetonationLayers(origin, coreOrigin, visualRadius, profile, dustColor, smokeColor, context, impactScale, composition);
+    if (this.quality !== "performance" || context.role === "primary") {
+      this.spawnCinematicDetonationLayers(origin, coreOrigin, visualRadius, profile, dustColor, smokeColor, context, impactScale, composition);
+    }
     this.spawnBoomFireball(origin, coreOrigin, visualRadius, profile, context, impactScale);
     this.spawnRollingExplosionCloud(origin, coreOrigin, visualRadius, smokeColor, dustColor, context, impactScale);
 
@@ -568,7 +570,9 @@ export class ParticleSystem {
     this.spawnDirectionalBlast(origin, normalizedImpactDirectionInto(this.responseDirection, context.impactDirection), visualRadius, profile, dustColor, particleScale);
     this.spawnStreaks(origin, visualRadius, profile.streakColor, Math.round(14 * streakAmount), 0.52);
     this.spawnHeroDebrisStreaks(origin, normalizedImpactDirectionInto(this.signatureDirection, context.impactDirection), visualRadius, profile, dustColor, context, impactScale);
-    this.spawnSmokePuffs(coreOrigin, visualRadius, smokeColor, smokeAmount);
+    if (this.quality !== "performance" || context.role === "primary") {
+      this.spawnSmokePuffs(coreOrigin, visualRadius, smokeColor, smokeAmount);
+    }
     this.spawnAftermathBloom(origin, visualRadius, dustColor, smokeColor, particleScale);
     if (context.variant === "mushroom") {
       this.spawnMushroomCloud(origin, visualRadius, profile, smokeColor, dustColor, impactScale);
@@ -775,7 +779,7 @@ export class ParticleSystem {
     fx.sprite.scale.set(startSize, startSize, 1);
     fx.sprite.renderOrder = blending === THREE.AdditiveBlending ? 8 : 5;
     fx.sprite.visible = delay <= 0;
-    fx.sprite.frustumCulled = false;
+    fx.sprite.frustumCulled = this.quality === "performance";
     fx.life = 0;
     fx.maxLife = maxLife;
     fx.maxOpacity = opacity;
@@ -824,7 +828,7 @@ export class ParticleSystem {
     fx.sprite.scale.set(startSize * aspect, startSize, 1);
     fx.sprite.renderOrder = blending === THREE.AdditiveBlending ? 8 : 5;
     fx.sprite.visible = delay <= 0;
-    fx.sprite.frustumCulled = false;
+    fx.sprite.frustumCulled = this.quality === "performance";
     fx.life = 0;
     fx.maxLife = maxLife;
     fx.maxOpacity = opacity;
@@ -1342,7 +1346,7 @@ export class ParticleSystem {
     const coreColor = isShockOnly ? 0xd9feff : isCrush ? 0xd8c6ff : profile.coreColor;
     const flipbookScale = context.role === "primary" ? 1 : 0.68;
 
-    if (context.role === "primary" || this.quality !== "performance") {
+    if (this.quality !== "performance") {
       this.spawnFlipbookSprite(
         coreOrigin,
         isShockOnly ? VFX_FLIPBOOK_PROFILES.smoke : isCrush ? VFX_FLIPBOOK_PROFILES.dustShell : VFX_FLIPBOOK_PROFILES.explosion,
@@ -1485,7 +1489,7 @@ export class ParticleSystem {
         }
       );
     }
-    const plumeCount = this.quality === "performance" ? 2 : this.quality === "balanced" ? 6 : 8;
+    const plumeCount = this.quality === "performance" ? (context.role === "primary" ? 1 : 0) : this.quality === "balanced" ? 5 : 7;
     for (let i = 0; i < plumeCount; i += 1) {
       const angle = (i / plumeCount) * Math.PI * 2 + THREE.MathUtils.randFloatSpread(0.5);
       const distance = THREE.MathUtils.randFloat(visualRadius * 0.04, visualRadius * 0.34);
@@ -2578,12 +2582,25 @@ export class ParticleSystem {
       composition.overlayMax = Math.min(composition.overlayMax, 0.32);
     }
 
+    if (this.quality === "performance") {
+      composition.fire *= context.role === "primary" ? 0.72 : 0.48;
+      composition.smoke *= context.role === "primary" ? 0.42 : 0.28;
+      composition.streaks *= context.role === "primary" ? 0.62 : 0.42;
+      composition.materialResponses *= context.role === "primary" ? 0.34 : 0.18;
+      composition.overlayMax = Math.min(composition.overlayMax, context.role === "primary" ? 0.26 : 0.18);
+    } else if (this.quality === "balanced") {
+      composition.smoke *= 0.82;
+      composition.materialResponses *= 0.78;
+      composition.overlayMax = Math.min(composition.overlayMax, 0.5);
+    }
+
     return composition;
   }
 
   private explosionParticleDensity(context: ExplosionFxContext): number {
     const roleDensity = context.role === "secondary" ? 0.72 : context.role === "ignition" ? 0.62 : 1;
-    return THREE.MathUtils.clamp(context.densityScale ?? roleDensity, 0.32, 1);
+    const density = context.densityScale ?? roleDensity;
+    return THREE.MathUtils.clamp(density, this.quality === "performance" ? 0.18 : 0.32, this.quality === "performance" ? 0.68 : 1);
   }
 
   private primarySpectacleScale(context: ExplosionFxContext): number {
@@ -2609,11 +2626,11 @@ export class ParticleSystem {
   private qualityDensity(): number {
     switch (this.quality) {
       case "performance":
-        return 0.5;
+        return 0.32;
       case "balanced":
-        return 0.9;
+        return 0.72;
       case "cinematic":
-        return 1.15;
+        return 1.0;
     }
   }
 

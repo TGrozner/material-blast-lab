@@ -43,11 +43,11 @@ export const GRAPHICS_QUALITY_LABELS: Record<GraphicsQuality, string> = {
 export function graphicsPixelRatioCap(quality: GraphicsQuality): number {
   switch (quality) {
     case "performance":
-      return 1.15;
+      return 0.9;
     case "balanced":
-      return 1.5;
+      return 1.2;
     case "cinematic":
-      return 1.75;
+      return 1.45;
   }
 }
 

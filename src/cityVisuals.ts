@@ -8,6 +8,7 @@ import { decalAtlasTile, materialAtlasTile } from "./visualAssets";
 
 export type BuildingVisualStyle = "industrial" | "glassTower" | "civic" | "utility" | "apartment" | "warehouse" | "market";
 export type BuildingBrand = "pear" | "cloudnine" | "hexxon" | "omnitech";
+export type CityVisualDetail = "standard" | "performance";
 
 interface BuildingCellVisualOptions {
   size: THREE.Vector3;
@@ -19,6 +20,7 @@ interface BuildingCellVisualOptions {
   floors: number;
   columns: number;
   brand?: BuildingBrand;
+  visualDetail?: CityVisualDetail;
 }
 
 export interface FragmentVisualOptions {
@@ -86,7 +88,8 @@ interface DetailRootUserData {
 export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisualOptions): void {
   const palette = paletteFor(options.style, options.scoreRole);
   const profile = buildingKitProfile(options.style);
-  const detail = facadeDetailFor(options);
+  const performanceDetail = options.visualDetail === "performance";
+  const detail = performanceDetail ? "lean" : facadeDetailFor(options);
   if (options.scoreRole === "neutral") {
     decorateNeutralBuildingCell(mesh, options, palette, profile);
     mergeOpaqueDecorativeChildrenByMaterial(mesh);
@@ -97,9 +100,13 @@ export function decorateBuildingCell(mesh: THREE.Mesh, options: BuildingCellVisu
     addCellSlabBands(mesh, options, palette.trim, profile, detail === "full" ? "full" : "lean");
   }
   addKitRelief(mesh, options, profile, palette.trim, detail);
-  addWindowRows(mesh, options, profile);
+  if (!performanceDetail || shouldDrawPerformanceWindowRows(options)) {
+    addWindowRows(mesh, options, profile);
+  }
   addVerticalTrim(mesh, options.size, palette.trim, options.column === 0, options.column === options.columns - 1);
-  addPremiumFacadeDetails(mesh, options, palette.sign);
+  if (!performanceDetail || shouldDrawPerformanceSignatureDetail(options)) {
+    addPremiumFacadeDetails(mesh, options, palette.sign);
+  }
   addFacadeWeathering(mesh, options, profile, detail);
 
   if (options.floor === 0) {
@@ -117,6 +124,10 @@ function decorateNeutralBuildingCell(
   palette: { facade: THREE.Material; trim: THREE.Material; roof: THREE.Material; sign: THREE.Material },
   profile: BuildingKitProfile
 ): void {
+  if (options.visualDetail === "performance") {
+    decoratePerformanceNeutralBuildingCell(mesh, options, palette, profile);
+    return;
+  }
   const isGround = options.floor <= 1;
   const isTop = options.floor >= options.floors - 1;
   const isEdgeColumn = options.column === 0 || options.column === options.columns - 1;
@@ -147,6 +158,49 @@ function decorateNeutralBuildingCell(
   if (isTop) {
     addNeutralRoofDetail(mesh, options.size, palette.roof, profile);
   }
+}
+
+function decoratePerformanceNeutralBuildingCell(
+  mesh: THREE.Mesh,
+  options: BuildingCellVisualOptions,
+  palette: { facade: THREE.Material; trim: THREE.Material; roof: THREE.Material; sign: THREE.Material },
+  profile: BuildingKitProfile
+): void {
+  const isGround = options.floor <= 1;
+  const isTop = options.floor >= options.floors - 1;
+  const isEdgeColumn = options.column === 0 || options.column === options.columns - 1;
+  addNeutralFacadeSkin(mesh, options.size, palette.facade, profile);
+  if (isGround || isTop) {
+    addCellSlabBands(mesh, options, palette.trim, profile, "lean");
+  }
+  if (isGround || isTop || (isEdgeColumn && (options.floor + options.column) % 3 === 0)) {
+    addNeutralWindowBand(mesh, options, palette.trim, profile);
+  }
+  if (options.brand && options.column === 0 && (isGround || isTop)) {
+    addFauxBrandSign(mesh, options.size, options.brand, isTop ? "crown" : "storefront");
+  }
+  if (isTop && isEdgeColumn) {
+    addNeutralRoofDetail(mesh, options.size, palette.roof, profile);
+  }
+}
+
+function shouldDrawPerformanceWindowRows(options: BuildingCellVisualOptions): boolean {
+  return (
+    options.floor === 0 ||
+    options.floor >= options.floors - 1 ||
+    options.column === 0 ||
+    options.column >= options.columns - 1 ||
+    Boolean(options.brand)
+  );
+}
+
+function shouldDrawPerformanceSignatureDetail(options: BuildingCellVisualOptions): boolean {
+  return (
+    options.floor === 0 ||
+    options.floor >= options.floors - 1 ||
+    options.column === 0 ||
+    Boolean(options.brand)
+  );
 }
 
 export function fragmentDecorationParts(options: FragmentVisualOptions): FragmentVisualPart[] {
