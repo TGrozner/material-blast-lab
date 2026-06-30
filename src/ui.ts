@@ -18,6 +18,7 @@ export interface UIResultMeta {
   starsGained: number;
   dailyResult?: DailyResultMeta;
   justUnlockedLevelName?: string;
+  justUnlockedPayloadName?: string;
 }
 
 export interface UILiveMastery {
@@ -45,6 +46,7 @@ interface UIState {
   levelDescription: string;
   objective: string;
   chaosBrief: string;
+  levelSignal: string;
   mission: ArcadeMissionFields;
   levelIndex: number;
   levelCount: number;
@@ -96,6 +98,7 @@ export class GameUI {
   private readonly chamberValue: HTMLSpanElement;
   private readonly objectiveValue: HTMLSpanElement;
   private readonly chaosBriefValue: HTMLElement;
+  private readonly levelSignalValue: HTMLElement;
   private readonly shotsValue: HTMLSpanElement;
   private readonly bodyValue: HTMLSpanElement;
   private readonly fpsValue: HTMLElement;
@@ -170,6 +173,7 @@ export class GameUI {
           <strong data-role="chamber"></strong>
           <span data-role="objective"></span>
           <em data-role="chaos-brief"></em>
+          <small data-role="level-signal"></small>
         </div>
 
         <div class="hud__goal-grid">
@@ -280,6 +284,7 @@ export class GameUI {
     this.chamberValue = this.requireElement("[data-role='chamber']");
     this.objectiveValue = this.requireElement("[data-role='objective']");
     this.chaosBriefValue = this.requireElement("[data-role='chaos-brief']");
+    this.levelSignalValue = this.requireElement("[data-role='level-signal']");
     this.shotsValue = this.requireElement("[data-role='shots']");
     this.bodyValue = this.requireElement("[data-role='bodies']");
     this.fpsValue = this.requireElement("[data-role='fps']");
@@ -317,7 +322,7 @@ export class GameUI {
       button.className = "hud__projectile";
       button.hidden = true;
       button.setAttribute("aria-label", definition.shortName);
-      button.title = `${definition.key}: ${definition.name} - ${definition.role}. ${definition.description}`;
+      button.title = `${definition.key}: ${definition.name} - ${definition.role}. ${definition.usageTip}`;
       button.style.setProperty("--projectile", `#${definition.color.getHexString()}`);
       button.innerHTML = `<span>${definition.shortName}</span><small>${definition.key} / ${escapeHtml(definition.role)}</small>`;
       button.addEventListener("click", () => this.callbacks.selectProjectile(id));
@@ -373,6 +378,7 @@ export class GameUI {
     setTitle(this.chamberValue, state.levelDescription);
     setText(this.objectiveValue, state.objective);
     setText(this.chaosBriefValue, state.chaosBrief);
+    setText(this.levelSignalValue, state.levelSignal);
     setText(this.shotsValue, state.shotAvailable ? "READY" : "SPENT");
     setText(this.bodyValue, String(state.bodyCount));
     const fpsHidden = !state.settings.showFps;
@@ -461,7 +467,7 @@ export class GameUI {
       button.disabled = locked;
       button.title = locked
         ? "Daily and weekly contracts use a fixed payload."
-        : `${PROJECTILES[id].key}: ${PROJECTILES[id].name} - ${PROJECTILES[id].role}. ${PROJECTILES[id].description}`;
+        : `${PROJECTILES[id].key}: ${PROJECTILES[id].name} - ${PROJECTILES[id].role}. ${PROJECTILES[id].usageTip}`;
     }
 
     const homeKey = homeRenderKey(state);
@@ -896,6 +902,9 @@ function renderProgressionSummary(state: UIState, score: ScoreBreakdown): string
 }
 
 function progressionUnlockLine(state: UIState, currentStars: number, nextDistrict: UILevelOption | undefined): string {
+  if (state.resultMeta?.justUnlockedPayloadName) {
+    return `New payload unlocked: ${state.resultMeta.justUnlockedPayloadName}`;
+  }
   if (state.resultMeta?.justUnlockedLevelName) {
     return `Unlocked ${state.resultMeta.justUnlockedLevelName}`;
   }
@@ -927,12 +936,16 @@ function renderShareCard(state: UIState, score: ScoreBreakdown): string {
           <strong>${escapeHtml(score.shotName)}</strong>
         </div>
         <div>
-          <span>Signature</span>
+          <span>Best moment</span>
           <strong>${replayMoment ? `${escapeHtml(replayMoment.label)} / ${formatScoreNumber(replayMoment.points)}` : "No signature moment yet"}</strong>
         </div>
         <div>
           <span>Best source</span>
           <strong>${topSource ? `${escapeHtml(topSource.label)} / ${formatScoreNumber(topSource.points)}` : "No dominant source"}</strong>
+        </div>
+        <div>
+          <span>Best combo</span>
+          <strong>${score.maxChainCombo > 1 ? `x${formatScoreNumber(score.maxChainCombo)} chain` : "No combo chain"}</strong>
         </div>
       </div>
       ${renderReplayTimeline(feedback)}
@@ -1069,6 +1082,13 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
       className: "is-unlock",
       label: "Unlocked",
       value: meta.justUnlockedLevelName
+    });
+  }
+  if (meta?.justUnlockedPayloadName) {
+    callouts.push({
+      className: "is-unlock",
+      label: "New payload unlocked",
+      value: meta.justUnlockedPayloadName
     });
   }
   if (state.arcadeResult?.bonusCompleted) {
@@ -1744,7 +1764,8 @@ function installStyles(): void {
     }
 
     .hud__mission > span,
-    .hud__mission > em {
+    .hud__mission > em,
+    .hud__mission > small {
       color: #c3d5df;
       font-size: 12px;
       font-style: normal;
@@ -1753,6 +1774,13 @@ function installStyles(): void {
 
     .hud__mission > em {
       color: #8ddfff;
+    }
+
+    .hud__mission > small {
+      color: #ffd36d;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
     }
 
     .hud__goal-grid {

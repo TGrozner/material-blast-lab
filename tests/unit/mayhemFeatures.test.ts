@@ -45,7 +45,7 @@ describe("mayhem feature helpers", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "hazard-junction-frag-tanker-spray",
-          label: expect.stringContaining("tankers"),
+          label: expect.stringContaining("secondary hits"),
           metric: "chainReactionCount"
         }),
         expect.objectContaining({ id: `${variant.id}-district-contract` })
@@ -64,7 +64,7 @@ describe("mayhem feature helpers", () => {
 
     expect(projectileObjectiveForLevel(levels, "hazard-junction", "pulse")).toMatchObject({
       id: "hazard-junction-impulse-storefront-wave",
-      label: expect.stringContaining("storefront")
+      label: expect.stringContaining("shoot low")
     });
     expect(projectileObjectiveForLevel(levels, "relay-gauntlet", "pulse")).toMatchObject({
       id: "relay-gauntlet-impulse-traffic-latch",
@@ -369,6 +369,7 @@ describe("mayhem feature helpers", () => {
     expect(feedback.nearMisses[0]).toContain("Impulse Orb");
     expect(feedback.nearMisses[1]).toContain("target core");
     expect(feedback.projectileObjective?.id).toBe("hazard-junction-impulse-storefront-wave");
+    expect(feedback.projectileObjective?.label).toContain("shoot low");
   });
 });
 

@@ -40,6 +40,7 @@ import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
 import {
+  IGNITE_UNLOCK_LEVEL_COUNT,
   PROJECTILES,
   ProjectileSystem,
   projectileOrderForUnlockedLevels,
@@ -239,6 +240,7 @@ interface DowntownMayhemRenderStats {
   fragmentInstanceVisibleBuckets: number;
   fragmentInstanceWarmupBuckets: number;
   fragmentInstanceOverflowBuckets: number;
+  levelComposition: string;
 }
 
 interface DowntownMayhemDebugApi {
@@ -1376,6 +1378,10 @@ class AppShell {
         ? `Earn ${missingStars} more ${missingStars === 1 ? "star" : "stars"} on ${previousLevel.name}.`
         : "Earn 2 stars on the previous district.";
       const missionBrief = `${level.description} Target ${formatShellScore(level.mission.targetDamageThreshold)} object damage, ${formatShellScore(level.mission.scoreThresholds.twoStar)} for unlock, ${formatShellScore(level.mission.scoreThresholds.threeStar)} for 3 stars.`;
+      const routeBrief = "Campaign district: choose any unlocked payload, chase 2 stars to open the next district.";
+      const payloadLine = index + 1 >= IGNITE_UNLOCK_LEVEL_COUNT
+        ? "New payload unlocked: Ignite"
+        : "Campaign payloads: Normal, Frag, Impulse, Heavy";
       const masteryLine = progressMasteryLine(progress);
       const ariaLabel = locked
         ? `${level.name}, locked. ${lockedText}`
@@ -1386,7 +1392,9 @@ class AppShell {
           <strong>${escapeShellHtml(level.name)}</strong>
           <em>${escapeShellHtml(level.objective)}</em>
           <small>${escapeShellHtml(locked ? lockedText : missionBrief)}</small>
-          <small>${locked ? "Previous district gate: 2 stars" : `Start ${GAME_MODES.cannon.name} / ${formatShellScore(attempts)} attempts / Best ${formatShellScore(bestScore)}`}</small>
+          <small>${locked ? "Previous district gate: 2 stars" : escapeShellHtml(routeBrief)}</small>
+          <small>${locked ? "Payload preview hidden until unlock" : escapeShellHtml(payloadLine)}</small>
+          <small>${locked ? "Mastery hidden until unlock" : `Start ${GAME_MODES.cannon.name} / ${formatShellScore(attempts)} attempts / Best ${formatShellScore(bestScore)}`}</small>
           <small>${locked ? "Mastery hidden until unlock" : escapeShellHtml(masteryLine)}</small>
         </button>
       `;
@@ -1425,11 +1433,13 @@ class AppShell {
       ? `Best ${formatShellScore(dailyBest.bestScore)} / ${dailyBest.bestStars}/3 stars / ${dailyBest.attempts} attempts`
       : "No daily score yet";
     const replayLine = dailyBest ? "Replay today's fixed seed and improve the share card" : "Play today's fixed seed for a shareable result";
+    const routeLine = "Daily fixed seed: same district, same payload, same contract all UTC day.";
     this.dailyValue.innerHTML = `
       <button type="button" data-action="start-daily" aria-label="Daily Contract, ${escapeShellHtml(level.name)}. ${escapeShellHtml(replayLine)}.">
         <span>Daily Contract / ${escapeShellHtml(daily.dateKey)}</span>
         <strong>${escapeShellHtml(level.name)}</strong>
         <em>Fixed payload: ${escapeShellHtml(projectile.shortName)} / ${escapeShellHtml(daily.contract.label)} / ${escapeShellHtml(daily.contract.summary)}</em>
+        <small>${escapeShellHtml(routeLine)}</small>
         <small>${escapeShellHtml(replayLine)}</small>
         <small>${escapeShellHtml(bestLine)}</small>
       </button>
@@ -1468,11 +1478,13 @@ class AppShell {
       .map((entry) => `${TEST_CHAMBERS[entry.levelIndex]?.name ?? entry.levelId} ${PROJECTILES[entry.projectileId].shortName}`)
       .join(" / ");
     const routeStatus = `${route.localCompletedRuns}/${route.entries.length} cleared / ${route.localStars}/${route.entries.length * 3} stars / ${formatShellScore(route.localCumulativeBestScore)} cumulative`;
+    const weeklyModeLine = "Weekly fixed payload route: five seeded stops, payload locked per stop, cumulative score chase.";
     this.weeklyValue.innerHTML = `
       <button type="button" data-action="start-weekly" aria-label="Weekly Fixed Payload Route, ${escapeShellHtml(nextLevel.name)} with ${escapeShellHtml(nextProjectile.shortName)}.">
         <span>Weekly Fixed Payload Route / ${escapeShellHtml(route.weekKey)}</span>
         <strong>${escapeShellHtml(nextLevel.name)} next</strong>
         <em>Fixed payload: ${escapeShellHtml(nextProjectile.shortName)} / ${escapeShellHtml(this.weeklyStartEntry.contract.label)} / ${escapeShellHtml(this.weeklyStartEntry.contract.summary)}</em>
+        <small>${escapeShellHtml(weeklyModeLine)}</small>
         <small>${escapeShellHtml(routeStatus)}</small>
         <small>${escapeShellHtml(routeLine)}</small>
       </button>
@@ -2548,7 +2560,8 @@ class Game {
     fragmentInstanceBuckets: 0,
     fragmentInstanceVisibleBuckets: 0,
     fragmentInstanceWarmupBuckets: 0,
-    fragmentInstanceOverflowBuckets: 0
+    fragmentInstanceOverflowBuckets: 0,
+    levelComposition: "structure/debris mix"
   };
 
   constructor(settings: GameSettings, rendererBundle: DowntownMayhemRendererBundle, private readonly options: GameOptions = {}) {
@@ -2849,8 +2862,9 @@ class Game {
       bodyCount: this.physics.getDynamicBodyCount(),
       levelName: level.name,
       levelDescription: level.description,
-      objective: level.objective,
-      chaosBrief: level.chaosBrief,
+      objective: this.objectiveBrief(level),
+      chaosBrief: this.chaosBrief(level),
+      levelSignal: this.levelSignal(level),
       mission: level.mission,
       levelIndex: this.levelIndex,
       levelCount: TEST_CHAMBERS.length,
@@ -3060,7 +3074,8 @@ class Game {
       fragmentInstanceBuckets: fragmentStats.buckets,
       fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
       fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
-      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets
+      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets,
+      levelComposition: levelCompositionLine(physicsStats)
     };
     this.renderStatsFrame += 1;
     return { ...this.lastRenderStats };
@@ -3094,7 +3109,8 @@ class Game {
       fragmentInstanceBuckets: fragmentStats.buckets,
       fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
       fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
-      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets
+      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets,
+      levelComposition: levelCompositionLine(physicsStats)
     };
     this.renderStatsFrame += 1;
     return { ...this.lastRenderStats };
@@ -4310,13 +4326,21 @@ class Game {
       justUnlockedLevelName:
         recorded.progress.highestUnlockedLevel > previousHighestUnlockedLevel
           ? TEST_CHAMBERS[recorded.progress.highestUnlockedLevel]?.name
+          : undefined,
+      justUnlockedPayloadName:
+        previousHighestUnlockedLevel + 1 < IGNITE_UNLOCK_LEVEL_COUNT &&
+        recorded.progress.highestUnlockedLevel + 1 >= IGNITE_UNLOCK_LEVEL_COUNT
+          ? PROJECTILES.ignite.shortName
           : undefined
     };
     saveArcadeProgress(this.arcadeProgress);
     this.audio.playScoreCeremony(score.totalScore, recorded.result.stars, recorded.result.completed);
     this.scoreReadyToFinalize = false;
     this.scoreAutoRevealAt = null;
-    this.status = `${statusPrefix}${statusPrefix ? " " : ""}${scoreStatus(score, recorded.result)}`;
+    const unlockStatus = this.arcadeResultMeta.justUnlockedPayloadName
+      ? ` New payload unlocked: ${this.arcadeResultMeta.justUnlockedPayloadName}.`
+      : "";
+    this.status = `${statusPrefix}${statusPrefix ? " " : ""}${scoreStatus(score, recorded.result)}${unlockStatus}`;
     this.perfDiskLogger?.flush("score-finalized");
   }
 
@@ -5398,7 +5422,7 @@ class Game {
     this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
     this.refreshRunPlanning();
     this.audio.playLoadoutPreview(id, this.powerScale, this.sizeScale);
-    this.status = `${PROJECTILES[id].name}: ${PROJECTILES[id].description}`;
+    this.status = `${PROJECTILES[id].name}: ${PROJECTILES[id].usageTip}`;
   }
 
   private activeDailyContract(): DailyContractDefinition | null {
@@ -5467,6 +5491,24 @@ class Game {
 
   private currentLevelProgress() {
     return this.arcadeProgress.levels[this.currentLevel().id];
+  }
+
+  private objectiveBrief(level: TestChamber): string {
+    const projectileObjective = this.mayhemContract?.objectives[0]?.label;
+    return projectileObjective ? `${level.objective} / ${projectileObjective}` : level.objective;
+  }
+
+  private chaosBrief(level: TestChamber): string {
+    const contract = this.mayhemContract;
+    return contract ? `${level.chaosBrief} Route: ${contract.summary}.` : level.chaosBrief;
+  }
+
+  private levelSignal(level: TestChamber): string {
+    const stats = this.lastRenderStats;
+    const physicsStats = this.physics.getRuntimeStats();
+    const density = stats.bodyCount > 0 ? stats.bodyCount : physicsStats.bodyCount;
+    const structures = stats.fixedStructureCount > 0 ? stats.fixedStructureCount : physicsStats.fixedStructureCount;
+    return `Level scan: ${level.name} / density ${formatCompactScore(density)} objects / ${formatCompactScore(structures)} fixed structures / ${stats.levelComposition}`;
   }
 
   private levelOptions(): UILevelOption[] {
@@ -6829,6 +6871,17 @@ function formatCompactScore(value: number): string {
     return `${Math.round(rounded / 1_000)}K`;
   }
   return rounded.toLocaleString("en-US");
+}
+
+function levelCompositionLine(stats: {
+  fixedStructureCount: number;
+  debrisBodyCount: number;
+  activeDebrisCount: number;
+  pendingSupportReleaseCount: number;
+}): string {
+  const debris = stats.debrisBodyCount > 0 ? `${formatCompactScore(stats.debrisBodyCount)} debris-ready` : "low loose debris";
+  const support = stats.pendingSupportReleaseCount > 0 ? `${formatCompactScore(stats.pendingSupportReleaseCount)} staged supports` : "supports stable";
+  return `${formatCompactScore(stats.fixedStructureCount)} structures / ${debris} / ${support}`;
 }
 
 function metricShortLabel(metric: TestChamber["mission"]["bonusThreshold"]["metric"]): string {

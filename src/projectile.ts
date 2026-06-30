@@ -22,6 +22,7 @@ export interface ProjectileDefinition {
   fractureBoost: number;
   scoreModifier: number;
   description: string;
+  usageTip: string;
 }
 
 export interface ActiveProjectile {
@@ -62,7 +63,8 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     blastRadius: 3.75,
     fractureBoost: 1.38,
     scoreModifier: 1.08,
-    description: "Classic orange-white breacher with a harder first hit and clean debris shove."
+    description: "Classic orange-white breacher with a harder first hit and clean debris shove.",
+    usageTip: "Aim at the named core or weak point first, then let the blast shove debris through nearby targets."
   },
   scatter: {
     id: "scatter",
@@ -79,7 +81,8 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     blastRadius: 3.05,
     fractureBoost: 0.98,
     scoreModifier: 1.22,
-    description: "Bright fragmentation burst that throws visible shrapnel and chained mini-pops."
+    description: "Bright fragmentation burst that throws visible shrapnel and chained mini-pops.",
+    usageTip: "Fire into clustered props, tankers, or glass lanes so fragments create secondary hits."
   },
   pulse: {
     id: "pulse",
@@ -96,7 +99,8 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     blastRadius: 7.8,
     fractureBoost: 0.72,
     scoreModifier: 1.12,
-    description: "Wide cyan pressure dome with electric rings and a lower-fire shove."
+    description: "Wide cyan pressure dome with electric rings and a lower-fire shove.",
+    usageTip: "Shoot low into vehicles or foam redirects to push one wide wave through storefronts and lanes."
   },
   gravity: {
     id: "gravity",
@@ -113,7 +117,8 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     blastRadius: 0.95,
     fractureBoost: 1.55,
     scoreModifier: 1.25,
-    description: "Dense penetrator that punches deeper through towers with a violet crush shock."
+    description: "Dense penetrator that punches deeper through towers with a violet crush shock.",
+    usageTip: "Line up dense structures and boss shields; it scores best when it pierces several targets in one path."
   },
   ignite: {
     id: "ignite",
@@ -130,7 +135,8 @@ export const PROJECTILES: Record<ProjectileId, ProjectileDefinition> = {
     blastRadius: 4.65,
     fractureBoost: 1.18,
     scoreModifier: 1.18,
-    description: "Late-game sci-fi lattice that arms fictional hazards, then scores on delayed ignition chains."
+    description: "Late-game sci-fi lattice that arms fictional hazards, then scores on delayed ignition chains.",
+    usageTip: "Arm a fuel, power, or hazard lane first, then wait for the delayed Ignition Chain before scoring."
   }
 };
 

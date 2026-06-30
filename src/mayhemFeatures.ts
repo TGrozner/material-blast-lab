@@ -185,22 +185,22 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
   "hazard-junction": {
     slug: {
       idSuffix: "slug-toxic-core",
-      label: "Normal objective: crack the toxic core before chasing street debris",
+      label: "Normal objective: hit the toxic core first, then sweep street debris into the pump lane",
       minimumMultiplier: 0.95
     },
     scatter: {
       idSuffix: "frag-tanker-spray",
-      label: "Frag objective: spray clusters through tankers, booths, and traffic",
+      label: "Frag objective: fire into tankers, booths, and traffic clusters for secondary hits",
       minimumMultiplier: 1.08
     },
     pulse: {
       idSuffix: "impulse-storefront-wave",
-      label: "Impulse objective: shove storefront glass and vehicles into one wave",
+      label: "Impulse objective: shoot low to shove storefront glass and vehicles into one wave",
       minimumMultiplier: 1.05
     },
     gravity: {
       idSuffix: "heavy-pump-line",
-      label: "Heavy objective: pierce pump, sign, and depot in one line",
+      label: "Heavy objective: line up pump, sign, and depot so one shot pierces all three",
       metric: "totalScore",
       minimumMultiplier: 0.9
     },
@@ -213,22 +213,22 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
   "breaker-yard": {
     slug: {
       idSuffix: "slug-breaker-spine",
-      label: "Normal objective: split the breaker spine and cash the transformer yard",
+      label: "Normal objective: split the breaker spine, then let debris cash the transformer yard",
       minimumMultiplier: 1.02
     },
     scatter: {
       idSuffix: "frag-relay-row",
-      label: "Frag objective: flood both relay rows with secondary hits",
+      label: "Frag objective: angle clusters across both relay rows for secondary hits",
       minimumMultiplier: 1.14
     },
     pulse: {
       idSuffix: "impulse-yard-surge",
-      label: "Impulse objective: shove substation cargo through the breaker market",
+      label: "Impulse objective: push substation cargo through the breaker market lane",
       minimumMultiplier: 1.08
     },
     gravity: {
       idSuffix: "heavy-transformer-punch",
-      label: "Heavy objective: punch through spine, transformer, and control house",
+      label: "Heavy objective: line up spine, transformer, and control house for one pierce",
       metric: "targetDamage",
       minimumMultiplier: 1.04
     },
@@ -257,7 +257,7 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
     },
     gravity: {
       idSuffix: "heavy-switchback-line",
-      label: "Heavy objective: line up both switchback blocks in one pass",
+      label: "Heavy objective: line up both switchback blocks and pierce them in one pass",
       metric: "totalScore",
       minimumMultiplier: 0.94
     },
@@ -270,13 +270,13 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
   "relay-gauntlet": {
     slug: {
       idSuffix: "slug-capacitor-shield",
-      label: "Normal objective: break the capacitor shield phase cleanly",
+      label: "Normal objective: break the capacitor shield, then hit the exposed core",
       metric: "targetDamage",
       minimumMultiplier: 1.06
     },
     scatter: {
       idSuffix: "frag-relay-gates",
-      label: "Frag objective: keep every relay gate feeding the boss lane",
+      label: "Frag objective: spray every relay gate so chains feed the boss lane",
       metric: "chainReactionCount",
       minimumMultiplier: 1.2
     },
@@ -288,7 +288,7 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
     },
     gravity: {
       idSuffix: "heavy-capacitor-core",
-      label: "Heavy objective: pierce the shield, latch, and capacitor core",
+      label: "Heavy objective: pierce shield, latch, and capacitor core in one route",
       metric: "totalScore",
       minimumMultiplier: 0.98
     },
@@ -302,7 +302,7 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
   "overdrive-core": {
     slug: {
       idSuffix: "slug-prism-order",
-      label: "Normal objective: open the prism order seal and keep the lens exposed",
+      label: "Normal objective: open the prism seal, then keep the lens exposed",
       metric: "targetDamage",
       minimumMultiplier: 1.04
     },
@@ -512,28 +512,28 @@ export function projectileObjectiveFor(projectileId: ProjectileId, mission: Arca
     case "slug":
       return {
         id: "slug-core-hit",
-        label: "Slug objective: break the target core",
+        label: "Slug objective: hit the target core first",
         metric: "targetDamage",
         minimum: Math.round(mission.targetDamageThreshold * 0.9)
       };
     case "scatter":
       return {
         id: "scatter-secondary-hits",
-        label: "Scatter objective: flood secondary hits",
+        label: "Scatter objective: aim into clustered props for secondary hits",
         metric: "chainReactionCount",
         minimum: Math.max(30, Math.round(mission.bonusThreshold.minimum * 0.52))
       };
     case "pulse":
       return {
         id: "pulse-chaos-wave",
-        label: "Pulse objective: spread collateral chaos",
+        label: "Pulse objective: shoot low to push a wide collateral wave",
         metric: "collateralChaos",
         minimum: Math.max(18_000, Math.round(mission.scoreThresholds.oneStar * 0.34))
       };
     case "gravity":
       return {
         id: "gravity-pierce-line",
-        label: "Heavy objective: punch through dense structures",
+        label: "Heavy objective: line up dense structures for one piercing route",
         metric: "totalScore",
         minimum: Math.round(mission.scoreThresholds.twoStar * 0.86)
       };
