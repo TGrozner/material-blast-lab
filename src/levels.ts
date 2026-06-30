@@ -21,6 +21,7 @@ const panelRenderMaterials = new Map<string, THREE.Material>();
 const vehicleRenderMaterials = new Map<string, THREE.Material>();
 const sharedLevelMaterials = new Map<string, THREE.Material>();
 const sharedLevelBoxGeometries = new Map<string, THREE.BoxGeometry>();
+const sharedLevelRingGeometries = new Map<string, THREE.RingGeometry>();
 
 export interface LevelContext {
   physics: PhysicsWorld;
@@ -457,7 +458,7 @@ function setupBreakerYardCity(context: LevelContext): void {
   spawnVacantLotInfill(context);
   spawnBreakerYardCore(context);
   spawnBreakerYardRelayWeb(context);
-  spawnBreakerBossCapacitor(context);
+  spawnBreakerBossCapacitor(context, { phaseReadout: true });
   spawnBreakerYardDensityInfill(context);
   spawnBreakerYardUrbanGrid(context);
   spawnBreakerYardStreetActivity(context);
@@ -472,7 +473,7 @@ function setupSwitchbackCrushCity(context: LevelContext): void {
   spawnVacantLotInfill(context);
   spawnSwitchbackArchiveCore(context);
   spawnSwitchbackRedirectors(context);
-  spawnArchiveBossLens(context);
+  spawnArchiveBossLens(context, { phaseReadout: true });
   spawnSwitchbackArchiveDensityInfill(context);
   spawnSwitchbackGlassCanyon(context);
   spawnSwitchbackStreetActivity(context);
@@ -707,6 +708,7 @@ function spawnBreakerBossCapacitor(context: LevelContext, options: BossPhaseRead
     fractureResistance: 0.42
   });
   decorateBossCore(core, coreSize, "breaker");
+  addBossArenaMarkers(context, base, rotationY, "breaker");
 
   const weakPoints: BossWeakPointSpec[] = options.phaseReadout
     ? [
@@ -782,6 +784,7 @@ function spawnBreakerBossCapacitor(context: LevelContext, options: BossPhaseRead
     zoneId: "breaker-boss hazard-relay explosive power-grid",
     scoreValue: 230,
     kind: "explosive",
+    phaseTheme: "breaker",
     support
   });
 }
@@ -1355,6 +1358,7 @@ function spawnArchiveBossLens(context: LevelContext, options: BossPhaseReadoutOp
     fractureResistance: 0.3
   });
   decorateBossCore(core, coreSize, "archive");
+  addBossArenaMarkers(context, base, rotationY, "archive");
 
   const weakPoints: BossWeakPointSpec[] = options.phaseReadout
     ? [
@@ -1430,6 +1434,7 @@ function spawnArchiveBossLens(context: LevelContext, options: BossPhaseReadoutOp
     zoneId: "archive-boss hazard-relay explosive glass-depot",
     scoreValue: 240,
     kind: "explosive",
+    phaseTheme: "archive",
     support
   });
 }
@@ -3697,6 +3702,7 @@ function addReadableWeakPoint(
   disableSetpieceShadows(object.mesh);
   decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
   decorateReadableWeakPointMarker(object.mesh, options.size, options.kind === "electric" ? "electric" : "hazard");
+  decorateBossWeakPointCallout(object.mesh, options.size, options.phaseTheme);
   if (options.phaseIndex !== undefined) {
     decorateBossPhaseMarker(object.mesh, options.size, options.phaseIndex, options.phaseTheme);
   }
@@ -3712,6 +3718,7 @@ function addBossRelayCanister(
     zoneId: string;
     scoreValue: number;
     kind: "electric" | "explosive";
+    phaseTheme: BossPhaseTheme;
     support: BossSupportOptions;
   }
 ): void {
@@ -3744,14 +3751,121 @@ function addBossRelayCanister(
   object.mesh.userData.disposeMaterial = false;
   disableSetpieceShadows(object.mesh);
   decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
+  decorateReadableWeakPointMarker(object.mesh, options.size, options.kind === "electric" ? "electric" : "hazard");
+  decorateBossWeakPointCallout(object.mesh, options.size, options.phaseTheme);
 }
 
 function bossWorldPosition(base: THREE.Vector3, rotationY: number, local: THREE.Vector3): THREE.Vector3 {
   return base.clone().add(local.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rotationY));
 }
 
+function addBossArenaMarkers(context: LevelContext, base: THREE.Vector3, rotationY: number, theme: BossPhaseTheme): void {
+  const accent = bossAccentColor(theme);
+  const secondary = theme === "breaker" ? 0xffd66b : 0x93f1ff;
+  const ringMaterial = setpieceGlowMaterial(`boss-floor-ring:${theme}`, accent, 0.54);
+  const outerRing = new THREE.Mesh(sharedLevelRingGeometry(1.95, 2.22), ringMaterial);
+  outerRing.name = `${theme} boss floor target ring`;
+  outerRing.position.copy(bossWorldPosition(base, rotationY, new THREE.Vector3(0, groundPanelY(7), 0)));
+  outerRing.rotation.set(-Math.PI * 0.5, 0, rotationY);
+  outerRing.renderOrder = groundPanelRenderOrder(7);
+  outerRing.userData.disposeMaterial = false;
+  context.addDecoration(outerRing);
+
+  const innerRing = new THREE.Mesh(sharedLevelRingGeometry(0.92, 1.04), setpieceGlowMaterial(`boss-inner-ring:${theme}`, secondary, 0.44));
+  innerRing.name = `${theme} boss inner cashout ring`;
+  innerRing.position.copy(bossWorldPosition(base, rotationY, new THREE.Vector3(0, groundPanelY(8), 0)));
+  innerRing.rotation.set(-Math.PI * 0.5, 0, rotationY);
+  innerRing.renderOrder = groundPanelRenderOrder(8);
+  innerRing.userData.disposeMaterial = false;
+  context.addDecoration(innerRing);
+
+  const skyMaterial = setpieceGlowMaterial(`boss-sky-marker-strong:${theme}`, accent, 0.9);
+  const skyCore = new THREE.Group();
+  skyCore.name = `${theme} boss overhead target marker`;
+  skyCore.position.copy(bossWorldPosition(base, rotationY, new THREE.Vector3(0, 0, 0)));
+  skyCore.rotation.y = rotationY;
+  const skyBeam = new THREE.Mesh(sharedLevelBoxGeometry(0.38, 7.4, 0.38), skyMaterial);
+  skyBeam.name = `${theme} boss vertical target beam`;
+  skyBeam.position.y = 5.2;
+  skyBeam.userData.disposeMaterial = false;
+  skyCore.add(skyBeam);
+  for (const [name, size, y] of [
+    ["wide crown", new THREE.Vector3(3.3, 0.16, 0.16), 8.95],
+    ["deep crown", new THREE.Vector3(0.16, 0.16, 3.3), 8.95],
+    ["mid wide crown", new THREE.Vector3(2.25, 0.12, 0.12), 7.65],
+    ["mid deep crown", new THREE.Vector3(0.12, 0.12, 2.25), 7.65]
+  ] as const) {
+    const crown = new THREE.Mesh(sharedLevelBoxGeometry(size.x, size.y, size.z), skyMaterial);
+    crown.name = `${theme} boss ${name}`;
+    crown.position.y = y;
+    crown.userData.disposeMaterial = false;
+    skyCore.add(crown);
+  }
+  context.addDecoration(skyCore);
+
+  const crossMaterial = setpieceGlowMaterial(`boss-crosshair:${theme}`, accent, 0.5);
+  for (const [name, local, size] of [
+    ["north-south", new THREE.Vector3(0, groundPanelY(9), 0), new THREE.Vector3(0.18, 0.02, 4.25)],
+    ["east-west", new THREE.Vector3(0, groundPanelY(9), 0), new THREE.Vector3(4.25, 0.02, 0.18)]
+  ] as const) {
+    const bar = new THREE.Mesh(sharedLevelBoxGeometry(size.x, size.y, size.z), crossMaterial);
+    bar.name = `${theme} boss ${name} crosshair`;
+    bar.position.copy(bossWorldPosition(base, rotationY, local));
+    bar.rotation.y = rotationY;
+    bar.renderOrder = groundPanelRenderOrder(9);
+    bar.userData.disposeMaterial = false;
+    context.addDecoration(bar);
+  }
+
+  const arrowMaterial = setpieceGlowMaterial(`boss-chevron:${theme}`, secondary, 0.68);
+  for (const [index, local, angle] of [
+    [1, new THREE.Vector3(0, groundPanelY(10), 2.95), 0],
+    [2, new THREE.Vector3(-2.45, groundPanelY(10), 0), Math.PI * 0.5],
+    [3, new THREE.Vector3(2.45, groundPanelY(10), 0), -Math.PI * 0.5]
+  ] as const) {
+    const chevron = new THREE.Group();
+    chevron.name = `${theme} boss approach chevron ${index}`;
+    chevron.position.copy(bossWorldPosition(base, rotationY, local));
+    chevron.rotation.y = rotationY + angle;
+    for (const side of [-1, 1] as const) {
+      const blade = new THREE.Mesh(sharedLevelBoxGeometry(0.72, 0.025, 0.12), arrowMaterial);
+      blade.name = `${theme} boss chevron blade`;
+      blade.position.set(side * 0.22, 0, 0);
+      blade.rotation.y = side * Math.PI * 0.22;
+      blade.userData.disposeMaterial = false;
+      chevron.add(blade);
+    }
+    context.addDecoration(chevron);
+  }
+
+  const beaconMaterial = setpieceGlowMaterial(`boss-beacon:${theme}`, accent, 0.78);
+  const mastMaterial = bossTrimMaterial(theme, accent);
+  for (const [index, local] of [
+    [1, new THREE.Vector3(-1.72, 0, -1.38)],
+    [2, new THREE.Vector3(1.72, 0, -1.38)],
+    [3, new THREE.Vector3(-1.72, 0, 1.38)],
+    [4, new THREE.Vector3(1.72, 0, 1.38)]
+  ] as const) {
+    const root = new THREE.Group();
+    root.name = `${theme} boss beacon ${index}`;
+    root.position.copy(bossWorldPosition(base, rotationY, local));
+    root.rotation.y = rotationY;
+    const mast = new THREE.Mesh(sharedLevelBoxGeometry(0.08, 1.2, 0.08), mastMaterial);
+    mast.name = `${theme} boss beacon mast`;
+    mast.position.y = 0.6;
+    mast.userData.disposeMaterial = false;
+    root.add(mast);
+    const lamp = new THREE.Mesh(sharedLevelBoxGeometry(0.34, 0.34, 0.34), beaconMaterial);
+    lamp.name = `${theme} boss beacon lamp`;
+    lamp.position.y = 1.28;
+    lamp.userData.disposeMaterial = false;
+    root.add(lamp);
+    context.addDecoration(root);
+  }
+}
+
 function decorateBossPhaseMarker(mesh: THREE.Mesh, size: THREE.Vector3, phaseIndex: BossPhaseIndex, theme: BossPhaseTheme): void {
-  const accent = theme === "breaker" ? 0x5de7ff : 0xff6b93;
+  const accent = bossAccentColor(theme);
   const marker = setpieceGlowMaterial(`boss-phase:${theme}:${phaseIndex}`, accent, 0.82);
   const pipWidth = THREE.MathUtils.clamp(size.x * 0.14, 0.035, 0.07);
   const pipHeight = THREE.MathUtils.clamp(size.y * 0.16, 0.035, 0.065);
@@ -3769,11 +3883,43 @@ function decorateBossPhaseMarker(mesh: THREE.Mesh, size: THREE.Vector3, phaseInd
   }
 }
 
+function decorateBossWeakPointCallout(mesh: THREE.Mesh, size: THREE.Vector3, theme: BossPhaseTheme): void {
+  const accent = bossAccentColor(theme);
+  const glow = setpieceGlowMaterial(`boss-weakpoint-callout:${theme}`, accent, 0.78);
+  const frontZ = size.z * 0.5 + 0.048;
+  const bracketWidth = THREE.MathUtils.clamp(size.x * 0.46, 0.16, 0.26);
+  const bracketHeight = THREE.MathUtils.clamp(size.y * 0.12, 0.05, 0.08);
+  for (const [x, y, rotationZ] of [
+    [-size.x * 0.38, size.y * 0.34, Math.PI * 0.22],
+    [size.x * 0.38, size.y * 0.34, -Math.PI * 0.22],
+    [-size.x * 0.38, -size.y * 0.22, -Math.PI * 0.22],
+    [size.x * 0.38, -size.y * 0.22, Math.PI * 0.22]
+  ] as const) {
+    const bracket = new THREE.Mesh(sharedLevelBoxGeometry(bracketWidth, bracketHeight, 0.034), glow);
+    bracket.name = `${theme} boss weak point corner bracket`;
+    bracket.position.set(x, y, frontZ);
+    bracket.rotation.z = rotationZ;
+    bracket.userData.disposeMaterial = false;
+    mesh.add(bracket);
+  }
+  const dot = new THREE.Mesh(sharedLevelBoxGeometry(size.x * 0.24, size.y * 0.18, 0.04), glow);
+  dot.name = `${theme} boss weak point center glow`;
+  dot.position.set(0, size.y * 0.05, frontZ + 0.006);
+  dot.userData.disposeMaterial = false;
+  mesh.add(dot);
+}
+
 function decorateBossCore(mesh: THREE.Mesh, size: THREE.Vector3, theme: "breaker" | "archive"): void {
-  const accent = theme === "breaker" ? 0x61e9ff : 0xff6b93;
+  const accent = bossAccentColor(theme);
   const trim = bossTrimMaterial(theme, accent);
   const glow = bossGlowMaterial(theme, accent);
   const frontZ = size.z * 0.5 + 0.018;
+  const backplate = new THREE.Mesh(sharedLevelBoxGeometry(size.x * 1.16, size.y * 0.24, 0.06), setpieceGlowMaterial(`boss-core-backplate:${theme}`, accent, 0.34));
+  backplate.name = `${theme} boss target backplate`;
+  backplate.position.set(0, size.y * 0.08, frontZ + 0.002);
+  backplate.userData.disposeMaterial = false;
+  mesh.add(backplate);
+
   for (const [x, y, height] of [
     [-size.x * 0.32, size.y * 0.12, size.y * 0.68],
     [size.x * 0.32, size.y * 0.16, size.y * 0.56]
@@ -3796,6 +3942,24 @@ function decorateBossCore(mesh: THREE.Mesh, size: THREE.Vector3, theme: "breaker
   eye.position.set(0, size.y * 0.42, frontZ + 0.02);
   eye.userData.disposeMaterial = false;
   mesh.add(eye);
+
+  for (const [x, y, rotationZ] of [
+    [-size.x * 0.48, size.y * 0.42, Math.PI * 0.18],
+    [size.x * 0.48, size.y * 0.42, -Math.PI * 0.18],
+    [-size.x * 0.48, -size.y * 0.14, -Math.PI * 0.18],
+    [size.x * 0.48, -size.y * 0.14, Math.PI * 0.18]
+  ] as const) {
+    const bracket = new THREE.Mesh(sharedLevelBoxGeometry(size.x * 0.28, 0.065, 0.075), glow);
+    bracket.name = `${theme} boss target bracket`;
+    bracket.position.set(x, y, frontZ + 0.034);
+    bracket.rotation.z = rotationZ;
+    bracket.userData.disposeMaterial = false;
+    mesh.add(bracket);
+  }
+}
+
+function bossAccentColor(theme: BossPhaseTheme): THREE.ColorRepresentation {
+  return theme === "breaker" ? 0x61e9ff : 0xff6b93;
 }
 
 function bossCoreMaterial(key: string, color: THREE.ColorRepresentation, emissive: THREE.ColorRepresentation): THREE.Material {
@@ -6565,6 +6729,18 @@ function sharedLevelBoxGeometry(width: number, height: number, depth: number): T
   const geometry = new THREE.BoxGeometry(width, height, depth);
   geometry.userData.sharedGeometry = true;
   sharedLevelBoxGeometries.set(key, geometry);
+  return geometry;
+}
+
+function sharedLevelRingGeometry(innerRadius: number, outerRadius: number, thetaSegments = 80): THREE.RingGeometry {
+  const key = `${innerRadius.toFixed(3)}:${outerRadius.toFixed(3)}:${thetaSegments}`;
+  const existing = sharedLevelRingGeometries.get(key);
+  if (existing) {
+    return existing;
+  }
+  const geometry = new THREE.RingGeometry(innerRadius, outerRadius, thetaSegments);
+  geometry.userData.sharedGeometry = true;
+  sharedLevelRingGeometries.set(key, geometry);
   return geometry;
 }
 
