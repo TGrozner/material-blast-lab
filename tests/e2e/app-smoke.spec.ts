@@ -104,6 +104,9 @@ declare global {
       getPerfReport(): unknown;
       getRenderWarmupState(): RenderWarmupState;
       getCannonVisualState(): CannonVisualState;
+      getRunFeedback(): unknown;
+      getLiveMastery(): unknown;
+      getDailyContract(): unknown;
       setPerfEnabled(enabled: boolean): void;
       clearPerfReport(): void;
       flushPerfLog(reason?: string): void;
@@ -111,13 +114,6 @@ declare global {
       resume(): void;
     };
   }
-}
-
-interface ClientBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 test("renders a playable mobile portrait city trial inside the initial body-count budget", async ({ page }) => {
@@ -179,6 +175,9 @@ test("switches mobile portrait to a frictionless post-shot turn prompt", async (
   await expect(turnPrompt).toBeVisible();
   await expect(turnPrompt).toContainText(/Watching mayhem|Tap to score/);
   await expect(turnPrompt).toContainText(/running Mayhem|Score unlocks/);
+  await expect.poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getLiveMastery() ?? null), {
+    timeout: UI_READY_TIMEOUT_MS
+  }).not.toBeNull();
   await expect(page.evaluate(mobilePostShotLayoutFailures)).resolves.toEqual([]);
 
   expect(consoleErrors).toEqual([]);
@@ -217,6 +216,9 @@ test("shows a clear three-level selector without free play", async ({ page }) =>
   await expect(page.locator("canvas")).toHaveCount(0);
   await expect(page.locator("[data-action='start-free']")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Free Play" })).toHaveCount(0);
+  await expect(page.locator("[data-mode]")).toHaveCount(0);
+  await expect(page.locator("[data-action='start-daily']")).toContainText("Daily Contract");
+  await expect(page.locator("[data-action='start-daily']")).toContainText("Hazard Junction");
   await expect(page.locator("[data-role='shell-progress']")).toHaveText("Campaign 0/9 stars / 1/3 districts open");
   await expect(page.locator("[data-role='shell-levels'] [data-action='start-arcade']")).toHaveCount(3);
   await expect(levelCard(page, "Hazard Junction")).toBeVisible();
@@ -234,45 +236,24 @@ test("shows a clear three-level selector without free play", async ({ page }) =>
   expect(consoleErrors).toEqual([]);
 });
 
-test("arms the RC crash run before launching on mobile", async ({ page }) => {
+test("starts the local daily contract as a cannon trial", async ({ page }) => {
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
 
   await useSmokePerformanceSettings(page);
-  await page.setViewportSize(MOBILE_PORTRAIT_VIEWPORT);
+  await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto(SMOKE_URL);
 
-  await clickUi(page.locator("[data-mode='plane']"));
-  await clickUi(levelCard(page, "Hazard Junction"));
-  await expectLevelReady(page, "Hazard Junction");
+  await clickUi(page.locator("[data-action='start-daily']"));
   await expectRenderableCanvas(page);
-  await expect(page.locator(".hud")).toHaveClass(/is-plane-mode/);
-  await expect(page.locator(".hud [data-role='mode-label']")).toHaveText("RC Crash Run");
-  await expect(page.locator(".hud [data-role='loadout-label']")).toHaveText("Vehicle");
-  await expect(page.locator(".hud [data-role='projectile']")).toHaveText("RC Plane");
-  await expect(fireButton(page)).toHaveText("START RUN");
-  await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
-  await expect(page.getByRole("button", { name: "Heavy" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "W" })).toHaveCount(0);
-  await expect(page.locator(".hud__plane-boost")).toBeHidden();
-  await expect(page.evaluate(mobilePlaneReadyLayoutFailures)).resolves.toEqual([]);
-
-  await clickUi(fireButton(page));
-  await expect(page.locator(".hud [data-role='shots']")).toHaveText("AIRBORNE");
-  await expect(page.locator(".hud")).toHaveClass(/is-plane-flying/);
-  await expect(page.locator(".hud__fire")).toBeHidden();
-  await expect(page.locator("[data-action='reset']")).toBeVisible();
-  await expect(page.locator(".hud__plane-boost")).toBeVisible();
-  await dragPlaneTouch(page);
-  await expect(page.locator("[data-role='flight-stick']")).toBeVisible();
-  await releasePlaneTouch(page);
-  await expect(page.locator("[data-role='flight-stick']")).toBeHidden();
-  await expect(page.evaluate(mobilePlaneFlightLayoutFailures)).resolves.toEqual([]);
-
-  await clickUi(page.locator("[data-action='reset']"));
-  await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
-  await expect(page.locator(".hud__plane-boost")).toBeHidden();
-  await expect(page.locator(".hud__command")).toBeVisible();
+  await expect(page.locator(".hud [data-role='mode-label']")).toHaveText("Cannon Trial");
+  await expect(page.locator(".hud [data-role='loadout-label']")).toHaveText("Payload");
+  const daily = await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getDailyContract() ?? null);
+  expect(daily).toMatchObject({
+    dateKey: expect.stringMatching(/\d{4}-\d{2}-\d{2}/),
+    levelId: "hazard-junction",
+    projectileId: expect.any(String)
+  });
   expect(consoleErrors).toEqual([]);
 });
 
@@ -635,81 +616,11 @@ function levelCard(page: Page, name: string): Locator {
   return page.locator("[data-role='shell-levels'] [data-action='start-arcade']").filter({ hasText: name }).first();
 }
 
-async function dragPlaneTouch(page: Page): Promise<void> {
-  const canvasBox = await waitForCanvasClientBox(page);
-  const origin = {
-    x: Math.round(canvasBox.x + canvasBox.width * 0.28),
-    y: Math.round(canvasBox.y + canvasBox.height * 0.76)
-  };
-  const target = {
-    x: Math.round(canvasBox.x + canvasBox.width * 0.18),
-    y: Math.round(canvasBox.y + canvasBox.height * 0.66)
-  };
-  await page.dispatchEvent("canvas", "pointerdown", {
-    pointerId: 77,
-    pointerType: "touch",
-    isPrimary: true,
-    button: 0,
-    buttons: 1,
-    clientX: origin.x,
-    clientY: origin.y
-  });
-  await page.dispatchEvent("canvas", "pointermove", {
-    pointerId: 77,
-    pointerType: "touch",
-    isPrimary: true,
-    button: 0,
-    buttons: 1,
-    clientX: target.x,
-    clientY: target.y
-  });
-}
-
-async function waitForCanvasClientBox(page: Page): Promise<ClientBox> {
-  await expect.poll(() => readCanvasClientBox(page), { timeout: LEVEL_START_TIMEOUT_MS }).not.toBeNull();
-  const box = await readCanvasClientBox(page);
-  if (!box) {
-    throw new Error("Missing canvas box for plane touch drag");
-  }
-  return box;
-}
-
-function readCanvasClientBox(page: Page): Promise<ClientBox | null> {
-  return page.evaluate(() => {
-    const canvas = document.querySelector("canvas");
-    if (!(canvas instanceof HTMLCanvasElement)) {
-      return null;
-    }
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-    return {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height
-    };
-  });
-}
-
 function elementInnerText(page: Page, selector: string): Promise<string | null> {
   return page.evaluate((targetSelector) => {
     const element = document.querySelector(targetSelector);
     return element instanceof HTMLElement ? element.innerText.trim() : null;
   }, selector);
-}
-
-async function releasePlaneTouch(page: Page): Promise<void> {
-  await page.dispatchEvent("canvas", "pointerup", {
-    pointerId: 77,
-    pointerType: "touch",
-    isPrimary: true,
-    button: 0,
-    buttons: 0,
-    clientX: 0,
-    clientY: 0
-  });
 }
 
 async function expectBodyCountWithinBudget(page: Page, budget = BODY_COUNT_BUDGET): Promise<void> {
@@ -733,6 +644,7 @@ async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   await expect(scorePanel.locator("[data-role='result-total']")).toHaveText(/\d+/);
   await expect(scorePanel.getByText("Object damage", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Run Contract", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Run Coach", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Collateral Chaos", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Secondary Hits", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Top Damage", { exact: true })).toBeVisible();
@@ -1051,7 +963,7 @@ function mobilePlayLayoutFailures(): string[] {
     failures.push("HUD leaves too little visible play area");
   }
 
-  failures.push(...coveredPlayAreaFailures([".hud__command", ".hud__topbar", ".hud__turn-prompt", ".hud__results", ".hud__plane-touch"]));
+  failures.push(...coveredPlayAreaFailures([".hud__command", ".hud__topbar", ".hud__turn-prompt", ".hud__results"]));
 
   const targetChecks: Array<[string, string, number, number]> = [
     ["fire", ".hud__fire", 44, 44],
@@ -1076,141 +988,6 @@ function mobilePlayLayoutFailures(): string[] {
   }
 
   failures.push(...overlappingInteractiveFailures());
-  return failures;
-}
-
-function mobilePlaneReadyLayoutFailures(): string[] {
-  const failures: string[] = [];
-  const isVisible = (element: Element): element is HTMLElement => {
-    if (!(element instanceof HTMLElement)) {
-      return false;
-    }
-    const style = window.getComputedStyle(element);
-    return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
-  };
-  const coveredPlayAreaFailures = (hudSelectors: string[]): string[] => {
-    const covered: string[] = [];
-    for (const [xRatio, yRatio] of [
-      [0.5, 0.34],
-      [0.5, 0.46],
-      [0.42, 0.5],
-      [0.58, 0.5]
-    ] as Array<[number, number]>) {
-      const element = document.elementFromPoint(Math.round(window.innerWidth * xRatio), Math.round(window.innerHeight * yRatio));
-      if (element?.closest(hudSelectors.join(","))) {
-        covered.push(`play area sample covered at ${Math.round(xRatio * 100)}%/${Math.round(yRatio * 100)}%`);
-      }
-    }
-    return covered;
-  };
-  const command = document.querySelector(".hud__command");
-  const topbar = document.querySelector(".hud__topbar");
-  const loadoutLabel = document.querySelector("[data-role='loadout-label']");
-  const fire = document.querySelector(".hud__fire");
-  if (
-    !(command instanceof HTMLElement) ||
-    !(topbar instanceof HTMLElement) ||
-    !(loadoutLabel instanceof HTMLElement) ||
-    !(fire instanceof HTMLElement)
-  ) {
-    return ["missing plane ready HUD"];
-  }
-
-  const commandStyle = window.getComputedStyle(command);
-  if (commandStyle.display === "none" || commandStyle.visibility === "hidden") {
-    failures.push("plane ready command panel is hidden");
-  }
-
-  const loadoutStyle = window.getComputedStyle(loadoutLabel);
-  if (loadoutStyle.visibility === "hidden" || loadoutLabel.textContent?.trim() !== "Vehicle") {
-    failures.push("plane loadout label is not visible as Vehicle");
-  }
-
-  if (document.querySelectorAll(".hud__projectile").length > 0 && Array.from(document.querySelectorAll(".hud__projectile")).some(isVisible)) {
-    failures.push("plane mode shows cannon projectile buttons");
-  }
-
-  const commandRect = command.getBoundingClientRect();
-  const topbarRect = topbar.getBoundingClientRect();
-  const fireRect = fire.getBoundingClientRect();
-  if (Math.ceil(commandRect.height) > 176) {
-    failures.push(`plane ready dock too tall: ${Math.ceil(commandRect.height)}px`);
-  }
-  if (command.scrollHeight > command.clientHeight + 1) {
-    failures.push("plane ready command panel scrolls");
-  }
-  if (topbarRect.bottom > commandRect.top - 16) {
-    failures.push("plane ready top bar and command panel leave too little flight view");
-  }
-  if (fireRect.width < 120 || fireRect.height < 44) {
-    failures.push(`plane start target too small: ${Math.round(fireRect.width)}x${Math.round(fireRect.height)}`);
-  }
-
-  failures.push(...coveredPlayAreaFailures([".hud__command", ".hud__topbar", ".hud__plane-touch"]));
-  return failures;
-}
-
-function mobilePlaneFlightLayoutFailures(): string[] {
-  const failures: string[] = [];
-  const isVisible = (element: Element): element is HTMLElement => {
-    if (!(element instanceof HTMLElement)) {
-      return false;
-    }
-    const style = window.getComputedStyle(element);
-    return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
-  };
-  const coveredPlayAreaFailures = (hudSelectors: string[]): string[] => {
-    const covered: string[] = [];
-    for (const [xRatio, yRatio] of [
-      [0.5, 0.34],
-      [0.5, 0.46],
-      [0.42, 0.5],
-      [0.58, 0.5]
-    ] as Array<[number, number]>) {
-      const element = document.elementFromPoint(Math.round(window.innerWidth * xRatio), Math.round(window.innerHeight * yRatio));
-      if (element?.closest(hudSelectors.join(","))) {
-        covered.push(`play area sample covered at ${Math.round(xRatio * 100)}%/${Math.round(yRatio * 100)}%`);
-      }
-    }
-    return covered;
-  };
-  const command = document.querySelector(".hud__command");
-  const boost = document.querySelector(".hud__plane-boost");
-  const fire = document.querySelector(".hud__fire");
-  const retry = document.querySelector("[data-action='reset']");
-  if (!(command instanceof HTMLElement) || !(boost instanceof HTMLElement) || !(fire instanceof HTMLElement) || !(retry instanceof HTMLElement)) {
-    return ["missing plane flight HUD"];
-  }
-
-  if (!isVisible(command)) {
-    failures.push("plane compact retry panel is not visible while airborne");
-  }
-  if (isVisible(fire)) {
-    failures.push("plane start button remains visible while airborne");
-  }
-  if (!isVisible(retry)) {
-    failures.push("plane retry button is not visible while airborne");
-  }
-  if (!isVisible(boost)) {
-    failures.push("plane boost button is not visible while airborne");
-  }
-
-  const commandRect = command.getBoundingClientRect();
-  const boostRect = boost.getBoundingClientRect();
-  if (commandRect.width > 220 || commandRect.height > 72) {
-    failures.push(`plane compact retry panel too large: ${Math.round(commandRect.width)}x${Math.round(commandRect.height)}`);
-  }
-  if (commandRect.top > window.innerHeight * 0.24 || commandRect.bottom > window.innerHeight * 0.34) {
-    failures.push("plane compact retry panel is not anchored near the top flight area");
-  }
-  if (boostRect.width < 88 || boostRect.height < 88) {
-    failures.push(`plane boost target too small: ${Math.round(boostRect.width)}x${Math.round(boostRect.height)}`);
-  }
-  if (boostRect.right < window.innerWidth * 0.62 || boostRect.bottom < window.innerHeight * 0.78) {
-    failures.push("plane boost target is not anchored to the lower-right flight area");
-  }
-
-  failures.push(...coveredPlayAreaFailures([".hud__command", ".hud__topbar", ".hud__plane-touch"]));
   return failures;
 }
 

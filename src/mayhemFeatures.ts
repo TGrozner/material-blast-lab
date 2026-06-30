@@ -46,6 +46,23 @@ export interface RunFeedback {
   contractResult: ArcadeContractResult | null;
 }
 
+export interface DailyContractDefinition {
+  dateKey: string;
+  seed: number;
+  levelIndex: number;
+  levelId: string;
+  projectileId: ProjectileId;
+  variant: RunVariant;
+  contract: MayhemContract;
+}
+
+interface DailyContractLevel {
+  id: string;
+  mission: ArcadeMissionFields;
+}
+
+const DAILY_PROJECTILE_ORDER: readonly ProjectileId[] = ["slug", "scatter", "pulse", "gravity"];
+
 const RUN_VARIANTS: RunVariant[] = [
   {
     id: "rush-hour",
@@ -76,6 +93,38 @@ const RUN_VARIANTS: RunVariant[] = [
 export function runVariantForSeed(levelId: string, seed: number): RunVariant {
   const hash = hashString(`${levelId}:${seed}`);
   return RUN_VARIANTS[hash % RUN_VARIANTS.length];
+}
+
+export function dailyDateKey(date = new Date()): string {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function dailyContractForDate(
+  levels: readonly DailyContractLevel[],
+  date = new Date()
+): DailyContractDefinition | null {
+  if (levels.length === 0) {
+    return null;
+  }
+  const dateKey = dailyDateKey(date);
+  const seed = hashString(`downtown-daily:${dateKey}`);
+  const levelIndex = seed % levels.length;
+  const level = levels[levelIndex];
+  const projectileId = DAILY_PROJECTILE_ORDER[Math.floor(seed / Math.max(1, levels.length)) % DAILY_PROJECTILE_ORDER.length];
+  const variantSeed = hashString(`${dateKey}:${level.id}:${projectileId}`);
+  const variant = runVariantForSeed(level.id, variantSeed);
+  return {
+    dateKey,
+    seed: variantSeed,
+    levelIndex,
+    levelId: level.id,
+    projectileId,
+    variant,
+    contract: mayhemContractForRun(level.id, level.mission, projectileId, variant)
+  };
 }
 
 export function projectileObjectiveFor(projectileId: ProjectileId, mission: ArcadeMissionFields): ProjectileObjective {
@@ -171,6 +220,48 @@ export function runFeedbackForScore(options: {
   };
 }
 
+export function summarizeScoreSources(events: readonly ScoreEvent[], limit = 3): RunScoreSource[] {
+  const sources = new Map<string, RunScoreSource>();
+  for (const event of events) {
+    if (event.points <= 0) {
+      continue;
+    }
+    const label = scoreSourceKey(event);
+    const current = sources.get(label);
+    if (current) {
+      current.points += event.points;
+    } else {
+      sources.set(label, {
+        kind: event.kind,
+        label,
+        points: event.points
+      });
+    }
+  }
+  return [...sources.values()]
+    .sort((a, b) => b.points - a.points || a.label.localeCompare(b.label))
+    .slice(0, Math.max(0, limit));
+}
+
+export function replayMomentFromEvents(events: readonly ScoreEvent[]): RunReplayMoment | null {
+  let best: ScoreEvent | null = null;
+  for (const event of events) {
+    if (event.points <= 0) {
+      continue;
+    }
+    if (!best || replayMomentWeight(event) > replayMomentWeight(best)) {
+      best = event;
+    }
+  }
+  if (!best) {
+    return null;
+  }
+  return {
+    label: best.combo && best.combo >= 2 ? `${best.label} combo` : best.label,
+    points: best.points
+  };
+}
+
 export function scoreSourceKey(event: ScoreEvent): string {
   if (event.kind === "chain") {
     return "Secondary chain";
@@ -184,6 +275,10 @@ export function scoreSourceKey(event: ScoreEvent): string {
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function replayMomentWeight(event: ScoreEvent): number {
+  return event.points + (event.combo ?? 0) * 18 + (event.kind === "chain" ? 120 : 0);
 }
 
 export function chainMilestoneForCombo(combo: number): { combo: number; label: string } | null {

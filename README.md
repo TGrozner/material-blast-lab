@@ -1,6 +1,6 @@
 # Downtown Mayhem
 
-Downtown Mayhem is a compact browser arcade physics toy built with Vite, TypeScript, Three.js, and Rapier3D. The prototype has two one-shot arcade modes: **Cannon Trial**, where you choose one fictional sci-fi projectile and fire it from a city siege cannon, and **RC Crash Run**, where you steer one small fictional RC-style plane into the city. Either way, the run ends in destructible city fractures, debris, vehicle wrecks, chain reactions, camera shake, slow motion, and a Mayhem Score.
+Downtown Mayhem is a compact browser arcade physics toy built with Vite, TypeScript, Three.js, and Rapier3D. The prototype centers on **Cannon Trial**, where you choose one fictional sci-fi projectile and fire it from a city siege cannon. Each run ends in destructible city fractures, debris, vehicle wrecks, chain reactions, camera shake, slow motion, and a Mayhem Score.
 
 This is not a realistic explosive simulator and does not model real devices or weapons tactics. The game is a fictional arcade object-destruction toy focused on readable chains and score mastery.
 
@@ -56,16 +56,12 @@ cp -R dist/. "$AUDIT_DIST/"
 DIST_DIR="$AUDIT_DIST" npm run harden:dist
 ```
 
-## Modes
+## Mode
 
 - Cannon Trial: aim from behind the cannon, fire one arcade projectile, then watch the city settle into a score
-- RC Crash Run: start the plane manually, steer it in third person, then crash it into a building, object, or the ground for the same destruction and scoring flow
-
-RC Crash Run does not include payload dropping, multiple aircraft, fuel, enemies, health, imported aircraft assets, or realistic aircraft simulation.
+- Daily Contract: a local date-based Cannon Trial challenge with a fixed district, payload, and run contract
 
 ## Controls
-
-### Cannon Trial
 
 - Mouse move: aim the cannon
 - Left click / Space: fire the one available shot
@@ -73,16 +69,6 @@ RC Crash Run does not include payload dropping, multiple aircraft, fuel, enemies
 - R: retry the current district
 - C: clear dynamic debris during the run
 - Tab: switch district
-
-### RC Crash Run
-
-- Start Run button / Space: launch the run from the ready state
-- W/S or ArrowUp/ArrowDown: pitch
-- A/D or ArrowLeft/ArrowRight: yaw
-- Shift: boost
-- R: retry the current district
-- C: clear dynamic debris during the run
-- Touch: drag in the lower play area to steer, and hold the lower-right Boost button while airborne
 
 ## Projectiles
 
@@ -114,13 +100,12 @@ The score appears after the shot settles for a few seconds. Mayhem Score is the 
 - `src/materialCatalog.ts`: material behavior and procedural Three.js materials
 - `src/destruction.ts`: blast impulses and practical cuboid fracture replacement
 - `src/projectile.ts`: projectile definitions and launch system
-- `src/aircraft.ts`: arcade RC plane controller and procedural plane visual
 - `src/cannon.ts`: procedural cannon, aiming, recoil, trajectory preview
 - `src/levels.ts`: test chamber setup
 - `src/scoring.ts`: arcade score breakdown
 - `src/vfx.ts`: particles, shockwave, debris splashes, point light flash, screen flash
-- `src/cameraRig.ts`: cannon, projectile-follow, aircraft chase, and spectacle camera modes
-- `src/input.ts`: mouse aiming, keyboard shortcuts, and touch flight input
+- `src/cameraRig.ts`: cannon, projectile-follow, and spectacle camera modes
+- `src/input.ts`: mouse aiming and keyboard shortcuts
 - `src/ui.ts`: HUD and final score panel
 
 ## CI/CD

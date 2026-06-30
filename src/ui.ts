@@ -1,7 +1,6 @@
 import type { ArcadeContractObjectiveResult, ArcadeLevelProgress, ArcadeResult } from "./arcade";
-import { GAME_MODES, type GameMode } from "./gameMode";
-import type { TouchFlightIndicatorState } from "./input";
 import type { ArcadeMissionFields } from "./levels";
+import type { RunFeedback } from "./mayhemFeatures";
 import type { ProjectileDefinition, ProjectileId } from "./projectile";
 import { PROJECTILE_ORDER, PROJECTILES } from "./projectile";
 import type { ScoreBreakdown } from "./scoring";
@@ -19,12 +18,23 @@ export interface UIResultMeta {
   justUnlockedLevelName?: string;
 }
 
+export interface UILiveMastery {
+  scoreLabel: string;
+  scoreValue: string;
+  scoreProgress: number;
+  bonusLabel: string;
+  bonusValue: string;
+  bonusProgress: number;
+  contractLabel: string;
+  contractValue: string;
+  contractProgress: number;
+  contractCompleted: boolean;
+}
+
 interface UIState {
-  gameMode: GameMode;
   projectileId: ProjectileId;
   projectile: ProjectileDefinition;
   shotAvailable: boolean;
-  isFlyingRun: boolean;
   canFinishRun: boolean;
   bodyCount: number;
   levelName: string;
@@ -39,10 +49,12 @@ interface UIState {
   totalStars: number;
   arcadeResult: ArcadeResult | null;
   resultMeta: UIResultMeta | null;
+  runFeedback: RunFeedback | null;
   settings: GameSettings;
   status: string;
   fps: number;
   liveScore: ScoreBreakdown | null;
+  liveMastery: UILiveMastery | null;
   score: ScoreBreakdown | null;
 }
 
@@ -64,7 +76,6 @@ interface UICallbacks {
   selectProjectile(id: ProjectileId): void;
   selectLevel(index: number): boolean;
   nextLevel(): void;
-  setPlaneBoost(active: boolean): void;
   updateSettings(patch: Partial<GameSettings>): void;
   resetSettings(): void;
 }
@@ -89,8 +100,7 @@ export class GameUI {
   private readonly liveScorePanel: HTMLDivElement;
   private readonly liveScoreValue: HTMLElement;
   private readonly liveScoreRailValue: HTMLElement;
-  private readonly flightStick: HTMLDivElement;
-  private readonly planeBoostButton: HTMLButtonElement;
+  private readonly liveMasteryValue: HTMLElement;
   private readonly turnPrompt: HTMLButtonElement;
   private readonly turnPromptTitle: HTMLElement;
   private readonly turnPromptHint: HTMLElement;
@@ -180,6 +190,7 @@ export class GameUI {
           <span>Running Mayhem</span>
           <strong data-role="live-score-value">0</strong>
           <div><i data-role="live-score-rail"></i></div>
+          <small data-role="live-mastery"></small>
         </div>
         <div class="hud__finish-hint" data-role="finish-hint" hidden>Done watching the run? Press F or Enter, or click Score Now.</div>
         <div class="hud__status" data-role="status"></div>
@@ -190,14 +201,6 @@ export class GameUI {
         <strong data-role="turn-prompt-title">Watching mayhem</strong>
         <em data-role="turn-prompt-hint">Score unlocks when the chain reactions settle.</em>
       </button>
-
-      <div class="hud__plane-touch">
-        <div class="hud__flight-stick" data-role="flight-stick" hidden>
-          <span></span>
-          <i></i>
-        </div>
-        <button class="hud__plane-boost" type="button" data-action="plane-boost" aria-label="Boost RC plane">BOOST</button>
-      </div>
 
       <section class="hud__results" data-role="score" aria-live="polite"></section>
 
@@ -281,8 +284,7 @@ export class GameUI {
     this.liveScorePanel = this.requireElement("[data-role='live-score']");
     this.liveScoreValue = this.requireElement("[data-role='live-score-value']");
     this.liveScoreRailValue = this.requireElement("[data-role='live-score-rail']");
-    this.flightStick = this.requireElement("[data-role='flight-stick']");
-    this.planeBoostButton = this.requireElement("[data-action='plane-boost']");
+    this.liveMasteryValue = this.requireElement("[data-role='live-mastery']");
     this.turnPrompt = this.requireElement("[data-action='turn-finish']");
     this.turnPromptTitle = this.requireElement("[data-role='turn-prompt-title']");
     this.turnPromptHint = this.requireElement("[data-role='turn-prompt-hint']");
@@ -318,10 +320,6 @@ export class GameUI {
 
     this.fireButton.addEventListener("click", () => this.callbacks.fire());
     this.finishButton.addEventListener("click", () => this.callbacks.finishRun());
-    this.planeBoostButton.addEventListener("pointerdown", this.handlePlaneBoostDown);
-    this.planeBoostButton.addEventListener("pointerup", this.handlePlaneBoostUp);
-    this.planeBoostButton.addEventListener("pointercancel", this.handlePlaneBoostUp);
-    this.planeBoostButton.addEventListener("lostpointercapture", this.handlePlaneBoostUp);
     this.turnPrompt.addEventListener("click", () => {
       if (!this.turnPrompt.disabled) {
         this.callbacks.finishRun();
@@ -357,19 +355,15 @@ export class GameUI {
 
   update(state: UIState): void {
     this.currentState = state;
-    const planeMode = state.gameMode === "plane";
-    setText(this.modeLabelValue, GAME_MODES[state.gameMode].name);
-    setText(this.loadoutLabelValue, planeMode ? "Vehicle" : "Payload");
-    setText(this.projectileValue, planeMode ? GAME_MODES.plane.shortName : state.projectile.shortName);
-    setTitle(this.projectileValue, planeMode ? GAME_MODES.plane.name : state.projectile.name);
+    setText(this.modeLabelValue, "Cannon Trial");
+    setText(this.loadoutLabelValue, "Payload");
+    setText(this.projectileValue, state.projectile.shortName);
+    setTitle(this.projectileValue, state.projectile.name);
     setText(this.chamberValue, state.levelName);
     setTitle(this.chamberValue, state.levelDescription);
     setText(this.objectiveValue, state.objective);
     setText(this.chaosBriefValue, state.chaosBrief);
-    setText(
-      this.shotsValue,
-      planeMode ? (state.shotAvailable ? "READY" : state.isFlyingRun ? "AIRBORNE" : "CRASHED") : state.shotAvailable ? "READY" : "SPENT"
-    );
+    setText(this.shotsValue, state.shotAvailable ? "READY" : "SPENT");
     setText(this.bodyValue, String(state.bodyCount));
     const fpsHidden = !state.settings.showFps;
     if (this.fpsValue.hidden !== fpsHidden) {
@@ -390,12 +384,11 @@ export class GameUI {
     setText(this.bonusGoalValue, bonusSummary(state.mission));
 
     const blocked = this.isGameplayBlocked();
-    const fireHidden = planeMode && state.isFlyingRun;
-    if (this.fireButton.hidden !== fireHidden) {
-      this.fireButton.hidden = fireHidden;
+    if (this.fireButton.hidden) {
+      this.fireButton.hidden = false;
     }
-    if (this.fireButton.disabled !== (!state.shotAvailable || blocked || fireHidden)) {
-      this.fireButton.disabled = !state.shotAvailable || blocked || fireHidden;
+    if (this.fireButton.disabled !== (!state.shotAvailable || blocked)) {
+      this.fireButton.disabled = !state.shotAvailable || blocked;
     }
     const finishHidden = !state.canFinishRun || Boolean(state.score);
     if (this.finishButton.hidden !== finishHidden) {
@@ -408,17 +401,18 @@ export class GameUI {
     if (this.finishButton.disabled !== (finishHidden || blocked)) {
       this.finishButton.disabled = finishHidden || blocked;
     }
-    const postShot = !state.shotAvailable && !state.score && !state.isFlyingRun;
+    const postShot = !state.shotAvailable && !state.score;
     const showLiveScore = postShot && this.screen === "play" && Boolean(state.liveScore);
     if (this.liveScorePanel.hidden !== !showLiveScore) {
       this.liveScorePanel.hidden = !showLiveScore;
     }
     if (showLiveScore && state.liveScore) {
-      this.updateLiveScore(state.liveScore, state.mission.scoreThresholds);
+      this.updateLiveScore(state.liveScore, state.mission.scoreThresholds, state.liveMastery);
     } else if (!state.score && this.displayedLiveScore !== 0) {
       this.displayedLiveScore = 0;
       setText(this.liveScoreValue, "0");
       this.liveScoreRailValue.style.width = "0%";
+      setText(this.liveMasteryValue, "");
       this.liveScorePanel.classList.remove("is-surging");
     }
     const turnPromptHidden = !postShot || this.screen !== "play";
@@ -439,14 +433,8 @@ export class GameUI {
           : "Score unlocks when the chain reactions settle."
     );
     this.root.classList.toggle("is-post-shot", postShot);
-    this.root.classList.toggle("is-plane-mode", planeMode);
-    this.root.classList.toggle("is-plane-flying", state.isFlyingRun);
     this.root.classList.toggle("can-finish-run", state.canFinishRun && !state.score);
     this.root.classList.toggle("has-shot-available", state.shotAvailable && !state.score);
-    if (!state.isFlyingRun) {
-      this.planeBoostButton.classList.remove("is-active");
-      this.callbacks.setPlaneBoost(false);
-    }
 
     if (this.activeProjectileId !== state.projectileId) {
       for (const [id, button] of this.projectileButtons) {
@@ -523,38 +511,9 @@ export class GameUI {
   }
 
   dispose(): void {
-    this.callbacks.setPlaneBoost(false);
     this.stopScoreCountUp();
     this.root.remove();
   }
-
-  setTouchFlightIndicator(state: TouchFlightIndicatorState): void {
-    this.flightStick.hidden = !state.active;
-    this.flightStick.classList.toggle("is-active", state.active);
-    if (!state.active) {
-      return;
-    }
-    const radius = Math.max(1, state.radius);
-    const dx = Math.max(-radius, Math.min(radius, state.currentX - state.originX));
-    const dy = Math.max(-radius, Math.min(radius, state.currentY - state.originY));
-    this.flightStick.style.setProperty("--stick-origin-x", `${Math.round(state.originX)}px`);
-    this.flightStick.style.setProperty("--stick-origin-y", `${Math.round(state.originY)}px`);
-    this.flightStick.style.setProperty("--stick-knob-x", `${Math.round(56 + dx)}px`);
-    this.flightStick.style.setProperty("--stick-knob-y", `${Math.round(56 + dy)}px`);
-  }
-
-  private readonly handlePlaneBoostDown = (event: PointerEvent): void => {
-    event.preventDefault();
-    this.planeBoostButton.setPointerCapture(event.pointerId);
-    this.planeBoostButton.classList.add("is-active");
-    this.callbacks.setPlaneBoost(true);
-  };
-
-  private readonly handlePlaneBoostUp = (event: PointerEvent): void => {
-    event.preventDefault();
-    this.planeBoostButton.classList.remove("is-active");
-    this.callbacks.setPlaneBoost(false);
-  };
 
   private startLevel(levelIndex: number): void {
     if (this.callbacks.selectLevel(levelIndex)) {
@@ -653,7 +612,7 @@ export class GameUI {
     this.scoreCountAnimation = window.requestAnimationFrame(tick);
   }
 
-  private updateLiveScore(score: ScoreBreakdown, thresholds: ArcadeMissionFields["scoreThresholds"]): void {
+  private updateLiveScore(score: ScoreBreakdown, thresholds: ArcadeMissionFields["scoreThresholds"], mastery: UILiveMastery | null): void {
     const target = Math.max(0, score.totalScore);
     const previous = this.displayedLiveScore;
     const next =
@@ -671,7 +630,8 @@ export class GameUI {
             ? thresholds.threeStar
             : Math.max(thresholds.threeStar, target);
     const progress = nextThreshold <= 0 ? 1 : THREEClamp01(target / nextThreshold);
-    this.liveScoreRailValue.style.width = `${Math.round(progress * 100)}%`;
+    this.liveScoreRailValue.style.width = `${Math.round((mastery?.scoreProgress ?? progress) * 100)}%`;
+    setText(this.liveMasteryValue, mastery ? liveMasteryText(mastery) : "");
     if (target > previous + 250) {
       this.liveScorePanel.classList.remove("is-surging");
       void this.liveScorePanel.offsetWidth;
@@ -784,6 +744,7 @@ function renderScore(state: UIState): string {
       <strong data-role="result-total">${formatScoreNumber(score.totalScore)}</strong>
       <em>${bestScoreLabel(state)}</em>
     </div>
+    ${state.runFeedback ? renderRunCoach(state.runFeedback) : ""}
     <div class="hud__objective-list">
       ${goals
         .map(
@@ -799,7 +760,7 @@ function renderScore(state: UIState): string {
     </div>
     ${contractObjectives.length > 0 ? renderContractObjectives(result?.contract?.completed ?? false, contractObjectives) : ""}
     <div class="hud__score-breakdown">
-      <div><span>${state.gameMode === "plane" ? "Vehicle" : "Payload"}</span><strong>${escapeHtml(score.shotName)}</strong></div>
+      <div><span>Payload</span><strong>${escapeHtml(score.shotName)}</strong></div>
       <div><span>Collateral Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
       <div><span>Chain Score</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
       <div><span>Secondary Hits</span><strong>${formatScoreNumber(score.chainReactionCount)}</strong></div>
@@ -920,6 +881,33 @@ function renderResultCallout(callout: { className: string; label: string; value:
   return `<div class="${callout.className}"><span>${escapeHtml(callout.label)}</span><strong>${escapeHtml(callout.value)}</strong></div>`;
 }
 
+function renderRunCoach(feedback: RunFeedback): string {
+  const topSources = feedback.topSources.slice(0, 3);
+  const nearMisses = feedback.nearMisses.slice(0, 3);
+  return `
+    <div class="hud__run-coach" data-role="run-coach">
+      <div class="hud__run-coach-head">
+        <span>Run Coach</span>
+        <strong>${escapeHtml(feedback.variant.label)}</strong>
+      </div>
+      <div class="hud__run-coach-grid">
+        <div>
+          <span>Best sources</span>
+          <strong>${topSources.length > 0 ? escapeHtml(topSources.map((source) => `${source.label} ${formatScoreNumber(source.points)}`).join(" / ")) : "No strong source"}</strong>
+        </div>
+        <div>
+          <span>Retry target</span>
+          <strong>${escapeHtml(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.variant.description)}</strong>
+        </div>
+        <div>
+          <span>Replay moment</span>
+          <strong>${feedback.replayMoment ? `${escapeHtml(feedback.replayMoment.label)} / ${formatScoreNumber(feedback.replayMoment.points)}` : "No signature moment yet"}</strong>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderContractObjectives(completed: boolean, objectives: readonly ArcadeContractObjectiveResult[]): string {
   const completedCount = objectives.filter((objective) => objective.completed).length;
   return `
@@ -931,6 +919,11 @@ function renderContractObjectives(completed: boolean, objectives: readonly Arcad
       ${objectives.map(renderContractObjective).join("")}
     </div>
   `;
+}
+
+function liveMasteryText(mastery: UILiveMastery): string {
+  const contractState = mastery.contractCompleted ? "done" : `${Math.round(mastery.contractProgress * 100)}%`;
+  return `${mastery.bonusLabel}: ${mastery.bonusValue} / ${mastery.contractLabel}: ${mastery.contractValue} (${contractState})`;
 }
 
 function renderContractObjective(objective: ArcadeContractObjectiveResult): string {
@@ -1001,14 +994,8 @@ function bonusGoalHint(state: UIState, score: ScoreBreakdown): string {
   return `Need ${formatScoreNumber(minimum - value)} more ${metricUnit(metric)}`;
 }
 
-function fireButtonLabel(state: UIState): string {
-  if (state.gameMode !== "plane") {
-    return "FIRE";
-  }
-  if (state.shotAvailable) {
-    return "START RUN";
-  }
-  return state.isFlyingRun ? "AIRBORNE" : "CRASHED";
+function fireButtonLabel(_state: UIState): string {
+  return "FIRE";
 }
 
 function bonusSummary(mission: ArcadeMissionFields): string {
@@ -1616,6 +1603,18 @@ function installStyles(): void {
       transition: width 140ms ease-out;
     }
 
+    .hud__live-score small {
+      grid-column: 1 / -1;
+      min-width: 0;
+      overflow: hidden;
+      color: #c9f8ff;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .hud__live-score.is-surging strong {
       animation: liveScoreSurge 280ms ease-out both;
     }
@@ -1678,109 +1677,6 @@ function installStyles(): void {
     .hud__turn-prompt:disabled span,
     .hud__turn-prompt:disabled em {
       color: rgba(230, 250, 255, 0.76);
-    }
-
-    .hud__plane-touch {
-      position: absolute;
-      inset: 0;
-      display: none;
-      pointer-events: none;
-      z-index: 4;
-    }
-
-    .hud__flight-stick {
-      position: fixed;
-      left: 0;
-      top: 0;
-      width: 112px;
-      height: 112px;
-      transform: translate3d(calc(var(--stick-origin-x, -200px) - 56px), calc(var(--stick-origin-y, -200px) - 56px), 0);
-      border: 1px solid rgba(189, 248, 255, 0.42);
-      border-radius: 8px;
-      background: rgba(5, 9, 14, 0.24);
-      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24), inset 0 0 24px rgba(121, 240, 255, 0.08);
-      backdrop-filter: blur(8px);
-    }
-
-    .hud__flight-stick span {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 56px;
-      height: 56px;
-      transform: translate(-50%, -50%);
-      border: 1px solid rgba(189, 248, 255, 0.28);
-      border-radius: 999px;
-    }
-
-    .hud__flight-stick i {
-      position: absolute;
-      left: var(--stick-knob-x, 56px);
-      top: var(--stick-knob-y, 56px);
-      width: 34px;
-      height: 34px;
-      transform: translate(-50%, -50%);
-      border: 1px solid rgba(255, 255, 255, 0.64);
-      border-radius: 999px;
-      background: linear-gradient(180deg, rgba(189, 248, 255, 0.94), rgba(121, 240, 255, 0.76));
-      box-shadow: 0 8px 22px rgba(57, 206, 230, 0.24);
-    }
-
-    .hud__plane-boost {
-      position: absolute;
-      right: var(--hud-safe-right);
-      bottom: var(--hud-safe-bottom);
-      pointer-events: auto;
-      width: 116px;
-      height: 116px;
-      border: 1px solid rgba(255, 230, 150, 0.55);
-      border-radius: 8px;
-      color: #171007;
-      background: linear-gradient(180deg, #ffe084, #ff9f4d);
-      box-shadow: 0 16px 36px rgba(255, 159, 77, 0.24);
-      font: inherit;
-      font-size: 15px;
-      font-weight: 1000;
-      letter-spacing: 0;
-      touch-action: none;
-      cursor: pointer;
-    }
-
-    .hud__plane-boost.is-active {
-      transform: translateY(2px) scale(0.98);
-      filter: brightness(1.12);
-    }
-
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__plane-touch {
-      display: block;
-    }
-
-    .hud.is-plane-mode .hud__projectiles {
-      display: none;
-    }
-
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__command {
-      left: var(--hud-safe-left);
-      bottom: auto;
-      top: calc(var(--hud-safe-top) + 72px);
-      width: min(210px, calc(100vw - 32px));
-      max-height: none;
-      padding: 8px;
-      overflow: visible;
-    }
-
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__mission,
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__goal-grid,
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__loadout-head,
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__projectiles,
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__fire,
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__finish-hint,
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__status {
-      display: none;
-    }
-
-    .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__utility {
-      grid-template-columns: minmax(0, 1fr);
     }
 
     .hud__status {
@@ -1972,6 +1868,7 @@ function installStyles(): void {
       font-style: normal;
     }
 
+    .hud__run-coach,
     .hud__objective-list,
     .hud__contract-list,
     .hud__score-breakdown,
@@ -1980,6 +1877,8 @@ function installStyles(): void {
       gap: 6px;
     }
 
+    .hud__run-coach-head,
+    .hud__run-coach-grid div,
     .hud__objective-list div,
     .hud__contract-head,
     .hud__contract-objective,
@@ -2008,6 +1907,45 @@ function installStyles(): void {
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: flex-start;
       border-left: 3px solid #ff7c9f;
+    }
+
+    .hud__run-coach {
+      padding: 8px;
+      border: 1px solid rgba(121, 240, 255, 0.18);
+      border-radius: 7px;
+      background: rgba(121, 240, 255, 0.055);
+    }
+
+    .hud__run-coach-head {
+      min-height: 28px;
+      background: rgba(121, 240, 255, 0.08);
+    }
+
+    .hud__run-coach-head span,
+    .hud__run-coach-grid span {
+      color: #9db6c4;
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .hud__run-coach-grid {
+      display: grid;
+      gap: 6px;
+    }
+
+    .hud__run-coach-grid div {
+      display: grid;
+      grid-template-columns: 0.38fr minmax(0, 1fr);
+      align-items: start;
+    }
+
+    .hud__run-coach strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #ffffff;
+      font-size: 12px;
+      line-height: 1.25;
     }
 
     .hud__contract-head {
@@ -2401,19 +2339,6 @@ function installStyles(): void {
         max-height: min(50svh, 430px);
       }
 
-      .hud.is-plane-mode .hud__plane-touch {
-        right: var(--hud-safe-right-mobile);
-        bottom: var(--hud-safe-bottom-mobile);
-      }
-
-      .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__command {
-        left: var(--hud-safe-left-mobile);
-        right: auto;
-        top: calc(var(--hud-safe-top-mobile) + 58px);
-        width: min(180px, calc(100vw - var(--hud-safe-left-mobile) - var(--hud-safe-right-mobile)));
-        max-height: none;
-      }
-
       .hud.is-post-shot[data-screen="play"] .hud__command {
         display: none;
         pointer-events: none;
@@ -2524,11 +2449,6 @@ function installStyles(): void {
         overflow: visible;
       }
 
-      .hud.is-plane-mode .hud__command {
-        max-height: min(34svh, 214px);
-        overflow: hidden;
-      }
-
       .hud__mission {
         gap: 2px;
       }
@@ -2576,12 +2496,6 @@ function installStyles(): void {
       .hud__projectiles {
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 4px;
-      }
-
-      .hud.is-plane-mode .hud__plane-boost {
-        width: 96px;
-        height: 96px;
-        font-size: 13px;
       }
 
       .hud__projectile {
@@ -2647,16 +2561,8 @@ function installStyles(): void {
         display: none;
       }
 
-      .hud.is-plane-mode .hud__loadout-head {
-        display: flex;
-      }
-
       .hud__status {
         display: none;
-      }
-
-      .hud.is-plane-mode .hud__status {
-        display: block;
       }
 
       .hud__home {
@@ -2755,10 +2661,6 @@ function installStyles(): void {
     @media (max-width: 520px) and (max-height: 700px) {
       .hud__command {
         max-height: min(334px, calc(100svh - 72px));
-      }
-
-      .hud.is-plane-mode .hud__command {
-        max-height: min(31svh, 178px);
       }
 
       .hud__goal-grid {
@@ -2959,42 +2861,6 @@ function installStyles(): void {
         padding: 10px;
       }
 
-      .hud.is-plane-mode .hud__command {
-        max-height: none;
-        overflow: visible;
-      }
-
-      .hud.is-plane-mode .hud__loadout-head {
-        display: flex;
-      }
-
-      .hud.is-plane-mode .hud__status {
-        display: block;
-        min-height: 0;
-        padding: 6px;
-        font-size: 10px;
-      }
-
-      .hud.is-plane-mode .hud__plane-boost {
-        width: 96px;
-        height: 96px;
-        font-size: 13px;
-      }
-
-      .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__command {
-        left: var(--hud-safe-left-mobile);
-        right: auto;
-        top: calc(var(--hud-safe-top-mobile) + 48px);
-        bottom: auto;
-        width: min(180px, calc(48vw - var(--hud-edge-mobile)));
-        max-height: none;
-        padding: 7px;
-        overflow: visible;
-      }
-
-      .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__status {
-        display: none;
-      }
     }
 
     @media (max-width: 520px) and (orientation: portrait) {
@@ -3030,25 +2896,6 @@ function installStyles(): void {
 
       .hud__fire {
         min-height: 44px;
-      }
-
-      .hud.is-plane-mode .hud__command {
-        grid-template-columns: minmax(0, 1fr) minmax(120px, 0.7fr);
-      }
-
-      .hud.is-plane-mode .hud__loadout-head,
-      .hud.is-plane-mode .hud__status {
-        display: none;
-      }
-
-      .hud.is-plane-mode .hud__plane-boost {
-        width: 88px;
-        height: 88px;
-        font-size: 12px;
-      }
-
-      .hud.is-plane-mode.is-plane-flying[data-screen="play"] .hud__command {
-        width: min(180px, calc(32vw - var(--hud-edge-mobile)));
       }
 
       .hud.is-post-shot[data-screen="play"] .hud__turn-prompt:not([hidden]) {
