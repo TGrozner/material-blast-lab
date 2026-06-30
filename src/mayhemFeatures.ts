@@ -388,8 +388,9 @@ export function weeklyMayhemRouteForDate(
 ): WeeklyMayhemRoute {
   const weekKey = weeklyRouteKey(date);
   const seed = hashString(`downtown-weekly:${weekKey}`);
-  const projectileOrder = weeklyProjectileOrder(seed);
   const routeLevels = levels.slice(0, 5);
+  const unlockedLevelCount = progress ? Math.max(1, Math.min(routeLevels.length, progress.highestUnlockedLevel + 1)) : routeLevels.length;
+  const projectileOrder = weeklyProjectileOrder(seed, unlockedLevelCount);
   const entries = routeLevels.map((level, levelIndex): WeeklyMayhemRouteEntry => {
     const projectileId = projectileOrder[levelIndex % projectileOrder.length];
     const variantSeed = hashString(`${weekKey}:${level.id}:${projectileId}:${levelIndex}`);
@@ -961,11 +962,10 @@ function projectileObjectivesByProjectileForLevel(levelId: string, mission: Arca
   ) as ProjectileObjectivesByProjectile;
 }
 
-function weeklyProjectileOrder(seed: number): readonly ProjectileId[] {
-  const offset = seed % LATE_GAME_PROJECTILE_ORDER.length;
-  return LATE_GAME_PROJECTILE_ORDER.map(
-    (_projectileId, index) => LATE_GAME_PROJECTILE_ORDER[(index + offset) % LATE_GAME_PROJECTILE_ORDER.length]
-  );
+function weeklyProjectileOrder(seed: number, unlockedLevelCount: number): readonly ProjectileId[] {
+  const unlockedProjectiles = projectileOrderForUnlockedLevels(unlockedLevelCount);
+  const offset = seed % unlockedProjectiles.length;
+  return unlockedProjectiles.map((_projectileId, index) => unlockedProjectiles[(index + offset) % unlockedProjectiles.length]);
 }
 
 function normalizeStars(value: unknown): ArcadeStars {

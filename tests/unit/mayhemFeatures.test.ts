@@ -104,7 +104,16 @@ describe("mayhem feature helpers", () => {
     expect(route.localCumulativeBestScore).toBe(360_000);
     expect(route.localCompletedRuns).toBe(2);
     expect(route.localStars).toBe(5);
+    expect(route.entries.map((entry) => entry.projectileId)).toContain("ignite");
     expect(route.entries[0].contract.objectives[0].id).toContain(route.entries[0].levelId);
+
+    const earlyRoute = weeklyMayhemRouteForDate(levels, new Date("2026-06-30T22:30:00.000Z"), {
+      version: 2,
+      highestUnlockedLevel: 2,
+      totalStars: 0,
+      levels: {}
+    });
+    expect(earlyRoute.entries.map((entry) => entry.projectileId)).not.toContain("ignite");
   });
 
   test("builds a deterministic daily contract from the UTC date", () => {

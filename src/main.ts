@@ -1429,7 +1429,7 @@ class AppShell {
       <button type="button" data-action="start-daily" aria-label="Daily Contract, ${escapeShellHtml(level.name)}. ${escapeShellHtml(replayLine)}.">
         <span>Daily Contract / ${escapeShellHtml(daily.dateKey)}</span>
         <strong>${escapeShellHtml(level.name)}</strong>
-        <em>${escapeShellHtml(projectile.shortName)} / ${escapeShellHtml(daily.contract.label)} / ${escapeShellHtml(daily.contract.summary)}</em>
+        <em>Fixed payload: ${escapeShellHtml(projectile.shortName)} / ${escapeShellHtml(daily.contract.label)} / ${escapeShellHtml(daily.contract.summary)}</em>
         <small>${escapeShellHtml(replayLine)}</small>
         <small>${escapeShellHtml(bestLine)}</small>
       </button>
@@ -1469,10 +1469,10 @@ class AppShell {
       .join(" / ");
     const routeStatus = `${route.localCompletedRuns}/${route.entries.length} cleared / ${route.localStars}/${route.entries.length * 3} stars / ${formatShellScore(route.localCumulativeBestScore)} cumulative`;
     this.weeklyValue.innerHTML = `
-      <button type="button" data-action="start-weekly" aria-label="Weekly Mayhem Route, ${escapeShellHtml(nextLevel.name)} with ${escapeShellHtml(nextProjectile.shortName)}.">
-        <span>Weekly Mayhem Route / ${escapeShellHtml(route.weekKey)}</span>
+      <button type="button" data-action="start-weekly" aria-label="Weekly Fixed Payload Route, ${escapeShellHtml(nextLevel.name)} with ${escapeShellHtml(nextProjectile.shortName)}.">
+        <span>Weekly Fixed Payload Route / ${escapeShellHtml(route.weekKey)}</span>
         <strong>${escapeShellHtml(nextLevel.name)} next</strong>
-        <em>${escapeShellHtml(nextProjectile.shortName)} / ${escapeShellHtml(this.weeklyStartEntry.contract.label)} / ${escapeShellHtml(this.weeklyStartEntry.contract.summary)}</em>
+        <em>Fixed payload: ${escapeShellHtml(nextProjectile.shortName)} / ${escapeShellHtml(this.weeklyStartEntry.contract.label)} / ${escapeShellHtml(this.weeklyStartEntry.contract.summary)}</em>
         <small>${escapeShellHtml(routeStatus)}</small>
         <small>${escapeShellHtml(routeLine)}</small>
       </button>

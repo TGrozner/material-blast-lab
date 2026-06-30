@@ -220,7 +220,8 @@ test("shows a clear five-level selector without free play", async ({ page }) => 
   await expect(page.locator("[data-action='start-daily']")).toContainText("Daily Contract");
   await expect(page.locator("[data-action='start-daily']")).toContainText("Hazard Junction");
   await expect(page.locator("[data-action='start-daily']")).toContainText(/Play today's fixed seed|Replay today's fixed seed/);
-  await expect(page.locator("[data-action='start-weekly']")).toContainText("Weekly Mayhem Route");
+  await expect(page.locator("[data-action='start-weekly']")).toContainText("Weekly Fixed Payload Route");
+  await expect(page.locator("[data-action='start-weekly']")).toContainText("Fixed payload:");
   await expect(page.locator("[data-action='start-weekly']")).toContainText("cumulative");
   await expect(page.locator("[data-role='shell-progress']")).toHaveText("Campaign 0/15 stars / 1/5 districts open / Mastery 0/5");
   await expect(page.locator("[data-role='shell-levels'] [data-action='start-arcade']")).toHaveCount(5);
