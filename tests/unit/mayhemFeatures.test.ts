@@ -204,7 +204,7 @@ describe("mayhem feature helpers", () => {
       levelId: "relay-gauntlet"
     });
 
-    expect(feedback.nearMisses[0]).toContain("Ignition route:");
+    expect(feedback.nearMisses[0]).toContain("Ignition:");
     expect(feedback.nearMisses.join(" ")).toContain("delayed Ignition Chain");
     expect(feedback.projectileObjective).toMatchObject({
       id: "relay-gauntlet-ignite-relay-chain",
@@ -361,9 +361,9 @@ describe("mayhem feature helpers", () => {
 
     expect(feedback.nearMisses).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("Retry route:"),
-        expect.stringContaining("Aim plan:"),
-        expect.stringContaining("Bonus route:")
+        expect.stringContaining("Need 15,000 Mayhem:"),
+        expect.stringContaining("Need 6,000 damage:"),
+        expect.stringContaining("Bonus:")
       ])
     );
     expect(feedback.nearMisses[0]).toContain("Impulse Orb");

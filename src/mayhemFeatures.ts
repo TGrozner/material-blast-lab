@@ -143,25 +143,25 @@ const RUN_VARIANTS: RunVariant[] = [
   {
     id: "rush-hour",
     label: "Rush Hour",
-    description: "Moving vehicles and fast secondary hits are worth chasing.",
+    description: "Vehicles + fast hits.",
     contractMultiplier: 1.04
   },
   {
     id: "relay-storm",
     label: "Relay Storm",
-    description: "Secondary chains are the clean contract path.",
+    description: "Chain the relays.",
     contractMultiplier: 1.08
   },
   {
     id: "heavy-salvage",
     label: "Heavy Salvage",
-    description: "Object damage matters more than raw splash.",
+    description: "Big object damage.",
     contractMultiplier: 0.96
   },
   {
     id: "glass-rush",
     label: "Glass Rush",
-    description: "Fast brittle hits turn into the highest highlight moments.",
+    description: "Fast glass breaks.",
     contractMultiplier: 1
   }
 ];
@@ -185,116 +185,116 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
   "hazard-junction": {
     slug: {
       idSuffix: "slug-toxic-core",
-      label: "Normal objective: hit the toxic core first, then sweep street debris into the pump lane",
+      label: "Normal: toxic core first",
       minimumMultiplier: 0.95
     },
     scatter: {
       idSuffix: "frag-tanker-spray",
-      label: "Frag objective: fire into tankers, booths, and traffic clusters for secondary hits",
+      label: "Frag: tankers + traffic for secondary hits",
       minimumMultiplier: 1.08
     },
     pulse: {
       idSuffix: "impulse-storefront-wave",
-      label: "Impulse objective: shoot low to shove storefront glass and vehicles into one wave",
+      label: "Impulse: shoot low, shove storefronts",
       minimumMultiplier: 1.05
     },
     gravity: {
       idSuffix: "heavy-pump-line",
-      label: "Heavy objective: line up pump, sign, and depot so one shot pierces all three",
+      label: "Heavy: pierce pump, sign, depot",
       metric: "totalScore",
       minimumMultiplier: 0.9
     },
     ignite: {
       idSuffix: "ignite-fuel-relay",
-      label: `${IGNITE_CHAIN_LABEL}: light the fuel lane and wait for the junction relay`,
+      label: `${IGNITE_CHAIN_LABEL}: fuel lane relay`,
       minimumMultiplier: 0.96
     }
   },
   "breaker-yard": {
     slug: {
       idSuffix: "slug-breaker-spine",
-      label: "Normal objective: split the breaker spine, then let debris cash the transformer yard",
+      label: "Normal: breaker spine first",
       minimumMultiplier: 1.02
     },
     scatter: {
       idSuffix: "frag-relay-row",
-      label: "Frag objective: angle clusters across both relay rows for secondary hits",
+      label: "Frag: relay rows for secondary hits",
       minimumMultiplier: 1.14
     },
     pulse: {
       idSuffix: "impulse-yard-surge",
-      label: "Impulse objective: push substation cargo through the breaker market lane",
+      label: "Impulse: shove substation cargo",
       minimumMultiplier: 1.08
     },
     gravity: {
       idSuffix: "heavy-transformer-punch",
-      label: "Heavy objective: line up spine, transformer, and control house for one pierce",
+      label: "Heavy: spine + transformer pierce",
       metric: "targetDamage",
       minimumMultiplier: 1.04
     },
     ignite: {
       idSuffix: "ignite-power-grid",
-      label: `${IGNITE_CHAIN_LABEL}: arm the power grid before the capacitor yard pops`,
+      label: `${IGNITE_CHAIN_LABEL}: power grid first`,
       minimumMultiplier: 1.02
     }
   },
   "switchback-crush": {
     slug: {
       idSuffix: "slug-archive-spine",
-      label: "Normal objective: break the archive spine before the switchback redirects",
+      label: "Normal: archive spine first",
       minimumMultiplier: 1
     },
     scatter: {
       idSuffix: "frag-glass-baffles",
-      label: "Frag objective: bounce shards across both glass baffle lanes",
+      label: "Frag: glass baffle lanes",
       minimumMultiplier: 1.1
     },
     pulse: {
       idSuffix: "impulse-foam-redirect",
-      label: "Impulse objective: push foam redirects into archive glass and service traffic",
+      label: "Impulse: foam into archive glass",
       metric: "collateralChaos",
       minimumMultiplier: 1.16
     },
     gravity: {
       idSuffix: "heavy-switchback-line",
-      label: "Heavy objective: line up both switchback blocks and pierce them in one pass",
+      label: "Heavy: pierce both switchbacks",
       metric: "totalScore",
       minimumMultiplier: 0.94
     },
     ignite: {
       idSuffix: "ignite-archive-fire",
-      label: `${IGNITE_CHAIN_LABEL}: start the service tanker and let archive glass carry fire`,
+      label: `${IGNITE_CHAIN_LABEL}: tanker to glass`,
       minimumMultiplier: 1
     }
   },
   "relay-gauntlet": {
     slug: {
       idSuffix: "slug-capacitor-shield",
-      label: "Normal objective: break the capacitor shield, then hit the exposed core",
+      label: "Normal: shield, then core",
       metric: "targetDamage",
       minimumMultiplier: 1.06
     },
     scatter: {
       idSuffix: "frag-relay-gates",
-      label: "Frag objective: spray every relay gate so chains feed the boss lane",
+      label: "Frag: relay gates feed boss lane",
       metric: "chainReactionCount",
       minimumMultiplier: 1.2
     },
     pulse: {
       idSuffix: "impulse-traffic-latch",
-      label: "Impulse objective: flip traffic into the latch phase and rebound pad",
+      label: "Impulse: traffic into latch phase",
       metric: "collateralChaos",
       minimumMultiplier: 1.14
     },
     gravity: {
       idSuffix: "heavy-capacitor-core",
-      label: "Heavy objective: pierce shield, latch, and capacitor core in one route",
+      label: "Heavy: shield + latch + core",
       metric: "totalScore",
       minimumMultiplier: 0.98
     },
     ignite: {
       idSuffix: "ignite-relay-chain",
-      label: `${IGNITE_CHAIN_LABEL}: chain the relay gates before the core cash-out`,
+      label: `${IGNITE_CHAIN_LABEL}: relay gates before core`,
       metric: "maxChainCombo",
       minimumMultiplier: 1.08
     }
@@ -302,31 +302,31 @@ const DISTRICT_PROJECTILE_OBJECTIVES: Record<
   "overdrive-core": {
     slug: {
       idSuffix: "slug-prism-order",
-      label: "Normal objective: open the prism seal, then keep the lens exposed",
+      label: "Normal: prism seal first",
       metric: "targetDamage",
       minimumMultiplier: 1.04
     },
     scatter: {
       idSuffix: "frag-pressure-bulbs",
-      label: "Frag objective: spray pressure bulbs across both archive arms",
+      label: "Frag: pressure bulbs",
       metric: "chainReactionCount",
       minimumMultiplier: 1.16
     },
     pulse: {
       idSuffix: "impulse-cashout-wave",
-      label: "Impulse objective: rebound the cash-out wave through the final bowl",
+      label: "Impulse: cash-out rebound",
       metric: "collateralChaos",
       minimumMultiplier: 1.2
     },
     gravity: {
       idSuffix: "heavy-prism-core",
-      label: "Heavy objective: drive one line through order, latch, and cash-out core",
+      label: "Heavy: order, latch, core",
       metric: "totalScore",
       minimumMultiplier: 1
     },
     ignite: {
       idSuffix: "ignite-overdrive-route",
-      label: `${IGNITE_CHAIN_LABEL}: light both pressure bulbs before the prism cash-out`,
+      label: `${IGNITE_CHAIN_LABEL}: bulbs before prism`,
       metric: "maxChainCombo",
       minimumMultiplier: 1.12
     }
@@ -512,35 +512,35 @@ export function projectileObjectiveFor(projectileId: ProjectileId, mission: Arca
     case "slug":
       return {
         id: "slug-core-hit",
-        label: "Slug objective: hit the target core first",
+        label: "Normal: target core first",
         metric: "targetDamage",
         minimum: Math.round(mission.targetDamageThreshold * 0.9)
       };
     case "scatter":
       return {
         id: "scatter-secondary-hits",
-        label: "Scatter objective: aim into clustered props for secondary hits",
+        label: "Frag: clusters for secondary hits",
         metric: "chainReactionCount",
         minimum: Math.max(30, Math.round(mission.bonusThreshold.minimum * 0.52))
       };
     case "pulse":
       return {
         id: "pulse-chaos-wave",
-        label: "Pulse objective: shoot low to push a wide collateral wave",
+        label: "Impulse: shoot low, wide wave",
         metric: "collateralChaos",
         minimum: Math.max(18_000, Math.round(mission.scoreThresholds.oneStar * 0.34))
       };
     case "gravity":
       return {
         id: "gravity-pierce-line",
-        label: "Heavy objective: line up dense structures for one piercing route",
+        label: "Heavy: pierce dense line",
         metric: "totalScore",
         minimum: Math.round(mission.scoreThresholds.twoStar * 0.86)
       };
     case "ignite":
       return {
         id: IGNITE_CHAIN_OBJECTIVE_ID,
-        label: `${IGNITE_CHAIN_LABEL}: arm hazards, then cash a delayed relay fire`,
+        label: `${IGNITE_CHAIN_LABEL}: delayed relay fire`,
         metric: "maxChainCombo",
         minimum: igniteChainMinimum(mission)
       };
@@ -834,20 +834,20 @@ function nearMissHints(
 ): string[] {
   const hints: string[] = [];
   if (projectileId === "ignite" && score.maxChainCombo < igniteChainMinimum(mission)) {
-    hints.push(`Ignition route: arm a hazard lane first, then wait for a delayed ${IGNITE_CHAIN_LABEL} before scoring.`);
+    hints.push(`Ignition: arm hazards; wait for delayed ${IGNITE_CHAIN_LABEL}.`);
   }
   if (score.totalScore < mission.scoreThresholds.twoStar) {
-    hints.push(`Retry route: ${variantRetryRoute(variant, projectileId)} for ${(mission.scoreThresholds.twoStar - score.totalScore).toLocaleString("en-US")} more Mayhem.`);
+    hints.push(`Need ${formatScore(mission.scoreThresholds.twoStar - score.totalScore)} Mayhem: ${variantRetryRoute(variant, projectileId)}.`);
   }
   if (score.targetDamage < mission.targetDamageThreshold) {
-    hints.push(`Aim plan: start on the target core, then let debris carry ${formatScore(mission.targetDamageThreshold - score.targetDamage)} more object damage.`);
+    hints.push(`Need ${formatScore(mission.targetDamageThreshold - score.targetDamage)} damage: hit target core first.`);
   }
   if (score[mission.bonusThreshold.metric] < mission.bonusThreshold.minimum) {
-    hints.push(`Bonus route: chase ${metricRetryPlan(mission.bonusThreshold.metric)} for ${formatScore(mission.bonusThreshold.minimum - score[mission.bonusThreshold.metric])} more.`);
+    hints.push(`Bonus: ${metricRetryPlan(mission.bonusThreshold.metric)} +${formatScore(mission.bonusThreshold.minimum - score[mission.bonusThreshold.metric])}.`);
   }
   for (const objective of contractResult?.objectives ?? []) {
     if (!objective.completed && typeof objective.value === "number" && typeof objective.target === "number") {
-      hints.push(`${objective.label}: use ${variantRetryRoute(variant, projectileId)} to cover ${formatScore(objective.target - objective.value)} more.`);
+      hints.push(`${objective.label}: +${formatScore(objective.target - objective.value)} via ${variantRetryRoute(variant, projectileId)}.`);
       break;
     }
   }

@@ -220,17 +220,16 @@ test("shows a clear five-level selector without free play", async ({ page }) => 
   await expect(page.locator("[data-action='start-daily']")).toContainText("Daily Contract");
   await expect(page.locator("[data-action='start-daily']")).toContainText("Hazard Junction");
   await expect(page.locator("[data-action='start-daily']")).toContainText("Daily fixed seed");
-  await expect(page.locator("[data-action='start-daily']")).toContainText(/Play today's fixed seed|Replay today's fixed seed/);
-  await expect(page.locator("[data-action='start-weekly']")).toContainText("Weekly Fixed Payload Route");
-  await expect(page.locator("[data-action='start-weekly']")).toContainText("five seeded stops");
+  await expect(page.locator("[data-action='start-daily']")).toContainText("No daily score yet");
+  await expect(page.locator("[data-action='start-weekly']")).toContainText("Weekly Fixed Payload");
+  await expect(page.locator("[data-action='start-weekly']")).toContainText("5 seeded stops");
   await expect(page.locator("[data-action='start-weekly']")).toContainText("Fixed payload:");
   await expect(page.locator("[data-action='start-weekly']")).toContainText("cumulative");
-  await expect(page.locator("[data-role='shell-progress']")).toHaveText("Campaign 0/15 stars / 1/5 districts open / Mastery 0/5");
+  await expect(page.locator("[data-role='shell-progress']")).toHaveText("Stars 0/15 | Open 1/5 | Perfect 0/5");
   await expect(page.locator("[data-role='shell-levels'] [data-action='start-arcade']")).toHaveCount(5);
   await expect(levelCard(page, "Hazard Junction")).toBeVisible();
-  await expect(levelCard(page, "Hazard Junction")).toContainText("0 attempts / Best 0");
-  await expect(levelCard(page, "Hazard Junction")).toContainText("Campaign district");
-  await expect(levelCard(page, "Hazard Junction")).toContainText("Campaign payloads");
+  await expect(levelCard(page, "Hazard Junction")).toContainText("Best 0 / 0 runs");
+  await expect(levelCard(page, "Hazard Junction")).toContainText("Normal / Frag / Impulse / Heavy");
   await expect(levelCard(page, "Hazard Junction")).toContainText("Target");
   await expect(levelCard(page, "Breaker Yard")).toBeVisible();
   await expect(levelCard(page, "Breaker Yard")).toContainText("2 more stars");
@@ -271,7 +270,7 @@ test("starts the local daily contract as a cannon trial", async ({ page }) => {
   });
   await expect(page.locator(".hud__projectile").first()).toBeDisabled();
   await expect(page.getByRole("button", { name: "Heavy" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Heavy" })).toHaveAttribute("title", "Daily and weekly contracts use a fixed payload.");
+  await expect(page.getByRole("button", { name: "Heavy" })).toHaveAttribute("title", "Fixed payload for Daily/Weekly.");
   expect(consoleErrors).toEqual([]);
 });
 
@@ -411,7 +410,7 @@ test("selects a projectile, fires, then resets to a ready trial", async ({ page 
   if (RUN_FULL_SIMULATION_SMOKE) {
     const finishRunButton = page.locator("[data-action='finish-run']");
     await expect(finishRunButton).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
-    await expect(page.locator("[data-role='finish-hint']")).toHaveText("Done watching the run? Press F or Enter, or click Score Now.");
+    await expect(page.locator("[data-role='finish-hint']")).toHaveText("Score ready: F / Enter / Score Now.");
     await expect(page.locator("[data-role='finish-hint']")).toBeVisible();
     await clickUi(finishRunButton);
     await expectFinalScore(page, "Fragmentation Cluster");
@@ -458,10 +457,10 @@ test("unlocks Ignite as a campaign payload for the final district", async ({ pag
   await page.goto(SMOKE_URL);
 
   await expect(levelCard(page, "Overdrive Core")).toBeEnabled();
-  await expect(levelCard(page, "Overdrive Core")).toContainText("New payload unlocked: Ignite");
+  await expect(levelCard(page, "Overdrive Core")).toContainText("Ignite unlocked");
   await clickUi(levelCard(page, "Overdrive Core"));
   await expectLevelReady(page, "Overdrive Core");
-  await expect(page.locator(".hud [data-role='level-signal']")).toContainText("Level scan: Overdrive Core");
+  await expect(page.locator(".hud [data-role='level-signal']")).toContainText(/Scan: .+ objects \/ .+ fixed/);
   await expect(page.getByRole("button", { name: "Ignite" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Ignite" })).toBeEnabled();
 
@@ -738,22 +737,22 @@ async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   await expect(scorePanel).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
   await expect(scorePanel).toHaveAttribute("data-result-state", /three-star|complete|one-star|incomplete/);
   await expect(scorePanel).toHaveAttribute("aria-label", /Mayhem Score/);
-  await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem|Needs 2 Stars/);
+  await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem|Needs 2-star/);
   await expect(scorePanel.locator("[data-role='result-boom']")).toContainText("BOOM");
-  await expect(scorePanel.locator("[data-role='progression-summary']")).toContainText("Progression");
-  await expect(scorePanel.locator("[data-role='share-card']")).toContainText("Share Card");
-  await expect(scorePanel.locator("[data-role='replay-summary']")).toContainText("Replay Summary");
+  await expect(scorePanel.locator("[data-role='progression-summary']")).toContainText("Stars");
+  await expect(scorePanel.locator("[data-role='share-card']")).toContainText("Share");
+  await expect(scorePanel.locator("[data-role='replay-summary']")).toContainText("Replay");
   await expect(scorePanel.locator(".hud__score-breakdown")).toContainText(shotName);
   await expect(scorePanel.locator(".hud__result-actions .is-primary")).toBeVisible();
   await expect(scorePanel.locator(".hud__total strong")).toHaveText(/\d+/);
   await expect(scorePanel.locator("[data-role='result-total']")).toHaveText(/\d+/);
-  await expect(scorePanel.getByText("Object damage", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Run Contract", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Run Coach", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Retry recipe", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Next run plan", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Collateral Chaos", { exact: true })).toBeVisible();
-  await expect(scorePanel.getByText("Secondary Hits", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Damage", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Contract", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Next Shot", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Recipe", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Plan", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Chaos", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Hits", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Top Damage", { exact: true })).toBeVisible();
 }
 

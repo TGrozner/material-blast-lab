@@ -151,7 +151,7 @@ export class GameUI {
           <span class="hud__brand-mark">DM</span>
           <div>
             <strong>Downtown Mayhem</strong>
-            <span>Object destruction range</span>
+            <span>Mayhem range</span>
           </div>
         </div>
         <div class="hud__telemetry">
@@ -177,9 +177,9 @@ export class GameUI {
         </div>
 
         <div class="hud__goal-grid">
-          <div><span>2-star unlock</span><strong data-role="target-score"></strong></div>
-          <div><span>Object damage</span><strong data-role="target-damage"></strong></div>
-          <div><span>3-star score</span><strong data-role="three-star"></strong></div>
+          <div><span>2-star</span><strong data-role="target-score"></strong></div>
+          <div><span>Damage</span><strong data-role="target-damage"></strong></div>
+          <div><span>3-star</span><strong data-role="three-star"></strong></div>
           <div><span>Bonus</span><strong data-role="bonus-goal"></strong></div>
         </div>
 
@@ -196,12 +196,12 @@ export class GameUI {
           <button type="button" data-action="reset">Retry</button>
         </div>
         <div class="hud__live-score" data-role="live-score" hidden>
-          <span>Running Mayhem</span>
+          <span>Live Mayhem</span>
           <strong data-role="live-score-value">0</strong>
           <div><i data-role="live-score-rail"></i></div>
           <small data-role="live-mastery"></small>
         </div>
-        <div class="hud__finish-hint" data-role="finish-hint" hidden>Done watching the run? Press F or Enter, or click Score Now.</div>
+        <div class="hud__finish-hint" data-role="finish-hint" hidden>Score ready: F / Enter / Score Now.</div>
         <div class="hud__status" data-role="status"></div>
       </section>
 
@@ -218,7 +218,7 @@ export class GameUI {
           <div class="hud__hero-copy">
             <span class="hud__eyebrow">DESTRUCTIBLE OBJECT ARCADE</span>
             <h1>Downtown Mayhem</h1>
-            <p>Select a district, choose a one-run mode, then chase a high Mayhem Score.</p>
+            <p>Pick a district. One shot. Big score.</p>
             <div class="hud__hero-actions">
               <button type="button" data-action="settings">Settings</button>
             </div>
@@ -413,7 +413,7 @@ export class GameUI {
     if (this.finishHint.hidden !== finishHidden) {
       this.finishHint.hidden = finishHidden;
     }
-    setText(this.finishHint, "Done watching the run? Press F or Enter, or click Score Now.");
+    setText(this.finishHint, "Score ready: F / Enter / Score Now.");
     if (this.finishButton.disabled !== (finishHidden || blocked)) {
       this.finishButton.disabled = finishHidden || blocked;
     }
@@ -439,15 +439,15 @@ export class GameUI {
     if (this.turnPrompt.disabled !== turnPromptDisabled) {
       this.turnPrompt.disabled = turnPromptDisabled;
     }
-    setText(this.turnPrompt.querySelector("span") ?? this.turnPrompt, state.canFinishRun ? "Score ready" : "Post-shot scoring");
-    setText(this.turnPromptTitle, state.canFinishRun ? "Tap to reveal result" : "Watching chain reactions");
+    setText(this.turnPrompt.querySelector("span") ?? this.turnPrompt, state.canFinishRun ? "Score ready" : "Post-shot");
+    setText(this.turnPromptTitle, state.canFinishRun ? "Tap to score" : "Watching chains");
     setText(
       this.turnPromptHint,
       state.liveScore && state.liveScore.totalScore > 0
-        ? `${formatScoreNumber(state.liveScore.totalScore)} running Mayhem; score locks when debris settles.`
+        ? `${formatScoreNumber(state.liveScore.totalScore)} running Mayhem.`
         : state.canFinishRun
-          ? "End the turn and show stars, contract, and retry recipe."
-          : "Score unlocks after the spectacle phase settles."
+          ? "Reveal stars, contract, retry."
+          : "Score after debris settles."
     );
     this.root.classList.toggle("is-post-shot", postShot);
     this.root.classList.toggle("can-finish-run", state.canFinishRun && !state.score);
@@ -466,7 +466,7 @@ export class GameUI {
       const locked = state.loadoutLocked;
       button.disabled = locked;
       button.title = locked
-        ? "Daily and weekly contracts use a fixed payload."
+        ? "Fixed payload for Daily/Weekly."
         : `${PROJECTILES[id].key}: ${PROJECTILES[id].name} - ${PROJECTILES[id].role}. ${PROJECTILES[id].usageTip}`;
     }
 
@@ -569,8 +569,8 @@ export class GameUI {
           ? `LOCKED / ${missingPreviousStars} more ${missingPreviousStars === 1 ? "star" : "stars"} needed`
           : `${active ? "ACTIVE" : "LEVEL"} / ${starText(level.progress.stars)}`;
         const detailText = locked
-          ? `${previous ? previous.name : "Previous district"} needs 2 stars to unlock this card.`
-          : `${formatScoreNumber(level.progress.attempts)} attempts / Best ${formatScoreNumber(level.progress.bestScore)}`;
+          ? `Need ${missingPreviousStars} more ${missingPreviousStars === 1 ? "star" : "stars"} on ${previous ? previous.name : "previous district"}`
+          : `${formatScoreNumber(level.progress.attempts)} runs / Best ${formatScoreNumber(level.progress.bestScore)}`;
         const masteryText = locked ? "District Mastery hidden" : districtMasteryText(level.progress);
         const ariaLabel = locked
           ? `${level.name}, locked. Earn ${missingPreviousStars} more ${missingPreviousStars === 1 ? "star" : "stars"} on ${previous?.name ?? "the previous district"}.`
@@ -579,8 +579,7 @@ export class GameUI {
           <button type="button" class="hud__level-card${active ? " is-current" : ""}${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${level.index}" aria-label="${escapeHtml(ariaLabel)}" ${locked ? "disabled" : ""}>
             <span>${String(level.index + 1).padStart(2, "0")} / ${progressText}</span>
             <strong>${escapeHtml(level.name)}</strong>
-            <em>${escapeHtml(level.objective)}</em>
-            <small>${escapeHtml(level.description)}</small>
+            <em>${escapeHtml(locked ? detailText : shortLevelCardObjective(level.name))}</em>
             <small>${escapeHtml(detailText)}</small>
             <small>${escapeHtml(masteryText)}</small>
           </button>
@@ -715,6 +714,23 @@ function homeRenderKey(state: UIState): string {
   ].join("|");
 }
 
+function shortLevelCardObjective(levelName: string): string {
+  switch (levelName) {
+    case "Hazard Junction":
+      return "Pick 1 big target";
+    case "Breaker Yard":
+      return "Spine + relays";
+    case "Switchback Crush":
+      return "Archive + baffles";
+    case "Relay Gauntlet":
+      return "Relay lane to boss";
+    case "Overdrive Core":
+      return "Prism boss + bulbs";
+    default:
+      return "Big target first";
+  }
+}
+
 function settingsRenderKey(settings: GameSettings): string {
   return [
     settings.graphicsQuality,
@@ -737,7 +753,7 @@ function renderScore(state: UIState): string {
   }
   const result = state.arcadeResult;
   const stars = result?.stars ?? 0;
-  const resultLabel = result?.completed ? (stars >= 3 ? "Maximum Mayhem" : "Mayhem Complete") : "Needs 2 Stars";
+  const resultLabel = result?.completed ? (stars >= 3 ? "Max Mayhem" : "Complete") : "Needs 2-star";
   const districtRating = districtMayhemRating(state, score);
   const callouts = resultCallouts(state, score);
   const primaryAction = primaryResultAction(state);
@@ -748,7 +764,7 @@ function renderScore(state: UIState): string {
   const feedback = state.runFeedback;
   const goals = [
     {
-      label: "Object damage",
+      label: "Damage",
       value: `${formatScoreNumber(score.targetDamage)} / ${formatScoreNumber(state.mission.targetDamageThreshold)}`,
       passed: score.targetDamage >= state.mission.targetDamageThreshold
     },
@@ -768,7 +784,7 @@ function renderScore(state: UIState): string {
       passed: score.totalScore >= state.mission.scoreThresholds.threeStar
     },
     {
-      label: "Bonus goal",
+      label: "Bonus",
       value: `${formatScoreNumber(bonusValue)} / ${formatScoreNumber(state.mission.bonusThreshold.minimum)}`,
       passed: result?.bonusCompleted ?? false,
       hint: bonusGoalHint(state, score)
@@ -809,25 +825,25 @@ function renderScore(state: UIState): string {
     ${contractObjectives.length > 0 ? renderContractObjectives(result?.contract?.completed ?? false, contractObjectives) : ""}
     <div class="hud__score-breakdown">
       <div><span>Payload</span><strong>${escapeHtml(score.shotName)}</strong></div>
-      <div><span>Collateral Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
-      <div><span>Chain Score</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
-      <div><span>Secondary Hits</span><strong>${formatScoreNumber(score.chainReactionCount)}</strong></div>
+      <div><span>Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
+      <div><span>Chain</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
+      <div><span>Hits</span><strong>${formatScoreNumber(score.chainReactionCount)}</strong></div>
       ${score.maxChainCombo > 1 ? `<div><span>Best Chain</span><strong>${formatScoreNumber(score.maxChainCombo)}</strong></div>` : ""}
       ${score.weakPointBreakCount > 0 ? `<div><span>Weak Points</span><strong>${score.weakPointBreakCount}</strong></div>` : ""}
       ${score.bossBreakCount > 0 ? `<div><span>Boss Breaks</span><strong>${score.bossBreakCount}</strong></div>` : ""}
-      <div><span>Motion Bonus</span><strong>${formatScoreNumber(score.remainingDebrisMotion)}</strong></div>
+      <div><span>Motion</span><strong>${formatScoreNumber(score.remainingDebrisMotion)}</strong></div>
     </div>
     <div class="hud__damage-hotspots">
       <div class="hud__damage-hotspots-head"><span>Top Damage</span><strong>${hotspots.length > 0 ? `${hotspots.length} zones` : "None"}</strong></div>
       ${
         hotspots.length > 0
           ? hotspots.map(renderDamageHotspot).join("")
-          : `<div class="hud__damage-hotspot"><span><strong>No major location</strong><em>Direct hit or debris did not register a dominant zone</em></span><b>0</b></div>`
+          : `<div class="hud__damage-hotspot"><span><strong>No major zone</strong><em>No dominant damage source</em></span><b>0</b></div>`
       }
     </div>
     <div class="hud__result-actions">
       <button type="button" data-action="result-menu" aria-label="Return to district menu">Menu</button>
-      ${primaryAction === "retry" ? `<button class="is-primary" type="button" data-action="result-retry" aria-label="${result?.completed ? "Retry this district for three stars" : "Retry this run with the coach recipe"}">${result?.completed ? "Retry For 3 Stars" : "Retry Run"}</button>` : `<button type="button" data-action="result-retry" aria-label="Retry this district">Retry</button>`}
+      ${primaryAction === "retry" ? `<button class="is-primary" type="button" data-action="result-retry" aria-label="${result?.completed ? "Retry this district for three stars" : "Retry this run with the coach recipe"}">${result?.completed ? "Retry 3-star" : "Retry Run"}</button>` : `<button type="button" data-action="result-retry" aria-label="Retry this district">Retry</button>`}
       ${hasNextDistrict ? (primaryAction === "next" ? `<button class="is-primary" type="button" data-action="result-next" aria-label="Start the next unlocked district">Next District</button>` : `<button type="button" data-action="result-next" aria-label="Start the next unlocked district">Next District</button>`) : ""}
     </div>
   `;
@@ -842,7 +858,7 @@ function renderResultCeremony(state: UIState, score: ScoreBreakdown): string {
   const signaturePoints = replayMoment?.points ?? topSource?.points ?? score.targetDamage;
   const title = stars >= 3 ? "Perfect BOOM" : result?.completed ? "Mission BOOM" : "Almost BOOM";
   const chase = nextStarGap(state, score);
-  const chaseLabel = chase > 0 ? `${formatScoreNumber(chase)} to next star` : "Star gate cleared";
+  const chaseLabel = chase > 0 ? `+${formatScoreNumber(chase)} to star` : "Gate cleared";
   return `
     <div class="hud__result-ceremony" data-role="result-boom">
       <div>
@@ -852,7 +868,7 @@ function renderResultCeremony(state: UIState, score: ScoreBreakdown): string {
       </div>
       <div class="hud__result-ceremony-stats">
         <span>${formatScoreNumber(score.chainReactionCount)} hits</span>
-        <span>${formatScoreNumber(score.targetDamage)} object</span>
+        <span>${formatScoreNumber(score.targetDamage)} damage</span>
         <span>${escapeHtml(chaseLabel)}</span>
       </div>
     </div>
@@ -869,31 +885,31 @@ function renderProgressionSummary(state: UIState, score: ScoreBreakdown): string
   const unlockLine = progressionUnlockLine(state, currentProgress.stars, nextDistrict);
   const starLine =
     stars >= 3
-      ? "Three-star district secured"
+      ? "3-star secured"
       : nextStar > 0
-        ? `${formatScoreNumber(nextStar)} Mayhem to improve`
-        : "Next star target cleared";
+        ? `+${formatScoreNumber(nextStar)} Mayhem`
+        : "Next star cleared";
   return `
     <div class="hud__progression-card" data-role="progression-summary">
       <div class="hud__progression-head">
-        <span>Progression</span>
-        <strong>${state.totalStars}/${state.levelCount * 3} campaign stars</strong>
+        <span>Stars</span>
+        <strong>${state.totalStars}/${state.levelCount * 3} stars</strong>
       </div>
       <div class="hud__progression-grid">
         <div>
-          <span>This district</span>
+          <span>District</span>
           <strong>${stars}/3 stars${starsGained > 0 ? ` / +${starsGained}` : ""}</strong>
         </div>
         <div>
-          <span>Gate state</span>
+          <span>Gate</span>
           <strong>${escapeHtml(unlockLine)}</strong>
         </div>
         <div>
-          <span>Open districts</span>
+          <span>Open</span>
           <strong>${unlockedDistricts}/${state.levelCount}</strong>
         </div>
         <div>
-          <span>Next chase</span>
+          <span>Next</span>
           <strong>${escapeHtml(starLine)}</strong>
         </div>
       </div>
@@ -926,26 +942,26 @@ function renderShareCard(state: UIState, score: ScoreBreakdown): string {
   return `
     <div class="hud__share-card" data-role="share-card">
       <div class="hud__share-head">
-        <span>Share Card</span>
+        <span>Share</span>
         <strong>${escapeHtml(state.levelName)} / ${state.arcadeResult?.stars ?? 0}/3</strong>
       </div>
       <code data-role="result-share">${escapeHtml(shareText)}</code>
       <div class="hud__replay-grid" data-role="replay-summary">
         <div>
-          <span>Replay Summary</span>
+          <span>Replay</span>
           <strong>${escapeHtml(score.shotName)}</strong>
         </div>
         <div>
-          <span>Best moment</span>
-          <strong>${replayMoment ? `${escapeHtml(replayMoment.label)} / ${formatScoreNumber(replayMoment.points)}` : "No signature moment yet"}</strong>
+          <span>Moment</span>
+          <strong>${replayMoment ? `${escapeHtml(replayMoment.label)} / ${formatScoreNumber(replayMoment.points)}` : "None"}</strong>
         </div>
         <div>
-          <span>Best source</span>
-          <strong>${topSource ? `${escapeHtml(topSource.label)} / ${formatScoreNumber(topSource.points)}` : "No dominant source"}</strong>
+          <span>Source</span>
+          <strong>${topSource ? `${escapeHtml(topSource.label)} / ${formatScoreNumber(topSource.points)}` : "None"}</strong>
         </div>
         <div>
-          <span>Best combo</span>
-          <strong>${score.maxChainCombo > 1 ? `x${formatScoreNumber(score.maxChainCombo)} chain` : "No combo chain"}</strong>
+          <span>Combo</span>
+          <strong>${score.maxChainCombo > 1 ? `x${formatScoreNumber(score.maxChainCombo)}` : "No chain"}</strong>
         </div>
       </div>
       ${renderReplayTimeline(feedback)}
@@ -982,11 +998,11 @@ function replayKindLabel(kind: RunFeedback["replayTimeline"][number]["kind"]): s
     case "boss":
       return "Boss break";
     case "ignition":
-      return "Ignition Chain";
+      return "Ignition";
     case "chain":
       return "Chain";
     case "source":
-      return "Best source";
+      return "Source";
   }
 }
 
@@ -1087,7 +1103,7 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
   if (meta?.justUnlockedPayloadName) {
     callouts.push({
       className: "is-unlock",
-      label: "New payload unlocked",
+      label: "Payload unlocked",
       value: meta.justUnlockedPayloadName
     });
   }
@@ -1103,7 +1119,7 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
     const total = state.arcadeResult.contract.objectives.length;
     callouts.push({
       className: state.arcadeResult.contract.completed ? "is-contract-complete" : "is-contract-missed",
-      label: "Run contract",
+      label: "Contract",
       value: state.arcadeResult.contract.completed ? "Complete" : `${completed}/${total}`
     });
   }
@@ -1124,7 +1140,7 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
   if (score.chainReactionCount >= 20) {
     callouts.push({
       className: "is-chain-combo",
-      label: "Secondary hits",
+      label: "Hits",
       value: formatScoreNumber(score.chainReactionCount)
     });
   }
@@ -1141,13 +1157,13 @@ function renderRunCoach(feedback: RunFeedback): string {
   const recipe = retryRecipe(feedback, topSources, nearMisses);
   const actionSteps = coachActionSteps(feedback, topSources, nearMisses);
   return `
-    <div class="hud__run-coach" data-role="run-coach" aria-label="Run Coach retry recipe">
+    <div class="hud__run-coach" data-role="run-coach" aria-label="Next Shot retry recipe">
       <div class="hud__run-coach-head">
-        <span>Run Coach</span>
+        <span>Next Shot</span>
         <strong>${escapeHtml(feedback.variant.label)}</strong>
       </div>
       <div class="hud__coach-steps" aria-label="Next run plan">
-        <span>Next run plan</span>
+        <span>Plan</span>
         ${actionSteps
           .map(
             (step, index) => `
@@ -1162,20 +1178,20 @@ function renderRunCoach(feedback: RunFeedback): string {
       </div>
       <div class="hud__run-coach-grid">
         <div class="hud__run-coach-recipe">
-          <span>Retry recipe</span>
+          <span>Recipe</span>
           <strong>${escapeHtml(recipe)}</strong>
         </div>
         <div>
-          <span>Best sources</span>
-          <strong>${topSources.length > 0 ? escapeHtml(topSources.map((source) => `${source.label} ${formatScoreNumber(source.points)}`).join(" / ")) : "No strong source"}</strong>
+          <span>Sources</span>
+          <strong>${topSources.length > 0 ? escapeHtml(topSources.map((source) => `${source.label} ${formatScoreNumber(source.points)}`).join(" / ")) : "None"}</strong>
         </div>
         <div>
-          <span>Retry target</span>
-          <strong>${escapeHtml(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.variant.description)}</strong>
+          <span>Target</span>
+          <strong>${escapeHtml(compactCoachValue(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.variant.description))}</strong>
         </div>
         <div>
-          <span>Replay moment</span>
-          <strong>${feedback.replayMoment ? `${escapeHtml(feedback.replayMoment.label)} / ${formatScoreNumber(feedback.replayMoment.points)}` : "No signature moment yet"}</strong>
+          <span>Replay</span>
+          <strong>${feedback.replayMoment ? `${escapeHtml(feedback.replayMoment.label)} / ${formatScoreNumber(feedback.replayMoment.points)}` : "None"}</strong>
         </div>
       </div>
     </div>
@@ -1188,21 +1204,21 @@ function coachActionSteps(
   nearMisses: readonly string[]
 ): Array<{ label: string; value: string }> {
   const missedContract = feedback.contractResult?.objectives.find((objective) => !objective.completed);
-  const opener = cleanCoachHint(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.variant.description);
+  const opener = compactCoachValue(cleanCoachHint(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.variant.description));
   const amplifier = topSources[0]
-    ? `Repeat ${topSources[0].label} for ${formatScoreNumber(topSources[0].points)}+ points.`
+    ? `${topSources[0].label} +${formatScoreNumber(topSources[0].points)}`
     : feedback.replayMoment
-      ? `Recreate ${feedback.replayMoment.label} before debris settles.`
-      : "Create one clear target break before chasing side hits.";
+      ? `Replay ${feedback.replayMoment.label}`
+      : "Break one clear target";
   const closer = missedContract
     ? `${missedContract.label}: ${formatContractValue(missedContract.value)} / ${formatContractValue(missedContract.target)}.`
     : feedback.replayMoment
-      ? `Bank the run after ${feedback.replayMoment.label} resolves.`
-      : (feedback.contract?.summary ?? "Bank the run once Score Now appears.");
+      ? `Bank after ${feedback.replayMoment.label}`
+      : (feedback.contract?.summary ?? "Bank at Score Now");
   return [
     { label: "Open", value: opener },
-    { label: "Amplify", value: amplifier },
-    { label: "Lock", value: closer }
+    { label: "Boost", value: compactCoachValue(amplifier) },
+    { label: "Lock", value: compactCoachValue(closer) }
   ];
 }
 
@@ -1214,22 +1230,34 @@ function cleanCoachHint(value: string): string {
     .replace(/^Contract route:\s*/i, "");
 }
 
+function compactCoachValue(value: string): string {
+  return value
+    .replace(/\s+before scoring\.?$/i, "")
+    .replace(/\s+before debris settles\.?$/i, "")
+    .replace(/\s+once Score Now appears\.?$/i, "")
+    .replace(/\s+for\s+/i, " / ")
+    .replace(/\s+more Mayhem\.?$/i, " Mayhem")
+    .replace(/\s+more object damage\.?$/i, " damage")
+    .replace(/\s+more\.?$/i, "")
+    .replace(/\.$/, "");
+}
+
 function retryRecipe(
   feedback: RunFeedback,
   topSources: readonly { label: string; points: number }[],
   nearMisses: readonly string[]
 ): string {
-  const firstTarget = nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.contract?.summary ?? feedback.variant.description;
+  const firstTarget = compactCoachValue(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.contract?.summary ?? feedback.variant.description);
   const source = topSources[0]?.label;
   const replay = feedback.replayMoment?.label;
-  const parts = [`Open with ${firstTarget}`];
+  const parts = [`Open: ${firstTarget}`];
   if (source) {
-    parts.push(`repeat the ${source} angle`);
+    parts.push(`Repeat: ${source}`);
   }
   if (replay) {
-    parts.push(`protect the ${replay} moment`);
+    parts.push(`Replay: ${replay}`);
   }
-  return `${parts.join("; ")}.`;
+  return parts.join(" / ");
 }
 
 function renderDailyResultSummary(result: DailyResultMeta): string {
@@ -1257,7 +1285,7 @@ function renderDailyResultSummary(result: DailyResultMeta): string {
         </div>
       </div>
       <code data-role="daily-share">${escapeHtml(result.shareText)}</code>
-      <small>Replay today from the Daily Contract card in the menu.</small>
+      <small>Replay from Daily card.</small>
     </div>
   `;
 }
@@ -1267,7 +1295,7 @@ function renderContractObjectives(completed: boolean, objectives: readonly Arcad
   return `
     <div class="hud__contract-list" aria-label="Run contract objectives">
       <div class="hud__contract-head">
-        <span>Run Contract</span>
+        <span>Contract</span>
         <strong>${completed ? "Complete" : `${completedCount}/${objectives.length}`}</strong>
       </div>
       ${objectives.map(renderContractObjective).join("")}
@@ -1277,8 +1305,8 @@ function renderContractObjectives(completed: boolean, objectives: readonly Arcad
 
 function liveMasteryText(mastery: UILiveMastery): string {
   const contractState = mastery.contractCompleted ? "done" : `${Math.round(mastery.contractProgress * 100)}%`;
-  const signals = mastery.signals.length > 0 ? ` / ${mastery.signals.join(" / ")}` : "";
-  return `${mastery.bonusLabel}: ${mastery.bonusValue} / ${mastery.contractLabel}: ${mastery.contractValue} (${contractState})${signals}`;
+  const signals = mastery.signals.length > 0 ? ` | ${mastery.signals.join(" | ")}` : "";
+  return `${mastery.bonusLabel} ${mastery.bonusValue} | ${mastery.contractLabel} ${mastery.contractValue} | ${contractState}${signals}`;
 }
 
 function renderContractObjective(objective: ArcadeContractObjectiveResult): string {
@@ -1802,7 +1830,8 @@ function installStyles(): void {
       margin-top: 3px;
       overflow: hidden;
       color: #f7fbff;
-      font-size: 12px;
+      font-size: 15px;
+      font-variant-numeric: tabular-nums;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -2292,7 +2321,7 @@ function installStyles(): void {
     .hud__total {
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 2px 10px;
+      gap: 1px 10px;
       align-items: end;
       padding: 10px;
       border-radius: 7px;
@@ -2302,7 +2331,7 @@ function installStyles(): void {
     .hud__total strong {
       grid-row: span 2;
       color: #96f4ff;
-      font-size: 34px;
+      font-size: 42px;
       line-height: 0.95;
       font-variant-numeric: tabular-nums;
       animation: scorePulse 720ms ease-out both;
@@ -2505,7 +2534,7 @@ function installStyles(): void {
       min-width: 0;
       overflow-wrap: anywhere;
       color: #ffffff;
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.25;
     }
 
@@ -2553,7 +2582,7 @@ function installStyles(): void {
     }
 
     .hud__coach-step strong {
-      font-size: 11px;
+      font-size: 10px;
     }
 
     .hud__daily-result small {
@@ -3281,7 +3310,7 @@ function installStyles(): void {
       }
 
       .hud__total strong {
-        font-size: 28px;
+        font-size: 34px;
       }
     }
 

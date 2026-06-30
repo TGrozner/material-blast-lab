@@ -14,7 +14,6 @@ import { Cannon, type CannonVisualState } from "./cannon";
 import { decorateFragment } from "./cityVisuals";
 import { withSuppressedConsoleWarning } from "./consoleWarnings";
 import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
-import { GAME_MODES } from "./gameMode";
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
 import {
@@ -1104,7 +1103,7 @@ class AppShell {
           <section class="app-shell__intro">
             <span>OBJECT DESTRUCTION RANGE</span>
             <h1>Downtown Mayhem</h1>
-            <p>Choose a district, wait through the renderer warmup, then make one spectacular cannon shot count.</p>
+            <p>Pick a district. One shot. Big Mayhem Score.</p>
             <div class="app-shell__progress" data-role="shell-progress"></div>
             <div class="app-shell__daily" data-role="shell-daily"></div>
             <div class="app-shell__weekly" data-role="shell-weekly"></div>
@@ -1360,7 +1359,7 @@ class AppShell {
     const perfectDistricts = TEST_CHAMBERS.filter((level) => this.progress.levels[level.id]?.threeStarCleared).length;
     setText(
       this.progressSummaryValue,
-      `Campaign ${this.progress.totalStars}/${TEST_CHAMBERS.length * 3} stars / ${unlockedDistricts}/${TEST_CHAMBERS.length} districts open / Mastery ${perfectDistricts}/${TEST_CHAMBERS.length}`
+      `Stars ${this.progress.totalStars}/${TEST_CHAMBERS.length * 3} | Open ${unlockedDistricts}/${TEST_CHAMBERS.length} | Perfect ${perfectDistricts}/${TEST_CHAMBERS.length}`
     );
     this.levelRail.innerHTML = TEST_CHAMBERS.map((level, index) => {
       const progress = this.progress.levels[level.id];
@@ -1378,11 +1377,12 @@ class AppShell {
         ? `Earn ${missingStars} more ${missingStars === 1 ? "star" : "stars"} on ${previousLevel.name}.`
         : "Earn 2 stars on the previous district.";
       const missionBrief = `${level.description} Target ${formatShellScore(level.mission.targetDamageThreshold)} object damage, ${formatShellScore(level.mission.scoreThresholds.twoStar)} for unlock, ${formatShellScore(level.mission.scoreThresholds.threeStar)} for 3 stars.`;
-      const routeBrief = "Campaign district: choose any unlocked payload, chase 2 stars to open the next district.";
+      const scoreLine = `Target ${formatShellScore(level.mission.targetDamageThreshold)} | 2-star ${formatShellScore(level.mission.scoreThresholds.twoStar)} | 3-star ${formatShellScore(level.mission.scoreThresholds.threeStar)}`;
       const payloadLine = index + 1 >= IGNITE_UNLOCK_LEVEL_COUNT
-        ? "New payload unlocked: Ignite"
-        : "Campaign payloads: Normal, Frag, Impulse, Heavy";
+        ? "Ignite unlocked"
+        : "Normal / Frag / Impulse / Heavy";
       const masteryLine = progressMasteryLine(progress);
+      const runLine = `Best ${formatShellScore(bestScore)} / ${formatShellScore(attempts)} runs`;
       const ariaLabel = locked
         ? `${level.name}, locked. ${lockedText}`
         : `${level.name}, ${level.objective}. ${missionBrief} ${attempts} attempts, best ${formatShellScore(bestScore)}. ${masteryLine}.`;
@@ -1390,12 +1390,9 @@ class AppShell {
         <button type="button" class="app-shell__level-card${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${index}" aria-label="${escapeShellHtml(ariaLabel)}" title="${escapeShellHtml(locked ? lockedText : missionBrief)}" ${locked ? "disabled" : ""}>
           <span>${String(index + 1).padStart(2, "0")} / ${progressText}</span>
           <strong>${escapeShellHtml(level.name)}</strong>
-          <em>${escapeShellHtml(level.objective)}</em>
-          <small>${escapeShellHtml(locked ? lockedText : missionBrief)}</small>
-          <small>${locked ? "Previous district gate: 2 stars" : escapeShellHtml(routeBrief)}</small>
-          <small>${locked ? "Payload preview hidden until unlock" : escapeShellHtml(payloadLine)}</small>
-          <small>${locked ? "Mastery hidden until unlock" : `Start ${GAME_MODES.cannon.name} / ${formatShellScore(attempts)} attempts / Best ${formatShellScore(bestScore)}`}</small>
-          <small>${locked ? "Mastery hidden until unlock" : escapeShellHtml(masteryLine)}</small>
+          <em>${escapeShellHtml(locked ? lockedText : scoreLine)}</em>
+          <small>${locked ? "Payloads locked" : escapeShellHtml(payloadLine)}</small>
+          <small>${locked ? "2-star gate" : escapeShellHtml(runLine)}</small>
         </button>
       `;
     }).join("");
@@ -1430,17 +1427,16 @@ class AppShell {
     const level = TEST_CHAMBERS[daily.levelIndex];
     const projectile = PROJECTILES[daily.projectileId];
     const bestLine = dailyBest
-      ? `Best ${formatShellScore(dailyBest.bestScore)} / ${dailyBest.bestStars}/3 stars / ${dailyBest.attempts} attempts`
+      ? `Best ${formatShellScore(dailyBest.bestScore)} / ${dailyBest.bestStars}/3 stars / ${dailyBest.attempts} runs`
       : "No daily score yet";
-    const replayLine = dailyBest ? "Replay today's fixed seed and improve the share card" : "Play today's fixed seed for a shareable result";
-    const routeLine = "Daily fixed seed: same district, same payload, same contract all UTC day.";
+    const replayLine = dailyBest ? "Replay fixed seed" : "Play fixed seed";
+    const routeLine = "Daily fixed seed / same payload all UTC day";
     this.dailyValue.innerHTML = `
       <button type="button" data-action="start-daily" aria-label="Daily Contract, ${escapeShellHtml(level.name)}. ${escapeShellHtml(replayLine)}.">
         <span>Daily Contract / ${escapeShellHtml(daily.dateKey)}</span>
         <strong>${escapeShellHtml(level.name)}</strong>
-        <em>Fixed payload: ${escapeShellHtml(projectile.shortName)} / ${escapeShellHtml(daily.contract.label)} / ${escapeShellHtml(daily.contract.summary)}</em>
+        <em>Fixed payload: ${escapeShellHtml(projectile.shortName)} / ${escapeShellHtml(daily.contract.summary)}</em>
         <small>${escapeShellHtml(routeLine)}</small>
-        <small>${escapeShellHtml(replayLine)}</small>
         <small>${escapeShellHtml(bestLine)}</small>
       </button>
     `;
@@ -1478,15 +1474,14 @@ class AppShell {
       .map((entry) => `${TEST_CHAMBERS[entry.levelIndex]?.name ?? entry.levelId} ${PROJECTILES[entry.projectileId].shortName}`)
       .join(" / ");
     const routeStatus = `${route.localCompletedRuns}/${route.entries.length} cleared / ${route.localStars}/${route.entries.length * 3} stars / ${formatShellScore(route.localCumulativeBestScore)} cumulative`;
-    const weeklyModeLine = "Weekly fixed payload route: five seeded stops, payload locked per stop, cumulative score chase.";
+    const weeklyModeLine = "5 seeded stops / fixed payloads / cumulative score";
     this.weeklyValue.innerHTML = `
-      <button type="button" data-action="start-weekly" aria-label="Weekly Fixed Payload Route, ${escapeShellHtml(nextLevel.name)} with ${escapeShellHtml(nextProjectile.shortName)}.">
-        <span>Weekly Fixed Payload Route / ${escapeShellHtml(route.weekKey)}</span>
-        <strong>${escapeShellHtml(nextLevel.name)} next</strong>
+      <button type="button" data-action="start-weekly" aria-label="Weekly Fixed Payload Route, ${escapeShellHtml(nextLevel.name)} with ${escapeShellHtml(nextProjectile.shortName)}." title="${escapeShellHtml(routeLine)}">
+        <span>Weekly Fixed Payload / ${escapeShellHtml(route.weekKey)}</span>
+        <strong>Next: ${escapeShellHtml(nextLevel.name)}</strong>
         <em>Fixed payload: ${escapeShellHtml(nextProjectile.shortName)} / ${escapeShellHtml(this.weeklyStartEntry.contract.label)} / ${escapeShellHtml(this.weeklyStartEntry.contract.summary)}</em>
         <small>${escapeShellHtml(weeklyModeLine)}</small>
         <small>${escapeShellHtml(routeStatus)}</small>
-        <small>${escapeShellHtml(routeLine)}</small>
       </button>
     `;
   }
@@ -1757,7 +1752,7 @@ function installAppShellStyles(): void {
     .app-shell__intro {
       display: grid;
       align-content: start;
-      gap: 16px;
+      gap: 12px;
       min-width: 0;
       padding-top: 28px;
     }
@@ -1809,9 +1804,9 @@ function installAppShellStyles(): void {
     .app-shell__daily button,
     .app-shell__weekly button {
       display: grid;
-      gap: 5px;
+      gap: 4px;
       width: 100%;
-      min-height: 88px;
+      min-height: 76px;
       padding: 12px;
       text-align: left;
       border-color: rgba(255, 207, 105, 0.34);
@@ -1863,10 +1858,10 @@ function installAppShellStyles(): void {
 
     .app-shell__level-card {
       display: grid;
-      gap: 8px;
+      gap: 5px;
       width: 100%;
-      min-height: 146px;
-      padding: 16px;
+      min-height: 104px;
+      padding: 14px;
       text-align: left;
       background: rgba(11, 17, 23, 0.82);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
@@ -1893,16 +1888,18 @@ function installAppShellStyles(): void {
     }
 
     .app-shell__level-card em {
-      color: #c3d5df;
-      font-size: 13px;
+      color: #ffffff;
+      font-size: 14px;
       font-style: normal;
+      font-weight: 900;
       line-height: 1.35;
     }
 
     .app-shell__level-card small {
       color: #8ddfff;
+      font-size: 11px;
       font-weight: 800;
-      line-height: 1.3;
+      line-height: 1.25;
       overflow-wrap: anywhere;
     }
 
@@ -2864,7 +2861,7 @@ class Game {
       levelDescription: level.description,
       objective: this.objectiveBrief(level),
       chaosBrief: this.chaosBrief(level),
-      levelSignal: this.levelSignal(level),
+      levelSignal: this.levelSignal(),
       mission: level.mission,
       levelIndex: this.levelIndex,
       levelCount: TEST_CHAMBERS.length,
@@ -5404,7 +5401,7 @@ class Game {
       return;
     }
     if (this.activeFixedContract()) {
-      this.status = "Daily and weekly contracts use a fixed payload.";
+      this.status = "Fixed daily/weekly payload.";
       this.audio.playUiReject();
       return;
     }
@@ -5495,20 +5492,22 @@ class Game {
 
   private objectiveBrief(level: TestChamber): string {
     const projectileObjective = this.mayhemContract?.objectives[0]?.label;
-    return projectileObjective ? `${level.objective} / ${projectileObjective}` : level.objective;
+    const levelObjective = compactLevelObjective(level);
+    return projectileObjective ? `${levelObjective} / ${projectileObjective}` : levelObjective;
   }
 
   private chaosBrief(level: TestChamber): string {
     const contract = this.mayhemContract;
-    return contract ? `${level.chaosBrief} Route: ${contract.summary}.` : level.chaosBrief;
+    const chaos = compactChaosBrief(level);
+    return contract ? `${chaos} / Contract ${contract.summary}` : chaos;
   }
 
-  private levelSignal(level: TestChamber): string {
+  private levelSignal(): string {
     const stats = this.lastRenderStats;
     const physicsStats = this.physics.getRuntimeStats();
     const density = stats.bodyCount > 0 ? stats.bodyCount : physicsStats.bodyCount;
     const structures = stats.fixedStructureCount > 0 ? stats.fixedStructureCount : physicsStats.fixedStructureCount;
-    return `Level scan: ${level.name} / density ${formatCompactScore(density)} objects / ${formatCompactScore(structures)} fixed structures / ${stats.levelComposition}`;
+    return `Scan: ${formatCompactScore(density)} objects / ${formatCompactScore(structures)} fixed`;
   }
 
   private levelOptions(): UILevelOption[] {
@@ -6871,6 +6870,40 @@ function formatCompactScore(value: number): string {
     return `${Math.round(rounded / 1_000)}K`;
   }
   return rounded.toLocaleString("en-US");
+}
+
+function compactLevelObjective(level: TestChamber): string {
+  switch (level.id) {
+    case "hazard-junction":
+      return "Pick 1 big target";
+    case "breaker-yard":
+      return "Spine + relays";
+    case "switchback-crush":
+      return "Archive spine + baffles";
+    case "relay-gauntlet":
+      return "Relay lane to boss";
+    case "overdrive-core":
+      return "Prism boss + bulbs";
+    default:
+      return level.objective;
+  }
+}
+
+function compactChaosBrief(level: TestChamber): string {
+  switch (level.id) {
+    case "hazard-junction":
+      return "Hazards hit hard";
+    case "breaker-yard":
+      return "Power, traffic, dense blocks";
+    case "switchback-crush":
+      return "Brittle redirects";
+    case "relay-gauntlet":
+      return "Pads open the lane";
+    case "overdrive-core":
+      return "Boss, pads, bulbs";
+    default:
+      return level.chaosBrief;
+  }
 }
 
 function levelCompositionLine(stats: {
