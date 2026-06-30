@@ -173,8 +173,8 @@ test("switches mobile portrait to a frictionless post-shot turn prompt", async (
   await expect(page.locator(".hud__command")).toBeHidden();
   const turnPrompt = page.locator("[data-action='turn-finish']");
   await expect(turnPrompt).toBeVisible();
-  await expect(turnPrompt).toContainText(/Watching chain reactions|Tap to reveal result/);
-  await expect(turnPrompt).toContainText(/running Mayhem|Score unlocks/);
+  await expect(turnPrompt).toContainText(/Watching chains|Tap to score/);
+  await expect(turnPrompt).toContainText(/running Mayhem|Score after debris settles/);
   await expect.poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getLiveMastery() ?? null), {
     timeout: UI_READY_TIMEOUT_MS
   }).not.toBeNull();
