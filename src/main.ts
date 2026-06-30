@@ -12,8 +12,8 @@ import { DestructionAudio } from "./audio";
 import { CameraRig } from "./cameraRig";
 import { Cannon, type CannonVisualState } from "./cannon";
 import { decorateFragment } from "./cityVisuals";
-import { withSuppressedConsoleWarning } from "./consoleWarnings";
 import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
+import { canvasGradeProfile, graphicsLightingProfile, settingsStatus } from "./graphicsProfiles";
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
 import {
@@ -36,6 +36,7 @@ import {
   type WeeklyMayhemRouteEntry
 } from "./mayhemFeatures";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
+import { formatCompactScore } from "./numberFormat";
 import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
 import {
@@ -54,8 +55,6 @@ import { ShotScoreTracker, type ScoreBreakdown, type ScoreEvent } from "./scorin
 import {
   COMFORT_GAME_SETTINGS,
   DEFAULT_GAME_SETTINGS,
-  effectiveGraphicsPixelRatio,
-  GRAPHICS_QUALITY_LABELS,
   type GameSettings,
   type GraphicsQuality,
   graphicsPixelRatioCap,
@@ -68,6 +67,37 @@ import { GameUI, type UILevelOption, type UILiveMastery, type UIResultMeta } fro
 import { graphicTexture, preloadGraphicTextures } from "./visualAssets";
 import { registerDowntownMayhemServiceWorker } from "./serviceWorker";
 import { initializeRapierCompat } from "./rapierInit";
+import {
+  compileRendererPipelines,
+  createDowntownMayhemRenderer,
+  rendererDrawCalls,
+  rendererProgramCount,
+  setOptionalShadowMapFlag,
+  type ActualRendererBackend,
+  type DowntownMayhemRendererBundle
+} from "./renderer";
+import {
+  captureFastRenderStats,
+  captureFullRenderStats,
+  createInitialRenderStats,
+  type DowntownMayhemRenderStats
+} from "./renderStats";
+import {
+  FULL_RENDER_WARMUP_PROFILE,
+  RENDER_WARMUP_DELTA_SECONDS,
+  RENDER_WARMUP_FRAGMENT_MATERIALS,
+  RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS,
+  RENDER_WARMUP_RUNTIME_FRAGMENT_BATCHES,
+  RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES,
+  RENDER_WARMUP_SYNTHETIC_DESTRUCTION_ZONE,
+  RENDER_WARMUP_SYNTHETIC_OBJECTS_PER_MATERIAL,
+  RENDER_WARMUP_SYNTHETIC_ORIGIN,
+  createInitialRenderWarmupState,
+  currentRenderWarmupMode,
+  type RenderWarmupMode,
+  type RenderWarmupProfile,
+  type RenderWarmupState
+} from "./renderWarmup";
 
 const DEFAULT_AIM_POINT = new THREE.Vector3(0, 0.16, -3.4);
 const CHAIN_DEBRIS_MIN_SPEED = 1.85;
@@ -139,24 +169,6 @@ const IMPACT_BOUNDS = {
   maxZ: 35.8
 };
 const AIM_SURFACE_NORMAL = new THREE.Vector3(0, 1, 0);
-const RENDER_WARMUP_FRAGMENT_MATERIALS: readonly MaterialId[] = ["glass", "concrete", "metal", "rubber", "foam", "wood"];
-const RENDER_WARMUP_RUNTIME_FRAGMENT_BATCHES = 8;
-const RENDER_WARMUP_BRUTAL_PASSES = 4;
-const RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS = 10;
-const RENDER_WARMUP_DELTA_SECONDS = 1 / 30;
-const RENDER_WARMUP_MIN_FRAMES = 64;
-const RENDER_WARMUP_STABLE_FRAMES = 24;
-const RENDER_WARMUP_MAX_FRAMES = 180;
-const RENDER_WARMUP_SYNTHETIC_OBJECTS_PER_MATERIAL = 8;
-const RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES = 3;
-const RENDER_WARMUP_POST_CLEANUP_EFFECT_PASSES = 2;
-const RENDER_WARMUP_POST_CLEANUP_EFFECT_FRAMES = 8;
-const RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES = 72;
-const RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES = 260;
-const RENDER_WARMUP_MAX_DURATION_MS = 6_000;
-const RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS = 3_000;
-const RENDER_WARMUP_SYNTHETIC_ORIGIN = new THREE.Vector3(72, 1.2, 72);
-const RENDER_WARMUP_SYNTHETIC_DESTRUCTION_ZONE = "render-warmup-destruction";
 const AIM_TRAFFIC_STEP_SECONDS = 1 / 24;
 const AIM_TRAFFIC_MAX_ACCUMULATED_SECONDS = 0.12;
 const DAY_SKY_RADIUS = 118;
@@ -222,40 +234,6 @@ interface ImpactBlastProfile {
   ignitionBias: number;
 }
 
-interface DowntownMayhemRenderStats {
-  frame: number;
-  levelName: string;
-  rendererBackend: ActualRendererBackend;
-  bodyCount: number;
-  dynamicBodyCount: number;
-  awakeBodyCount: number;
-  debrisBodyCount: number;
-  awakeDebrisBodyCount: number;
-  fixedStructureCount: number;
-  activeDebrisCount: number;
-  frozenDebrisCount: number;
-  pendingSupportReleaseCount: number;
-  drawCalls: number;
-  triangles: number;
-  lines: number;
-  points: number;
-  geometries: number;
-  textures: number;
-  programs: number;
-  visibleMeshes: number;
-  visibleMaterials: number;
-  visiblePooledVfxObjects: number;
-  staticDetailBatches: number;
-  staticDetailDynamicBatches: number;
-  staticDetailInstances: number;
-  staticDetailBuckets: number;
-  fragmentInstanceBuckets: number;
-  fragmentInstanceVisibleBuckets: number;
-  fragmentInstanceWarmupBuckets: number;
-  fragmentInstanceOverflowBuckets: number;
-  levelComposition: string;
-}
-
 interface DowntownMayhemDebugApi {
   getRenderStats(): DowntownMayhemRenderStats;
   getPerfReport(): PerfReport;
@@ -271,19 +249,6 @@ interface DowntownMayhemDebugApi {
   resume(): void;
 }
 
-interface RenderWarmupState {
-  phase: "idle" | "warming" | "ready" | "failed";
-  token: number;
-  startedAt: number;
-  finishedAt: number | null;
-  durationMs: number | null;
-  programs: number;
-  geometries: number;
-  frames: number;
-  bodyCountAfterCleanup?: number;
-  error?: string;
-}
-
 interface SyntheticDestructionWarmupOptions {
   passes?: number;
   framesPerPass?: number;
@@ -295,148 +260,9 @@ interface SyntheticDestructionWarmupOptions {
   statusPrefix?: string;
 }
 
-interface RenderWarmupProfile {
-  label: string;
-  compileAllCameras: boolean;
-  brutalPasses: number;
-  framesPerBrutalPass: number;
-  minFrames: number;
-  stableFrames: number;
-  maxFrames: number;
-  maxDurationMs: number;
-  syntheticDestructionPasses: number;
-  postCleanupEffectPasses: number;
-  postCleanupEffectFrames: number;
-  postCleanupStableFrames: number;
-  postCleanupMaxFrames: number;
-  postCleanupMaxDurationMs: number;
-}
-
-type RenderWarmupMode = "none" | "smoke" | "full";
-type ActualRendererBackend = "webgl2" | "webgl";
-
-const FULL_RENDER_WARMUP_PROFILE: RenderWarmupProfile = {
-  label: "renderer pipelines",
-  compileAllCameras: true,
-  brutalPasses: RENDER_WARMUP_BRUTAL_PASSES,
-  framesPerBrutalPass: RENDER_WARMUP_FRAMES_PER_BRUTAL_PASS,
-  minFrames: RENDER_WARMUP_MIN_FRAMES,
-  stableFrames: RENDER_WARMUP_STABLE_FRAMES,
-  maxFrames: RENDER_WARMUP_MAX_FRAMES,
-  maxDurationMs: RENDER_WARMUP_MAX_DURATION_MS,
-  syntheticDestructionPasses: RENDER_WARMUP_SYNTHETIC_DESTRUCTION_PASSES,
-  postCleanupEffectPasses: RENDER_WARMUP_POST_CLEANUP_EFFECT_PASSES,
-  postCleanupEffectFrames: RENDER_WARMUP_POST_CLEANUP_EFFECT_FRAMES,
-  postCleanupStableFrames: RENDER_WARMUP_POST_CLEANUP_STABLE_FRAMES,
-  postCleanupMaxFrames: RENDER_WARMUP_POST_CLEANUP_MAX_FRAMES,
-  postCleanupMaxDurationMs: RENDER_WARMUP_POST_CLEANUP_MAX_DURATION_MS
-};
-
-interface DowntownMayhemRendererBundle {
-  renderer: THREE.WebGLRenderer;
-  backend: ActualRendererBackend;
-}
-
-interface GraphicsLightingProfile {
-  background: THREE.ColorRepresentation;
-  fog: THREE.ColorRepresentation;
-  fogNear: number;
-  fogFar: number;
-  exposure: number;
-  ambientSky: THREE.ColorRepresentation;
-  ambientGround: THREE.ColorRepresentation;
-  ambientIntensity: number;
-  sunColor: THREE.ColorRepresentation;
-  sunIntensity: number;
-  skyFillColor: THREE.ColorRepresentation;
-  skyFillIntensity: number;
-  shadowMapSize: number;
-}
-
-interface CanvasGradeProfile {
-  filter: string;
-  boxShadow: string;
-}
-
 declare global {
   interface Window {
     __DOWNTOWN_MAYHEM_DEBUG__?: DowntownMayhemDebugApi;
-  }
-}
-
-function createDowntownMayhemRenderer(settings: GameSettings): DowntownMayhemRendererBundle {
-  const renderer = new THREE.WebGLRenderer({
-    alpha: false,
-    antialias: settings.antialias,
-    powerPreference: "high-performance"
-  });
-  configureDowntownMayhemRenderer(renderer, settings);
-  return {
-    renderer,
-    backend: activeWebGlRendererBackend(renderer)
-  };
-}
-
-function configureDowntownMayhemRenderer(renderer: THREE.WebGLRenderer, settings: GameSettings): void {
-  renderer.shadowMap.enabled = false;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
-  setOptionalShadowMapFlag(renderer, "autoUpdate", false);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.06;
-  renderer.setPixelRatio(effectiveGraphicsPixelRatio(graphicsPixelRatioCap(settings.graphicsQuality)));
-}
-
-function activeWebGlRendererBackend(renderer: THREE.WebGLRenderer): ActualRendererBackend {
-  return renderer.capabilities.isWebGL2 ? "webgl2" : "webgl";
-}
-
-function rendererDrawCalls(renderer: THREE.WebGLRenderer): number {
-  const renderInfo = renderer.info.render as typeof renderer.info.render & { calls?: number; drawCalls?: number };
-  return renderInfo.drawCalls ?? renderInfo.calls ?? 0;
-}
-
-function rendererProgramCount(renderer: THREE.WebGLRenderer): number {
-  const memoryInfo = renderer.info.memory as typeof renderer.info.memory & { programs?: number };
-  const rendererInfo = renderer.info as typeof renderer.info & { programs?: unknown[] };
-  return memoryInfo.programs ?? rendererInfo.programs?.length ?? 0;
-}
-
-function setOptionalShadowMapFlag(renderer: THREE.WebGLRenderer, key: "autoUpdate" | "needsUpdate", value: boolean): void {
-  (renderer.shadowMap as typeof renderer.shadowMap & Partial<Record<typeof key, boolean>>)[key] = value;
-}
-
-const PARALLEL_SHADER_COMPILE_WARNING = "THREE.WebGLRenderer: KHR_parallel_shader_compile extension not supported.";
-
-function compileRendererPipelines(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<unknown> {
-  return withSuppressedConsoleWarning(PARALLEL_SHADER_COMPILE_WARNING, () => renderer.compileAsync(scene, camera));
-}
-
-function createInitialRenderWarmupState(): RenderWarmupState {
-  return {
-    phase: "idle",
-    token: 0,
-    startedAt: 0,
-    finishedAt: null,
-    durationMs: null,
-    programs: 0,
-    geometries: 0,
-    frames: 0
-  };
-}
-
-function currentRenderWarmupMode(): RenderWarmupMode {
-  try {
-    const search = new URLSearchParams(globalThis.location?.search ?? "");
-    if (search.has("smoke")) {
-      return "smoke";
-    }
-    if (search.has("fullWarmup")) {
-      return "full";
-    }
-    return "none";
-  } catch {
-    return "none";
   }
 }
 
@@ -2549,39 +2375,7 @@ class Game {
   private renderWarmupPromise: Promise<void> | null = null;
   private renderWarmupState: RenderWarmupState = createInitialRenderWarmupState();
   private renderStatsFrame = 0;
-  private lastRenderStats: DowntownMayhemRenderStats = {
-    frame: 0,
-    levelName: "",
-    rendererBackend: "webgl2",
-    bodyCount: 0,
-    dynamicBodyCount: 0,
-    awakeBodyCount: 0,
-    debrisBodyCount: 0,
-    awakeDebrisBodyCount: 0,
-    fixedStructureCount: 0,
-    activeDebrisCount: 0,
-    frozenDebrisCount: 0,
-    pendingSupportReleaseCount: 0,
-    drawCalls: 0,
-    triangles: 0,
-    lines: 0,
-    points: 0,
-    geometries: 0,
-    textures: 0,
-    programs: 0,
-    visibleMeshes: 0,
-    visibleMaterials: 0,
-    visiblePooledVfxObjects: 0,
-    staticDetailBatches: 0,
-    staticDetailDynamicBatches: 0,
-    staticDetailInstances: 0,
-    staticDetailBuckets: 0,
-    fragmentInstanceBuckets: 0,
-    fragmentInstanceVisibleBuckets: 0,
-    fragmentInstanceWarmupBuckets: 0,
-    fragmentInstanceOverflowBuckets: 0,
-    levelComposition: "structure/debris mix"
-  };
+  private lastRenderStats: DowntownMayhemRenderStats = createInitialRenderStats();
 
   constructor(settings: GameSettings, rendererBundle: DowntownMayhemRendererBundle, private readonly options: GameOptions = {}) {
     const app = document.querySelector<HTMLDivElement>("#app");
@@ -3048,59 +2842,21 @@ class Game {
   }
 
   private captureRenderStats(): DowntownMayhemRenderStats {
-    const visibleMaterials = this.visibleRenderMaterialsScratch;
-    visibleMaterials.clear();
-    let visibleMeshes = 0;
     const physicsStats = this.physics.getRuntimeStats();
     const staticDetailStats = this.physics.getStaticDetailStats();
     const fragmentStats = this.destruction.getFragmentInstanceStats();
-    this.scene.traverse((object) => {
-      if (!(object instanceof THREE.Mesh) || !object.visible) {
-        return;
-      }
-      const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
-      const renderableMaterials = objectMaterials.filter((material) => material.visible);
-      if (renderableMaterials.length === 0) {
-        return;
-      }
-      visibleMeshes += 1;
-      for (const material of renderableMaterials) {
-        visibleMaterials.add(material);
-      }
-    });
-    this.lastRenderStats = {
+    this.lastRenderStats = captureFullRenderStats({
       frame: this.renderStatsFrame,
       levelName: this.currentLevel().name,
       rendererBackend: this.rendererBackend,
-      bodyCount: physicsStats.bodyCount,
-      dynamicBodyCount: physicsStats.dynamicBodyCount,
-      awakeBodyCount: physicsStats.awakeBodyCount,
-      debrisBodyCount: physicsStats.debrisBodyCount,
-      awakeDebrisBodyCount: physicsStats.awakeDebrisBodyCount,
-      fixedStructureCount: physicsStats.fixedStructureCount,
-      activeDebrisCount: physicsStats.activeDebrisCount,
-      frozenDebrisCount: physicsStats.frozenDebrisCount,
-      pendingSupportReleaseCount: physicsStats.pendingSupportReleaseCount,
-      drawCalls: rendererDrawCalls(this.renderer),
-      triangles: this.renderer.info.render.triangles,
-      lines: this.renderer.info.render.lines,
-      points: this.renderer.info.render.points,
-      geometries: this.renderer.info.memory.geometries,
-      textures: this.renderer.info.memory.textures,
-      programs: rendererProgramCount(this.renderer),
-      visibleMeshes,
-      visibleMaterials: visibleMaterials.size,
+      renderer: this.renderer,
+      physicsStats,
+      staticDetailStats,
+      fragmentStats,
       visiblePooledVfxObjects: this.particles.getVisiblePooledEffectCount(),
-      staticDetailBatches: staticDetailStats.batches,
-      staticDetailDynamicBatches: staticDetailStats.dynamicBatches,
-      staticDetailInstances: staticDetailStats.instances,
-      staticDetailBuckets: staticDetailStats.buckets,
-      fragmentInstanceBuckets: fragmentStats.buckets,
-      fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
-      fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
-      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets,
-      levelComposition: levelCompositionLine(physicsStats)
-    };
+      scene: this.scene,
+      visibleMaterialsScratch: this.visibleRenderMaterialsScratch
+    });
     this.renderStatsFrame += 1;
     return { ...this.lastRenderStats };
   }
@@ -3109,38 +2865,16 @@ class Game {
     const physicsStats = this.physics.getRuntimeStats();
     const staticDetailStats = this.physics.getStaticDetailStats();
     const fragmentStats = this.destruction.getFragmentInstanceStats();
-    this.lastRenderStats = {
-      ...this.lastRenderStats,
+    this.lastRenderStats = captureFastRenderStats(this.lastRenderStats, {
       frame: this.renderStatsFrame,
       levelName: this.currentLevel().name,
       rendererBackend: this.rendererBackend,
-      bodyCount: physicsStats.bodyCount,
-      dynamicBodyCount: physicsStats.dynamicBodyCount,
-      awakeBodyCount: physicsStats.awakeBodyCount,
-      debrisBodyCount: physicsStats.debrisBodyCount,
-      awakeDebrisBodyCount: physicsStats.awakeDebrisBodyCount,
-      fixedStructureCount: physicsStats.fixedStructureCount,
-      activeDebrisCount: physicsStats.activeDebrisCount,
-      frozenDebrisCount: physicsStats.frozenDebrisCount,
-      pendingSupportReleaseCount: physicsStats.pendingSupportReleaseCount,
-      drawCalls: rendererDrawCalls(this.renderer),
-      triangles: this.renderer.info.render.triangles,
-      lines: this.renderer.info.render.lines,
-      points: this.renderer.info.render.points,
-      geometries: this.renderer.info.memory.geometries,
-      textures: this.renderer.info.memory.textures,
-      programs: rendererProgramCount(this.renderer),
+      renderer: this.renderer,
+      physicsStats,
+      staticDetailStats,
+      fragmentStats,
       visiblePooledVfxObjects: this.particles.getVisiblePooledEffectCount(),
-      staticDetailBatches: staticDetailStats.batches,
-      staticDetailDynamicBatches: staticDetailStats.dynamicBatches,
-      staticDetailInstances: staticDetailStats.instances,
-      staticDetailBuckets: staticDetailStats.buckets,
-      fragmentInstanceBuckets: fragmentStats.buckets,
-      fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
-      fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
-      fragmentInstanceOverflowBuckets: fragmentStats.overflowBuckets,
-      levelComposition: levelCompositionLine(physicsStats)
-    };
+    });
     this.renderStatsFrame += 1;
     return { ...this.lastRenderStats };
   }
@@ -7041,17 +6775,6 @@ function scoreStatus(score: ScoreBreakdown, result: ArcadeResult): string {
   return `Mission complete: ${score.totalScore}. ${result.stars}/3 stars earned.`;
 }
 
-function formatCompactScore(value: number): string {
-  const rounded = Math.round(value);
-  if (Math.abs(rounded) >= 1_000_000) {
-    return `${Math.round(rounded / 100_000) / 10}M`;
-  }
-  if (Math.abs(rounded) >= 10_000) {
-    return `${Math.round(rounded / 1_000)}K`;
-  }
-  return rounded.toLocaleString("en-US");
-}
-
 function compactLevelObjective(level: TestChamber): string {
   switch (level.id) {
     case "hazard-junction":
@@ -7084,17 +6807,6 @@ function compactChaosBrief(level: TestChamber): string {
     default:
       return level.chaosBrief;
   }
-}
-
-function levelCompositionLine(stats: {
-  fixedStructureCount: number;
-  debrisBodyCount: number;
-  activeDebrisCount: number;
-  pendingSupportReleaseCount: number;
-}): string {
-  const debris = stats.debrisBodyCount > 0 ? `${formatCompactScore(stats.debrisBodyCount)} debris-ready` : "low loose debris";
-  const support = stats.pendingSupportReleaseCount > 0 ? `${formatCompactScore(stats.pendingSupportReleaseCount)} staged supports` : "supports stable";
-  return `${formatCompactScore(stats.fixedStructureCount)} structures / ${debris} / ${support}`;
 }
 
 function metricShortLabel(metric: TestChamber["mission"]["bonusThreshold"]["metric"]): string {
@@ -7202,83 +6914,6 @@ function moneyShotObjectPriority(
     return 0;
   }
   return Math.min(1040, priority + Math.min(70, result.fracturedBodies * 7) + Math.min(45, result.affectedBodies * 1.8));
-}
-
-function settingsStatus(settings: GameSettings): string {
-  return `${GRAPHICS_QUALITY_LABELS[settings.graphicsQuality]}, WebGL renderer, ${Math.round(settings.masterVolume * 100)}% volume, ${Math.round(settings.cameraShake * 100)}% shake`;
-}
-
-function graphicsLightingProfile(quality: GraphicsQuality): GraphicsLightingProfile {
-  switch (quality) {
-    case "performance":
-      return {
-        background: 0x8fc7dc,
-        fog: 0xcfd2c5,
-        fogNear: 58,
-        fogFar: 138,
-        exposure: 1.09,
-        ambientSky: 0x9fd1dc,
-        ambientGround: 0xa47b4a,
-        ambientIntensity: 0.86,
-        sunColor: 0xffc474,
-        sunIntensity: 3.02,
-        skyFillColor: 0x6faec6,
-        skyFillIntensity: 0.34,
-        shadowMapSize: 1536
-      };
-    case "balanced":
-      return {
-        background: 0x81bed8,
-        fog: 0xcac8b7,
-        fogNear: 52,
-        fogFar: 128,
-        exposure: 1.13,
-        ambientSky: 0x93c8d8,
-        ambientGround: 0x9e7242,
-        ambientIntensity: 0.88,
-        sunColor: 0xffb85f,
-        sunIntensity: 3.18,
-        skyFillColor: 0x64a8c2,
-        skyFillIntensity: 0.37,
-        shadowMapSize: 1536
-      };
-    case "cinematic":
-      return {
-        background: 0x72aec8,
-        fog: 0xc7bca3,
-        fogNear: 46,
-        fogFar: 118,
-        exposure: 1.19,
-        ambientSky: 0x8ec1d0,
-        ambientGround: 0x9a6a3a,
-        ambientIntensity: 0.92,
-        sunColor: 0xffad55,
-        sunIntensity: 3.34,
-        skyFillColor: 0x5d9fbd,
-        skyFillIntensity: 0.42,
-        shadowMapSize: 2048
-      };
-  }
-}
-
-function canvasGradeProfile(quality: GraphicsQuality): CanvasGradeProfile {
-  switch (quality) {
-    case "performance":
-      return {
-        filter: "none",
-        boxShadow: "none"
-      };
-    case "balanced":
-      return {
-        filter: "contrast(1.06) saturate(0.96) sepia(0.05)",
-        boxShadow: "inset 0 0 62px rgba(5, 13, 18, 0.16)"
-      };
-    case "cinematic":
-      return {
-        filter: "contrast(1.095) saturate(0.94) sepia(0.08)",
-        boxShadow: "inset 0 0 98px rgba(5, 13, 18, 0.22)"
-      };
-  }
 }
 
 boot().catch((error: unknown) => {
