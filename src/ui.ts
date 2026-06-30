@@ -1,4 +1,4 @@
-import type { ArcadeLevelProgress, ArcadeResult } from "./arcade";
+import type { ArcadeContractObjectiveResult, ArcadeLevelProgress, ArcadeResult } from "./arcade";
 import { GAME_MODES, type GameMode } from "./gameMode";
 import type { TouchFlightIndicatorState } from "./input";
 import type { ArcadeMissionFields } from "./levels";
@@ -578,11 +578,15 @@ export class GameUI {
         const progressText = locked
           ? "LOCKED / get 2 stars on previous level"
           : `${active ? "ACTIVE" : "LEVEL"} / ${starText(level.progress.stars)}`;
+        const detailText = locked
+          ? "Earn 2 stars on the previous district"
+          : `${formatScoreNumber(level.progress.attempts)} attempts / Best ${formatScoreNumber(level.progress.bestScore)}`;
         return `
           <button type="button" class="hud__level-card${active ? " is-current" : ""}${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${level.index}" ${locked ? "disabled" : ""}>
             <span>${String(level.index + 1).padStart(2, "0")} / ${progressText}</span>
             <strong>${escapeHtml(level.name)}</strong>
             <em>${escapeHtml(level.objective)}</em>
+            <small>${escapeHtml(detailText)}</small>
           </button>
         `;
       })
@@ -737,6 +741,7 @@ function renderScore(state: UIState): string {
   const hasNextDistrict = canStartNextDistrict(state);
   const bonusValue = bonusMetricValue(score, state.mission.bonusThreshold.metric);
   const hotspots = score.damageHotspots.slice(0, 4);
+  const contractObjectives = result?.contract?.objectives ?? [];
   const goals = [
     {
       label: "Object damage",
@@ -792,6 +797,7 @@ function renderScore(state: UIState): string {
         )
         .join("")}
     </div>
+    ${contractObjectives.length > 0 ? renderContractObjectives(result?.contract?.completed ?? false, contractObjectives) : ""}
     <div class="hud__score-breakdown">
       <div><span>${state.gameMode === "plane" ? "Vehicle" : "Payload"}</span><strong>${escapeHtml(score.shotName)}</strong></div>
       <div><span>Collateral Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
@@ -877,6 +883,15 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
       value: "Complete"
     });
   }
+  if (state.arcadeResult?.contract) {
+    const completed = state.arcadeResult.contract.objectives.filter((objective) => objective.completed).length;
+    const total = state.arcadeResult.contract.objectives.length;
+    callouts.push({
+      className: state.arcadeResult.contract.completed ? "is-contract-complete" : "is-contract-missed",
+      label: "Run contract",
+      value: state.arcadeResult.contract.completed ? "Complete" : `${completed}/${total}`
+    });
+  }
   if (score.bossBreakCount > 0) {
     callouts.push({
       className: "is-boss-break",
@@ -903,6 +918,32 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
 
 function renderResultCallout(callout: { className: string; label: string; value: string }): string {
   return `<div class="${callout.className}"><span>${escapeHtml(callout.label)}</span><strong>${escapeHtml(callout.value)}</strong></div>`;
+}
+
+function renderContractObjectives(completed: boolean, objectives: readonly ArcadeContractObjectiveResult[]): string {
+  const completedCount = objectives.filter((objective) => objective.completed).length;
+  return `
+    <div class="hud__contract-list" aria-label="Run contract objectives">
+      <div class="hud__contract-head">
+        <span>Run Contract</span>
+        <strong>${completed ? "Complete" : `${completedCount}/${objectives.length}`}</strong>
+      </div>
+      ${objectives.map(renderContractObjective).join("")}
+    </div>
+  `;
+}
+
+function renderContractObjective(objective: ArcadeContractObjectiveResult): string {
+  return `
+    <div class="hud__contract-objective ${objective.completed ? "is-passed" : "is-missed"}">
+      <span>${escapeHtml(objective.label)}</span>
+      <strong>${escapeHtml(formatContractValue(objective.value))} / ${escapeHtml(formatContractValue(objective.target))}</strong>
+    </div>
+  `;
+}
+
+function formatContractValue(value: number | string): string {
+  return typeof value === "number" ? formatScoreNumber(value) : value;
 }
 
 function renderDamageHotspot(hotspot: ScoreBreakdown["damageHotspots"][number]): string {
@@ -1864,6 +1905,16 @@ function installStyles(): void {
       background: rgba(114, 240, 165, 0.1);
     }
 
+    .hud__result-callouts .is-contract-complete {
+      border-color: rgba(114, 240, 165, 0.58);
+      background: rgba(114, 240, 165, 0.1);
+    }
+
+    .hud__result-callouts .is-contract-missed {
+      border-color: rgba(255, 124, 159, 0.54);
+      background: rgba(255, 124, 159, 0.1);
+    }
+
     .hud__result-callouts .is-boss-break {
       border-color: rgba(255, 112, 88, 0.62);
       background: rgba(255, 92, 64, 0.12);
@@ -1922,6 +1973,7 @@ function installStyles(): void {
     }
 
     .hud__objective-list,
+    .hud__contract-list,
     .hud__score-breakdown,
     .hud__damage-hotspots {
       display: grid;
@@ -1929,6 +1981,8 @@ function installStyles(): void {
     }
 
     .hud__objective-list div,
+    .hud__contract-head,
+    .hud__contract-objective,
     .hud__score-breakdown div,
     .hud__damage-hotspot,
     .hud__damage-hotspots-head,
@@ -1956,7 +2010,28 @@ function installStyles(): void {
       border-left: 3px solid #ff7c9f;
     }
 
-    .hud__objective-list span {
+    .hud__contract-head {
+      min-height: 28px;
+      border: 1px solid rgba(255, 207, 105, 0.22);
+      background: rgba(255, 207, 105, 0.08);
+    }
+
+    .hud__contract-head span {
+      color: #ffcf69;
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .hud__contract-objective {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: flex-start;
+      border-left: 3px solid #ff7c9f;
+    }
+
+    .hud__objective-list span,
+    .hud__contract-objective span {
       min-width: 0;
       white-space: normal;
     }
@@ -1969,11 +2044,14 @@ function installStyles(): void {
       line-height: 1.2;
     }
 
-    .hud__objective-list div.is-passed {
+    .hud__objective-list div.is-passed,
+    .hud__contract-objective.is-passed {
       border-left-color: #72f0a5;
     }
 
     .hud__objective-list strong,
+    .hud__contract-head strong,
+    .hud__contract-objective strong,
     .hud__score-breakdown strong,
     .hud__damage-hotspots-head strong,
     .hud__damage-hotspot b,
@@ -2184,7 +2262,8 @@ function installStyles(): void {
     }
 
     .hud__level-card span,
-    .hud__level-card em {
+    .hud__level-card em,
+    .hud__level-card small {
       overflow: hidden;
       color: #9db6c4;
       font-size: 10px;
@@ -2201,6 +2280,12 @@ function installStyles(): void {
       font-size: 15px;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .hud__level-card small {
+      color: #8ddfff;
+      font-weight: 800;
+      text-transform: none;
     }
 
     .hud__level-card.is-current {

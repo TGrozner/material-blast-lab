@@ -1043,6 +1043,7 @@ class AppShell {
   private readonly root: HTMLDivElement;
   private readonly levelRail: HTMLDivElement;
   private readonly statusValue: HTMLDivElement;
+  private readonly progressSummaryValue: HTMLDivElement;
   private readonly loadingTitle: HTMLElement;
   private readonly loadingStatus: HTMLElement;
   private readonly settingsSummaryValue: HTMLElement;
@@ -1101,6 +1102,7 @@ class AppShell {
                 <span>Pilot one fictional RC plane into the city.</span>
               </button>
             </div>
+            <div class="app-shell__progress" data-role="shell-progress"></div>
             <div class="app-shell__status" data-role="shell-status"></div>
           </section>
           <section class="app-shell__levels" data-role="shell-levels" aria-label="Districts"></section>
@@ -1168,6 +1170,7 @@ class AppShell {
 
     this.levelRail = this.requireElement("[data-role='shell-levels']");
     this.statusValue = this.requireElement("[data-role='shell-status']");
+    this.progressSummaryValue = this.requireElement("[data-role='shell-progress']");
     this.loadingTitle = this.requireElement("[data-role='shell-loading-title']");
     this.loadingStatus = this.requireElement("[data-role='shell-loading-status']");
     this.settingsSummaryValue = this.requireElement("[data-role='shell-settings-summary']");
@@ -1325,18 +1328,24 @@ class AppShell {
       return;
     }
     this.renderedLevelKey = key;
+    const unlockedDistricts = Math.max(0, Math.min(TEST_CHAMBERS.length, this.progress.highestUnlockedLevel + 1));
+    setText(
+      this.progressSummaryValue,
+      `Campaign ${this.progress.totalStars}/${TEST_CHAMBERS.length * 3} stars / ${unlockedDistricts}/${TEST_CHAMBERS.length} districts open`
+    );
     this.levelRail.innerHTML = TEST_CHAMBERS.map((level, index) => {
       const progress = this.progress.levels[level.id];
       const locked = index > this.progress.highestUnlockedLevel;
       const stars = progress?.stars ?? 0;
       const bestScore = progress?.bestScore ?? 0;
+      const attempts = progress?.attempts ?? 0;
       const progressText = locked ? "LOCKED" : `${stars}/3 stars`;
       return `
         <button type="button" class="app-shell__level-card${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${index}" ${locked ? "disabled" : ""}>
           <span>${String(index + 1).padStart(2, "0")} / ${progressText}</span>
           <strong>${escapeShellHtml(level.name)}</strong>
           <em>${escapeShellHtml(level.objective)}</em>
-          <small>${locked ? "Earn 2 stars on the previous district" : `Start ${GAME_MODES[this.selectedMode].name} / Best ${formatShellScore(bestScore)}`}</small>
+          <small>${locked ? "Earn 2 stars on the previous district" : `Start ${GAME_MODES[this.selectedMode].name} / ${formatShellScore(attempts)} attempts / Best ${formatShellScore(bestScore)}`}</small>
         </button>
       `;
     }).join("");
@@ -1609,6 +1618,19 @@ function installAppShellStyles(): void {
       color: #ffd36d;
       font-size: 13px;
       font-weight: 800;
+    }
+
+    .app-shell__progress {
+      min-height: 38px;
+      width: min(420px, 100%);
+      padding: 10px 12px;
+      border: 1px solid rgba(255, 207, 105, 0.22);
+      border-radius: 7px;
+      color: #ffe08b;
+      background: rgba(255, 207, 105, 0.08);
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.25;
     }
 
     .app-shell__levels {

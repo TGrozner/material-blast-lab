@@ -217,8 +217,10 @@ test("shows a clear three-level selector without free play", async ({ page }) =>
   await expect(page.locator("canvas")).toHaveCount(0);
   await expect(page.locator("[data-action='start-free']")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Free Play" })).toHaveCount(0);
+  await expect(page.locator("[data-role='shell-progress']")).toHaveText("Campaign 0/9 stars / 1/3 districts open");
   await expect(page.locator("[data-role='shell-levels'] [data-action='start-arcade']")).toHaveCount(3);
   await expect(levelCard(page, "Hazard Junction")).toBeVisible();
+  await expect(levelCard(page, "Hazard Junction")).toContainText("0 attempts / Best 0");
   await expect(levelCard(page, "Breaker Yard")).toBeVisible();
   await expect(levelCard(page, "Switchback Crush")).toBeVisible();
   await expect(levelCard(page, "Hazard Junction")).toBeEnabled();
@@ -730,6 +732,7 @@ async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   await expect(scorePanel.locator(".hud__total strong")).toHaveText(/\d+/);
   await expect(scorePanel.locator("[data-role='result-total']")).toHaveText(/\d+/);
   await expect(scorePanel.getByText("Object damage", { exact: true })).toBeVisible();
+  await expect(scorePanel.getByText("Run Contract", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Collateral Chaos", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Secondary Hits", { exact: true })).toBeVisible();
   await expect(scorePanel.getByText("Top Damage", { exact: true })).toBeVisible();
