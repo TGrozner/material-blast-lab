@@ -217,6 +217,23 @@ interface BuildingSpec {
   brand?: BuildingBrand;
 }
 
+type DenseDistrictBuildingRow = readonly [
+  label: string,
+  materialId: MaterialId,
+  x: number,
+  z: number,
+  width: number,
+  height: number,
+  depth: number,
+  floors: number,
+  columns: number,
+  style: BuildingVisualStyle,
+  zoneId: string,
+  scoreValue: number,
+  rotationY: number,
+  stagger: number
+];
+
 interface CityRoadCorridor {
   axis: "x" | "z";
   minX: number;
@@ -442,6 +459,7 @@ function setupBreakerYardCity(context: LevelContext): void {
   spawnBreakerYardRelayWeb(context);
   spawnBreakerBossCapacitor(context);
   spawnBreakerYardDensityInfill(context);
+  spawnBreakerYardUrbanGrid(context);
   spawnBreakerYardStreetActivity(context);
   spawnPowerGrid(context);
   spawnStreetSetpieces(context);
@@ -456,6 +474,7 @@ function setupSwitchbackCrushCity(context: LevelContext): void {
   spawnSwitchbackRedirectors(context);
   spawnArchiveBossLens(context);
   spawnSwitchbackArchiveDensityInfill(context);
+  spawnSwitchbackGlassCanyon(context);
   spawnSwitchbackStreetActivity(context);
   spawnStreetSetpieces(context);
 }
@@ -471,6 +490,7 @@ function setupRelayGauntletCity(context: LevelContext): void {
   spawnRelayGauntletRoutePaint(context);
   spawnRelayGauntletCapacitorRoute(context);
   spawnRelayGauntletDensityInfill(context);
+  spawnRelayRouteCanyon(context);
   spawnRelayGauntletTraffic(context);
   spawnPowerGrid(context);
   spawnStreetSetpieces(context);
@@ -487,6 +507,7 @@ function setupOverdriveCoreCity(context: LevelContext): void {
   spawnOverdriveCoreRoutePaint(context);
   spawnOverdriveCoreSetpieces(context);
   spawnOverdriveCoreDensityInfill(context);
+  spawnOverdriveFinalBowlDensity(context);
   spawnOverdriveCoreTraffic(context);
   spawnStreetSetpieces(context);
 }
@@ -898,6 +919,38 @@ function spawnBreakerYardDensityInfill(context: LevelContext): void {
   addStreetLight(context, -3.15, 7.35);
 }
 
+function spawnBreakerYardUrbanGrid(context: LevelContext): void {
+  spawnDenseDistrictBuildingRows(context, [
+    ["North switch flats", "concrete", -6.85, -9.85, 0.52, 0.52, 0.52, 6, 5, "apartment", "breaker-yard-grid north-switch", 34, Math.PI * 0.04, 0.05],
+    ["North cable tenement", "metal", -3.45, -9.75, 0.5, 0.5, 0.58, 5, 5, "industrial", "breaker-yard-grid north-switch", 34, -Math.PI * 0.04, -0.04],
+    ["North meter offices", "glass", 3.55, -9.65, 0.44, 0.58, 0.46, 5, 4, "glassTower", "breaker-yard-grid meter-office", 34, Math.PI * 0.05, 0.04],
+    ["North substation dorms", "concrete", 6.85, -9.55, 0.52, 0.5, 0.52, 5, 5, "apartment", "breaker-yard-grid substation", 34, -Math.PI * 0.05, -0.05],
+    ["West breaker housing A", "concrete", -13.25, -5.25, 0.52, 0.5, 0.54, 5, 4, "apartment", "breaker-yard-grid west-service", 32, Math.PI * 0.5, 0.04],
+    ["West breaker housing B", "wood", -13.4, -3.15, 0.5, 0.44, 0.52, 4, 6, "utility", "breaker-yard-grid west-service", 28, Math.PI * 0.5, -0.05],
+    ["West transformer stores", "metal", -13.45, 0.95, 0.52, 0.46, 0.58, 4, 5, "warehouse", "breaker-yard-grid transformer-alley", 32, Math.PI * 0.5, 0.05],
+    ["West coolant row", "foam", -13.25, 3.15, 0.48, 0.38, 0.48, 4, 6, "market", "breaker-yard-grid coolant-alley", 26, Math.PI * 0.5, -0.04],
+    ["West battery apartments", "concrete", -13.25, 10.75, 0.5, 0.5, 0.52, 6, 5, "apartment", "breaker-yard-grid battery-road", 34, Math.PI * 0.5, 0.05],
+    ["West relay depot wall", "metal", -8.15, 10.95, 0.52, 0.44, 0.58, 4, 6, "warehouse", "breaker-yard-grid relay-depot", 30, Math.PI * 0.5, 0.04],
+    ["South battery storefront A", "foam", -5.2, 11.35, 0.48, 0.38, 0.48, 3, 6, "market", "breaker-yard-grid battery-road", 26, 0, 0.05],
+    ["South battery storefront B", "wood", -1.85, 11.55, 0.5, 0.42, 0.52, 4, 5, "utility", "breaker-yard-grid battery-road", 28, 0, -0.05],
+    ["South meter shop row", "glass", 2.1, 11.45, 0.44, 0.56, 0.46, 4, 5, "glassTower", "breaker-yard-grid meter-office", 32, 0, 0.05],
+    ["South cable warehouse", "metal", 5.35, 11.25, 0.52, 0.46, 0.58, 5, 6, "warehouse", "breaker-yard-grid cable-warehouse", 32, 0, -0.04],
+    ["East breaker housing A", "concrete", 13.2, -5.1, 0.52, 0.5, 0.54, 5, 5, "apartment", "breaker-yard-grid east-service", 34, Math.PI * 0.5, -0.05],
+    ["East switch shop row", "wood", 13.25, -3.05, 0.5, 0.42, 0.52, 4, 6, "utility", "breaker-yard-grid east-service", 28, Math.PI * 0.5, 0.05],
+    ["East meter lofts", "glass", 13.45, 0.92, 0.44, 0.58, 0.46, 5, 4, "glassTower", "breaker-yard-grid meter-office", 34, Math.PI * 0.5, -0.04],
+    ["East cable warehouse", "metal", 13.35, 3.08, 0.52, 0.46, 0.58, 4, 6, "warehouse", "breaker-yard-grid cable-warehouse", 30, Math.PI * 0.5, 0.04],
+    ["East battery flats", "concrete", 13.25, 10.55, 0.5, 0.5, 0.52, 5, 5, "apartment", "breaker-yard-grid battery-road", 34, Math.PI * 0.5, -0.05],
+    ["Battery road relay block", "metal", 8.2, 10.95, 0.52, 0.46, 0.58, 5, 4, "industrial", "breaker-yard-grid relay-depot", 32, Math.PI * 0.5, 0.04],
+    ["Inner switchyard offices", "concrete", -5.95, -4.05, 0.5, 0.5, 0.54, 5, 4, "apartment", "breaker-yard-grid switchyard-canyon", 32, Math.PI * 0.08, 0.04],
+    ["Inner cable warehouse west", "metal", -6.15, -0.35, 0.52, 0.46, 0.58, 4, 5, "warehouse", "breaker-yard-grid switchyard-canyon", 30, -Math.PI * 0.08, -0.04],
+    ["Inner coolant service stack", "foam", -4.85, 6.7, 0.48, 0.38, 0.48, 4, 6, "market", "breaker-yard-grid coolant-alley", 26, Math.PI * 0.1, 0.05],
+    ["Inner relay office east", "glass", 6.05, -4.05, 0.44, 0.58, 0.46, 5, 5, "glassTower", "breaker-yard-grid relay-booth", 34, -Math.PI * 0.08, -0.04],
+    ["Inner transformer stores east", "metal", 6.15, -0.1, 0.52, 0.46, 0.58, 4, 5, "warehouse", "breaker-yard-grid transformer-alley", 30, Math.PI * 0.08, 0.04],
+    ["Inner battery trade school", "concrete", 5.85, 6.8, 0.5, 0.5, 0.54, 5, 5, "apartment", "breaker-yard-grid battery-road", 34, -Math.PI * 0.08, -0.05],
+    ["Outer switchyard stores", "rubber", -9.2, 7.0, 0.5, 0.38, 0.5, 4, 6, "utility", "breaker-yard-grid rubber-conductor", 26, Math.PI * 0.5, 0.05]
+  ]);
+}
+
 function spawnRelayGauntletRoutePaint(context: LevelContext): void {
   for (const [label, x, z, width, depth, color, opacity] of [
     ["Relay gauntlet north entry stripe", -4.65, -6.28, 5.8, 0.34, 0x5de7ff, 0.34],
@@ -1110,6 +1163,36 @@ function spawnRelayGauntletDensityInfill(context: LevelContext): void {
   addBillboard(context, 7.8, 5.35, 0xffb23f);
   addStreetLight(context, -6.5, -5.85);
   addStreetLight(context, 6.45, 0.85);
+}
+
+function spawnRelayRouteCanyon(context: LevelContext): void {
+  spawnDenseDistrictBuildingRows(context, [
+    ["Relay north pylon flats", "concrete", -6.9, -9.9, 0.52, 0.52, 0.54, 6, 5, "apartment", "relay-gauntlet-grid north-pylon", 34, Math.PI * 0.04, 0.05],
+    ["Relay north operator wall", "metal", -3.55, -9.75, 0.52, 0.48, 0.58, 5, 5, "industrial", "relay-gauntlet-grid route-operator", 32, -Math.PI * 0.05, -0.04],
+    ["Relay north timing tower", "glass", 3.45, -9.72, 0.44, 0.58, 0.46, 5, 4, "glassTower", "relay-gauntlet-grid timing", 34, Math.PI * 0.06, 0.04],
+    ["Relay north capacitor lofts", "concrete", 6.85, -9.58, 0.52, 0.52, 0.54, 5, 5, "apartment", "relay-gauntlet-grid capacitor-bank", 34, -Math.PI * 0.05, -0.05],
+    ["West route marshal flats", "concrete", -13.35, -5.25, 0.52, 0.5, 0.54, 5, 5, "apartment", "relay-gauntlet-grid route-marshal", 34, Math.PI * 0.5, 0.05],
+    ["West phase service row", "metal", -13.45, -3.05, 0.52, 0.46, 0.58, 4, 6, "warehouse", "relay-gauntlet-grid route-operator", 30, Math.PI * 0.5, -0.04],
+    ["West traffic bait shops", "foam", -13.3, 0.95, 0.48, 0.38, 0.48, 4, 6, "market", "relay-gauntlet-grid traffic-bait", 26, Math.PI * 0.5, 0.05],
+    ["West relay dorms", "wood", -13.15, 3.1, 0.5, 0.42, 0.52, 4, 5, "utility", "relay-gauntlet-grid route-bumper", 28, Math.PI * 0.5, -0.04],
+    ["West cashout apartments", "concrete", -13.2, 10.65, 0.5, 0.5, 0.52, 5, 5, "apartment", "relay-gauntlet-grid south-cashout", 34, Math.PI * 0.5, 0.05],
+    ["South route marshal block", "foam", -6.15, 11.25, 0.48, 0.38, 0.48, 3, 6, "market", "relay-gauntlet-grid route-bumper", 26, 0, 0.05],
+    ["South timing depot", "metal", -2.75, 11.45, 0.52, 0.46, 0.58, 5, 5, "warehouse", "relay-gauntlet-grid timing", 32, 0, -0.04],
+    ["South capacitor flats", "concrete", 1.95, 11.55, 0.5, 0.5, 0.52, 5, 4, "apartment", "relay-gauntlet-grid capacitor-bank", 32, 0, 0.05],
+    ["South traffic bait kiosk row", "glass", 5.35, 11.3, 0.44, 0.58, 0.46, 4, 6, "glassTower", "relay-gauntlet-grid traffic-bait", 32, 0, -0.04],
+    ["South cashout warehouse", "metal", 8.35, 11.0, 0.52, 0.46, 0.58, 4, 6, "warehouse", "relay-gauntlet-grid south-cashout", 30, Math.PI * 0.5, 0.04],
+    ["East capacitor offices", "concrete", 13.25, -5.1, 0.52, 0.5, 0.54, 6, 5, "apartment", "relay-gauntlet-grid capacitor-bank", 34, Math.PI * 0.5, -0.05],
+    ["East relay glass watch", "glass", 13.45, -2.95, 0.44, 0.58, 0.46, 5, 5, "glassTower", "relay-gauntlet-grid timing", 34, Math.PI * 0.5, 0.04],
+    ["East service gantry wall", "metal", 13.35, 1.0, 0.52, 0.46, 0.58, 4, 6, "warehouse", "relay-gauntlet-grid route-operator", 30, Math.PI * 0.5, -0.04],
+    ["East traffic bait markets", "foam", 13.2, 3.15, 0.48, 0.38, 0.48, 4, 6, "market", "relay-gauntlet-grid traffic-bait", 26, Math.PI * 0.5, 0.05],
+    ["East south relay flats", "concrete", 13.25, 10.55, 0.5, 0.5, 0.52, 5, 5, "apartment", "relay-gauntlet-grid south-cashout", 34, Math.PI * 0.5, -0.05],
+    ["Inner route pylon row west", "metal", -6.05, -4.15, 0.5, 0.5, 0.58, 5, 4, "industrial", "relay-gauntlet-grid route-operator", 32, Math.PI * 0.08, 0.04],
+    ["Inner timing offices west", "glass", -6.05, -0.25, 0.44, 0.58, 0.46, 4, 5, "glassTower", "relay-gauntlet-grid timing", 32, -Math.PI * 0.08, -0.04],
+    ["Inner bumper workshops west", "wood", -5.0, 6.65, 0.5, 0.42, 0.52, 4, 6, "utility", "relay-gauntlet-grid route-bumper", 28, Math.PI * 0.1, 0.05],
+    ["Inner capacitor row east", "concrete", 6.05, -4.05, 0.52, 0.52, 0.54, 5, 5, "apartment", "relay-gauntlet-grid capacitor-bank", 34, -Math.PI * 0.08, -0.05],
+    ["Inner route service east", "metal", 6.15, -0.1, 0.52, 0.46, 0.58, 4, 5, "warehouse", "relay-gauntlet-grid route-operator", 30, Math.PI * 0.08, 0.04],
+    ["Inner south cashout shops", "foam", 5.85, 6.75, 0.48, 0.38, 0.48, 4, 6, "market", "relay-gauntlet-grid south-cashout", 26, -Math.PI * 0.08, -0.04]
+  ]);
 }
 
 function spawnSwitchbackArchiveCore(context: LevelContext): void {
@@ -1484,6 +1567,38 @@ function spawnSwitchbackArchiveDensityInfill(context: LevelContext): void {
   addStreetLight(context, 0.2, 7.45);
 }
 
+function spawnSwitchbackGlassCanyon(context: LevelContext): void {
+  spawnDenseDistrictBuildingRows(context, [
+    ["North archive terrace west", "concrete", -7.05, -9.9, 0.52, 0.52, 0.54, 6, 5, "apartment", "switchback-grid archive-terrace", 34, Math.PI * 0.04, 0.05],
+    ["North mirror records tower", "glass", -3.55, -9.72, 0.44, 0.6, 0.46, 6, 5, "glassTower", "switchback-grid glass-canyon", 34, -Math.PI * 0.05, -0.04],
+    ["North shelf warehouse", "wood", 3.45, -9.75, 0.5, 0.42, 0.52, 4, 6, "utility", "switchback-grid shelf-row", 28, Math.PI * 0.05, 0.04],
+    ["North archive terrace east", "concrete", 6.9, -9.58, 0.52, 0.52, 0.54, 5, 5, "apartment", "switchback-grid archive-terrace", 34, -Math.PI * 0.05, -0.05],
+    ["West glass canyon A", "glass", -13.35, -5.15, 0.44, 0.6, 0.46, 6, 5, "glassTower", "switchback-grid glass-canyon", 34, Math.PI * 0.5, 0.05],
+    ["West glass canyon B", "glass", -13.45, -3.0, 0.44, 0.58, 0.46, 5, 5, "glassTower", "switchback-grid glass-canyon", 34, Math.PI * 0.5, -0.04],
+    ["West archive stacks", "concrete", -13.3, 0.98, 0.52, 0.52, 0.54, 5, 5, "apartment", "switchback-grid archive-wing", 34, Math.PI * 0.5, 0.05],
+    ["West foam baffle shops", "foam", -13.15, 3.12, 0.48, 0.38, 0.48, 4, 6, "market", "switchback-grid switchback-foam", 26, Math.PI * 0.5, -0.04],
+    ["West south archive flats", "concrete", -13.2, 10.65, 0.5, 0.5, 0.52, 5, 5, "apartment", "switchback-grid archive-service", 34, Math.PI * 0.5, 0.05],
+    ["South shelf row A", "wood", -6.25, 11.25, 0.5, 0.42, 0.52, 4, 6, "utility", "switchback-grid shelf-row", 28, 0, 0.05],
+    ["South archive terrace", "concrete", -2.8, 11.48, 0.52, 0.52, 0.54, 6, 5, "apartment", "switchback-grid archive-terrace", 34, 0, -0.04],
+    ["South mirror office", "glass", 1.95, 11.52, 0.44, 0.58, 0.46, 5, 5, "glassTower", "switchback-grid glass-canyon", 34, 0, 0.05],
+    ["South baffle workshops", "foam", 5.35, 11.28, 0.48, 0.38, 0.48, 4, 6, "market", "switchback-grid switchback-foam", 26, 0, -0.04],
+    ["South service dock wall", "metal", 8.3, 11.0, 0.52, 0.46, 0.58, 4, 6, "warehouse", "switchback-grid switchback-service", 30, Math.PI * 0.5, 0.04],
+    ["East mirror canyon A", "glass", 13.3, -5.08, 0.44, 0.6, 0.46, 6, 5, "glassTower", "switchback-grid glass-canyon", 34, Math.PI * 0.5, -0.05],
+    ["East records lofts", "concrete", 13.2, -2.95, 0.52, 0.52, 0.54, 5, 5, "apartment", "switchback-grid archive-wing", 34, Math.PI * 0.5, 0.04],
+    ["East service dock row", "metal", 13.35, 0.98, 0.52, 0.46, 0.58, 4, 6, "warehouse", "switchback-grid switchback-service", 30, Math.PI * 0.5, -0.04],
+    ["East foam baffle court", "foam", 13.15, 3.12, 0.48, 0.38, 0.48, 4, 6, "market", "switchback-grid switchback-foam", 26, Math.PI * 0.5, 0.05],
+    ["East south archive flats", "concrete", 13.25, 10.55, 0.5, 0.5, 0.52, 5, 5, "apartment", "switchback-grid archive-service", 34, Math.PI * 0.5, -0.05],
+    ["Inner west library tower", "concrete", -6.1, -4.05, 0.52, 0.52, 0.54, 6, 5, "apartment", "switchback-grid archive-wing", 34, Math.PI * 0.08, 0.05],
+    ["Inner west mirror office", "glass", -6.05, -0.25, 0.44, 0.58, 0.46, 5, 5, "glassTower", "switchback-grid glass-canyon", 34, -Math.PI * 0.08, -0.04],
+    ["Inner west foam workshop", "foam", -5.0, 6.65, 0.48, 0.38, 0.48, 4, 6, "market", "switchback-grid switchback-foam", 26, Math.PI * 0.1, 0.05],
+    ["Inner east mirror tower", "glass", 6.05, -4.05, 0.44, 0.6, 0.46, 6, 5, "glassTower", "switchback-grid glass-canyon", 34, -Math.PI * 0.08, -0.05],
+    ["Inner east records depot", "wood", 6.1, -0.1, 0.5, 0.42, 0.52, 4, 6, "utility", "switchback-grid shelf-row", 28, Math.PI * 0.08, 0.04],
+    ["Inner service archive flats", "concrete", 5.85, 6.75, 0.52, 0.5, 0.54, 5, 5, "apartment", "switchback-grid archive-service", 34, -Math.PI * 0.08, -0.04],
+    ["Mirror return dock", "metal", 9.05, 6.9, 0.52, 0.46, 0.58, 4, 5, "warehouse", "switchback-grid switchback-service", 30, Math.PI * 0.5, 0.04],
+    ["Archive file annex", "wood", -9.0, 6.95, 0.5, 0.42, 0.52, 4, 5, "utility", "switchback-grid shelf-row", 28, Math.PI * 0.5, -0.04]
+  ]);
+}
+
 function spawnOverdriveCoreRoutePaint(context: LevelContext): void {
   for (const [label, x, z, width, depth, color, opacity] of [
     ["Overdrive boss lens entry stripe", 5.4, -6.05, 4.4, 0.38, 0xff6b93, 0.34],
@@ -1697,6 +1812,38 @@ function spawnOverdriveCoreDensityInfill(context: LevelContext): void {
   addStreetLight(context, 6.5, 5.75);
   addStreetLight(context, -6.45, 5.05);
   addStreetLight(context, 0.95, 5.65);
+}
+
+function spawnOverdriveFinalBowlDensity(context: LevelContext): void {
+  spawnDenseDistrictBuildingRows(context, [
+    ["North prism ballast flats", "concrete", -7.05, -9.9, 0.52, 0.52, 0.54, 6, 5, "apartment", "overdrive-grid prism-ballast", 34, Math.PI * 0.04, 0.05],
+    ["North prism shard tower", "glass", -3.55, -9.72, 0.44, 0.6, 0.46, 6, 5, "glassTower", "overdrive-grid prism-shard", 34, -Math.PI * 0.05, -0.04],
+    ["North pressure service wall", "metal", 3.45, -9.75, 0.52, 0.46, 0.58, 5, 5, "industrial", "overdrive-grid pressure-service", 32, Math.PI * 0.05, 0.04],
+    ["North archive ballast east", "concrete", 6.9, -9.58, 0.52, 0.52, 0.54, 5, 5, "apartment", "overdrive-grid archive-ballast", 34, -Math.PI * 0.05, -0.05],
+    ["West mirror housing A", "concrete", -13.35, -5.15, 0.52, 0.5, 0.54, 5, 5, "apartment", "overdrive-grid mirror-neighborhood", 34, Math.PI * 0.5, 0.05],
+    ["West mirror baffle tower", "foam", -13.45, -3.0, 0.48, 0.38, 0.48, 5, 6, "market", "overdrive-grid mirror-baffle", 26, Math.PI * 0.5, -0.04],
+    ["West archive ballast", "concrete", -13.3, 0.98, 0.52, 0.52, 0.54, 6, 5, "apartment", "overdrive-grid archive-ballast", 34, Math.PI * 0.5, 0.05],
+    ["West pressure workshop", "metal", -13.15, 3.12, 0.52, 0.46, 0.58, 4, 6, "warehouse", "overdrive-grid pressure-service", 30, Math.PI * 0.5, -0.04],
+    ["West final bowl flats", "concrete", -13.2, 10.65, 0.5, 0.5, 0.52, 5, 5, "apartment", "overdrive-grid final-bowl", 34, Math.PI * 0.5, 0.05],
+    ["South mirror baffle shops", "foam", -6.25, 11.25, 0.48, 0.38, 0.48, 4, 6, "market", "overdrive-grid mirror-baffle", 26, 0, 0.05],
+    ["South archive ballast flats", "concrete", -2.8, 11.48, 0.52, 0.52, 0.54, 6, 5, "apartment", "overdrive-grid archive-ballast", 34, 0, -0.04],
+    ["South prism service glass", "glass", 1.95, 11.52, 0.44, 0.58, 0.46, 5, 5, "glassTower", "overdrive-grid prism-shard", 34, 0, 0.05],
+    ["South pressure pump row", "metal", 5.35, 11.28, 0.52, 0.46, 0.58, 4, 6, "warehouse", "overdrive-grid pressure-service", 30, 0, -0.04],
+    ["South final bowl depots", "wood", 8.3, 11.0, 0.5, 0.42, 0.52, 4, 6, "utility", "overdrive-grid final-bowl", 28, Math.PI * 0.5, 0.04],
+    ["East prism shard tower", "glass", 13.3, -5.08, 0.44, 0.6, 0.46, 6, 5, "glassTower", "overdrive-grid prism-shard", 34, Math.PI * 0.5, -0.05],
+    ["East archive ballast flats", "concrete", 13.2, -2.95, 0.52, 0.52, 0.54, 5, 5, "apartment", "overdrive-grid archive-ballast", 34, Math.PI * 0.5, 0.04],
+    ["East pressure pump house", "metal", 13.35, 0.98, 0.52, 0.46, 0.58, 4, 6, "warehouse", "overdrive-grid pressure-service", 30, Math.PI * 0.5, -0.04],
+    ["East mirror bumper shops", "foam", 13.15, 3.12, 0.48, 0.38, 0.48, 4, 6, "market", "overdrive-grid mirror-baffle", 26, Math.PI * 0.5, 0.05],
+    ["East final bowl flats", "concrete", 13.25, 10.55, 0.5, 0.5, 0.52, 5, 5, "apartment", "overdrive-grid final-bowl", 34, Math.PI * 0.5, -0.05],
+    ["Inner prism service tower", "glass", -6.1, -4.05, 0.44, 0.6, 0.46, 6, 5, "glassTower", "overdrive-grid prism-shard", 34, Math.PI * 0.08, 0.05],
+    ["Inner mirror ballast west", "concrete", -6.05, -0.25, 0.52, 0.52, 0.54, 5, 5, "apartment", "overdrive-grid mirror-neighborhood", 34, -Math.PI * 0.08, -0.04],
+    ["Inner mirror baffle west", "foam", -5.0, 6.65, 0.48, 0.38, 0.48, 4, 6, "market", "overdrive-grid mirror-baffle", 26, Math.PI * 0.1, 0.05],
+    ["Inner prism service east", "glass", 6.05, -4.05, 0.44, 0.6, 0.46, 6, 5, "glassTower", "overdrive-grid prism-shard", 34, -Math.PI * 0.08, -0.05],
+    ["Inner pressure workshop east", "metal", 6.1, -0.1, 0.52, 0.46, 0.58, 4, 6, "warehouse", "overdrive-grid pressure-service", 30, Math.PI * 0.08, 0.04],
+    ["Inner archive final flats", "concrete", 5.85, 6.75, 0.52, 0.5, 0.54, 5, 5, "apartment", "overdrive-grid final-bowl", 34, -Math.PI * 0.08, -0.04],
+    ["Outer pressure bulb offices", "glass", 9.0, 6.9, 0.44, 0.58, 0.46, 4, 5, "glassTower", "overdrive-grid pressure-service", 32, Math.PI * 0.5, 0.04],
+    ["Outer archive ballast stores", "wood", -9.0, 6.95, 0.5, 0.42, 0.52, 4, 5, "utility", "overdrive-grid archive-ballast", 28, Math.PI * 0.5, -0.04]
+  ]);
 }
 
 function spawnTargetDistrict(context: LevelContext): void {
@@ -5331,6 +5478,25 @@ function spawnCityBuildingStack(context: LevelContext, spec: BuildingSpec): void
     ...scaledSpec,
     position: alignBuildingToCityRoadEdges(scaledSpec)
   });
+}
+
+function spawnDenseDistrictBuildingRows(context: LevelContext, rows: readonly DenseDistrictBuildingRow[]): void {
+  for (const [label, materialId, x, z, width, height, depth, floors, columns, style, zoneId, scoreValue, rotationY, stagger] of rows) {
+    spawnCityBuildingStack(context, {
+      label,
+      materialId,
+      position: new THREE.Vector3(x, 0, z),
+      size: new THREE.Vector3(width, height, depth),
+      floors,
+      columns,
+      scoreRole: "neutral",
+      zoneId,
+      scoreValue,
+      style,
+      rotationY,
+      stagger
+    });
+  }
 }
 
 function scaleCityBuildingHeight(spec: BuildingSpec): BuildingSpec {

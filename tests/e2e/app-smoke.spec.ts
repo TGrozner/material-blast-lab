@@ -5,7 +5,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 const MOBILE_PORTRAIT_VIEWPORT = { width: 390, height: 844 };
 const MOBILE_LANDSCAPE_VIEWPORT = { width: 844, height: 390 };
 const BODY_COUNT_BUDGET = { min: 350, max: 700 };
-const BAKED_LEVEL_BODY_BUDGET = { min: 380, max: 620 };
+const BAKED_LEVEL_BODY_BUDGET = { min: 660, max: 730 };
 const UI_READY_TIMEOUT_MS = 15_000;
 const LEVEL_START_TIMEOUT_MS = process.env.CI ? 60_000 : 30_000;
 const SCORE_REVEAL_TIMEOUT_MS = 45_000;
