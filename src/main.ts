@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import {
+  evaluateMayhemContract,
   loadArcadeProgress,
   recordArcadeRun,
   saveArcadeProgress,
@@ -8,20 +9,25 @@ import {
   type ArcadeResult
 } from "./arcade";
 import { DestructionAudio } from "./audio";
-import { AircraftController } from "./aircraft";
 import { CameraRig } from "./cameraRig";
 import { Cannon, type CannonVisualState } from "./cannon";
 import { decorateFragment } from "./cityVisuals";
 import { withSuppressedConsoleWarning } from "./consoleWarnings";
 import { DestructionSystem, type ExplosionAffectedObject, type ExplosionResult } from "./destruction";
-import { DEFAULT_GAME_MODE, GAME_MODES, isGameMode, type GameMode } from "./gameMode";
+import { GAME_MODES } from "./gameMode";
 import { InputController } from "./input";
 import { TEST_CHAMBERS, type TestChamber } from "./levels";
 import {
   chainMilestoneForCombo,
+  dailyContractForDate,
   mayhemContractForRun,
+  replayMomentFromEvents,
+  runFeedbackForScore,
   runVariantForSeed,
+  summarizeScoreSources,
+  type DailyContractDefinition,
   type MayhemContract,
+  type RunFeedback,
   type RunVariant
 } from "./mayhemFeatures";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
@@ -44,7 +50,7 @@ import {
   sanitizeGameSettings
 } from "./settings";
 import { ExplosionSystem, ParticleSystem } from "./vfx";
-import { GameUI, type UILevelOption, type UIResultMeta } from "./ui";
+import { GameUI, type UILevelOption, type UILiveMastery, type UIResultMeta } from "./ui";
 import { graphicTexture, preloadGraphicTextures } from "./visualAssets";
 import { registerDowntownMayhemServiceWorker } from "./serviceWorker";
 import { initializeRapierCompat } from "./rapierInit";
@@ -144,26 +150,6 @@ const SUN_DIRECTION = new THREE.Vector3(-0.24, 0.22, -0.95).normalize();
 const PREMIUM_DAYLIGHT_RENDER_ORDER = 6;
 const PREMIUM_ATMOSPHERE_RENDER_ORDER = 1;
 const ARCADE_LEVELS = TEST_CHAMBERS.map(chamberToArcadeLevel);
-const AIRCRAFT_CRASH_PROJECTILE: ProjectileDefinition = {
-  ...PROJECTILES.slug,
-  name: "RC Crash Plane",
-  shortName: "RC Plane",
-  role: "Pilot crash",
-  color: new THREE.Color(0xffcf5d),
-  impulse: 62,
-  blastRadius: 3.85,
-  fractureBoost: 1.18,
-  scoreModifier: 1.08,
-  description: "Fictional arcade RC plane crash profile."
-};
-const AIRCRAFT_COLLISION_RADIUS = 0.82;
-const AIRCRAFT_GROUND_CRASH_Y = 0.42;
-const AIRCRAFT_DIRECT_IMPACT_MIN_SPEED = 34;
-const AIRCRAFT_FLIGHT_TIMEOUT_MS = 18_000;
-const AIRCRAFT_PENETRATION_MIN_DISTANCE = 2.7;
-const AIRCRAFT_PENETRATION_MAX_DISTANCE = 6.4;
-const AIRCRAFT_PENETRATION_MAX_HITS = 3;
-const AIRCRAFT_PENETRATION_RADIUS = 1.05;
 
 interface BurningHazard {
   id: number;
@@ -246,6 +232,9 @@ interface DowntownMayhemDebugApi {
   getPerfReport(): PerfReport;
   getRenderWarmupState(): RenderWarmupState;
   getCannonVisualState(): CannonVisualState;
+  getRunFeedback(): RunFeedback | null;
+  getLiveMastery(): UILiveMastery | null;
+  getDailyContract(): DailyContractDefinition | null;
   setPerfEnabled(enabled: boolean): void;
   clearPerfReport(): void;
   flushPerfLog(reason?: string): void;
@@ -1036,7 +1025,8 @@ function createSunHaloTexture(): THREE.CanvasTexture {
 type AppShellScreen = "menu" | "settings" | "loading";
 
 interface AppShellCallbacks {
-  startLevel(levelIndex: number, gameMode: GameMode): void;
+  startLevel(levelIndex: number): void;
+  startDaily(contract: DailyContractDefinition): void;
 }
 
 class AppShell {
@@ -1044,6 +1034,7 @@ class AppShell {
   private readonly levelRail: HTMLDivElement;
   private readonly statusValue: HTMLDivElement;
   private readonly progressSummaryValue: HTMLDivElement;
+  private readonly dailyValue: HTMLDivElement;
   private readonly loadingTitle: HTMLElement;
   private readonly loadingStatus: HTMLElement;
   private readonly settingsSummaryValue: HTMLElement;
@@ -1060,8 +1051,9 @@ class AppShell {
   private busy = false;
   private settings = loadGameSettings();
   private progress = loadArcadeProgress(ARCADE_LEVELS);
-  private selectedMode: GameMode = DEFAULT_GAME_MODE;
+  private dailyContract: DailyContractDefinition | null = null;
   private renderedLevelKey = "";
+  private renderedDailyKey = "";
   private renderedSettingsKey = "";
 
   constructor(private readonly callbacks: AppShellCallbacks) {
@@ -1091,18 +1083,9 @@ class AppShell {
           <section class="app-shell__intro">
             <span>OBJECT DESTRUCTION RANGE</span>
             <h1>Downtown Mayhem</h1>
-            <p>Choose a mode and district, wait through the renderer warmup, then make one spectacular arcade run count.</p>
-            <div class="app-shell__modes" role="group" aria-label="Game mode">
-              <button type="button" data-mode="cannon">
-                <strong>Cannon Trial</strong>
-                <span>Fire one arcade projectile.</span>
-              </button>
-              <button type="button" data-mode="plane">
-                <strong>RC Crash Run</strong>
-                <span>Pilot one fictional RC plane into the city.</span>
-              </button>
-            </div>
+            <p>Choose a district, wait through the renderer warmup, then make one spectacular cannon shot count.</p>
             <div class="app-shell__progress" data-role="shell-progress"></div>
+            <div class="app-shell__daily" data-role="shell-daily"></div>
             <div class="app-shell__status" data-role="shell-status"></div>
           </section>
           <section class="app-shell__levels" data-role="shell-levels" aria-label="Districts"></section>
@@ -1171,6 +1154,7 @@ class AppShell {
     this.levelRail = this.requireElement("[data-role='shell-levels']");
     this.statusValue = this.requireElement("[data-role='shell-status']");
     this.progressSummaryValue = this.requireElement("[data-role='shell-progress']");
+    this.dailyValue = this.requireElement("[data-role='shell-daily']");
     this.loadingTitle = this.requireElement("[data-role='shell-loading-title']");
     this.loadingStatus = this.requireElement("[data-role='shell-loading-status']");
     this.settingsSummaryValue = this.requireElement("[data-role='shell-settings-summary']");
@@ -1244,15 +1228,14 @@ class AppShell {
     if (action === "start-arcade") {
       const levelIndex = Number(target.dataset.levelIndex ?? 0);
       if (Number.isFinite(levelIndex)) {
-        this.callbacks.startLevel(levelIndex, this.selectedMode);
+        this.callbacks.startLevel(levelIndex);
       }
       return;
     }
-    const mode = target.dataset.mode;
-    if (isGameMode(mode)) {
-      this.selectedMode = mode;
-      this.renderedLevelKey = "";
-      this.render();
+    if (action === "start-daily") {
+      if (this.dailyContract) {
+        this.callbacks.startDaily(this.dailyContract);
+      }
       return;
     }
     if (action === "settings") {
@@ -1311,6 +1294,7 @@ class AppShell {
   private render(): void {
     this.root.dataset.screen = this.screen;
     this.renderLevels();
+    this.renderDaily();
     this.renderSettings();
   }
 
@@ -1318,7 +1302,6 @@ class AppShell {
     const key = [
       this.progress.highestUnlockedLevel,
       this.progress.totalStars,
-      this.selectedMode,
       ...TEST_CHAMBERS.flatMap((level, index) => {
         const progress = this.progress.levels[level.id];
         return [index, level.name, level.objective, progress?.stars ?? 0, progress?.bestScore ?? 0, progress?.attempts ?? 0];
@@ -1345,15 +1328,34 @@ class AppShell {
           <span>${String(index + 1).padStart(2, "0")} / ${progressText}</span>
           <strong>${escapeShellHtml(level.name)}</strong>
           <em>${escapeShellHtml(level.objective)}</em>
-          <small>${locked ? "Earn 2 stars on the previous district" : `Start ${GAME_MODES[this.selectedMode].name} / ${formatShellScore(attempts)} attempts / Best ${formatShellScore(bestScore)}`}</small>
+          <small>${locked ? "Earn 2 stars on the previous district" : `Start ${GAME_MODES.cannon.name} / ${formatShellScore(attempts)} attempts / Best ${formatShellScore(bestScore)}`}</small>
         </button>
       `;
     }).join("");
-    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
-      const active = button.dataset.mode === this.selectedMode;
-      button.classList.toggle("is-active", active);
-      button.setAttribute("aria-pressed", String(active));
+  }
+
+  private renderDaily(): void {
+    const unlockedCount = Math.max(0, Math.min(TEST_CHAMBERS.length, this.progress.highestUnlockedLevel + 1));
+    this.dailyContract = dailyContractForDate(TEST_CHAMBERS.slice(0, unlockedCount));
+    const daily = this.dailyContract;
+    const key = daily ? [daily.dateKey, daily.levelIndex, daily.projectileId, daily.variant.id, daily.contract.id].join("|") : "none";
+    if (this.renderedDailyKey === key) {
+      return;
     }
+    this.renderedDailyKey = key;
+    if (!daily) {
+      this.dailyValue.innerHTML = "";
+      return;
+    }
+    const level = TEST_CHAMBERS[daily.levelIndex];
+    const projectile = PROJECTILES[daily.projectileId];
+    this.dailyValue.innerHTML = `
+      <button type="button" data-action="start-daily">
+        <span>Daily Contract / ${escapeShellHtml(daily.dateKey)}</span>
+        <strong>${escapeShellHtml(level.name)}</strong>
+        <em>${escapeShellHtml(projectile.shortName)} / ${escapeShellHtml(daily.contract.label)} / ${escapeShellHtml(daily.contract.summary)}</em>
+      </button>
+    `;
   }
 
   private renderSettings(): void {
@@ -1553,6 +1555,8 @@ function installAppShellStyles(): void {
 
     .app-shell__brand span,
     .app-shell__intro > span,
+    .app-shell__daily span,
+    .app-shell__daily em,
     .app-shell__level-card span,
     .app-shell__level-card small,
     .app-shell__settings-panel > span,
@@ -1568,6 +1572,7 @@ function installAppShellStyles(): void {
     .app-shell__topbar button,
     .app-shell__settings-head button,
     .app-shell__segmented button,
+    .app-shell__daily button,
     .app-shell__level-card {
       min-height: 40px;
       border: 1px solid rgba(185, 245, 255, 0.2);
@@ -1639,41 +1644,38 @@ function installAppShellStyles(): void {
       min-width: 0;
     }
 
-    .app-shell__modes {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
+    .app-shell__daily {
       width: min(520px, 100%);
     }
 
-    .app-shell__modes button {
+    .app-shell__daily button {
       display: grid;
       gap: 5px;
-      min-height: 82px;
+      width: 100%;
+      min-height: 88px;
       padding: 12px;
-      border: 1px solid rgba(185, 245, 255, 0.2);
-      border-radius: 7px;
-      color: #f8fdff;
-      background: rgba(255, 255, 255, 0.07);
-      cursor: pointer;
       text-align: left;
+      border-color: rgba(255, 207, 105, 0.34);
+      background: rgba(255, 207, 105, 0.1);
     }
 
-    .app-shell__modes button.is-active {
-      border-color: rgba(121, 240, 255, 0.84);
-      background: rgba(121, 240, 255, 0.14);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    .app-shell__daily button:hover,
+    .app-shell__daily button:focus-visible {
+      border-color: rgba(255, 224, 139, 0.86);
+      background: rgba(255, 207, 105, 0.16);
+      outline: none;
     }
 
-    .app-shell__modes strong {
+    .app-shell__daily strong {
       color: #ffffff;
-      font-size: 15px;
+      font-size: 17px;
       line-height: 1.05;
     }
 
-    .app-shell__modes span {
+    .app-shell__daily em {
       color: #b8ccd6;
       font-size: 12px;
+      font-style: normal;
       line-height: 1.25;
     }
 
@@ -1902,10 +1904,6 @@ function installAppShellStyles(): void {
         font-size: 14px;
       }
 
-      .app-shell__modes {
-        grid-template-columns: 1fr;
-      }
-
       .app-shell__level-card {
         min-height: 124px;
         padding: 13px;
@@ -1941,7 +1939,7 @@ function installAppShellStyles(): void {
 
 interface GameOptions {
   initialLevelIndex?: number;
-  gameMode?: GameMode;
+  dailyContract?: DailyContractDefinition | null;
   onMainMenu?: () => void;
   showLoading?: (levelName: string, status: string) => void;
   updateLoadingStatus?: (status: string) => void;
@@ -2251,7 +2249,6 @@ class Game {
   private readonly explosion: ExplosionSystem;
   private readonly cameraRig: CameraRig;
   private readonly cannon: Cannon;
-  private readonly aircraft: AircraftController;
   private readonly projectiles: ProjectileSystem;
   private readonly scoreTracker = new ShotScoreTracker();
   private readonly runState = new ShotRunState();
@@ -2268,12 +2265,9 @@ class Game {
   private readonly aimVisibleSurfaceTargets: THREE.Object3D[] = [];
   private readonly aimSurfaceHits: THREE.Intersection<THREE.Object3D>[] = [];
   private readonly projectileSegmentCandidates: PhysicsObject[] = [];
-  private readonly aircraftSegmentCandidates: PhysicsObject[] = [];
   private readonly fireSpreadCandidates: PhysicsObject[] = [];
   private readonly projectileCurrentPosition = new THREE.Vector3();
   private readonly projectilePreviousPosition = new THREE.Vector3();
-  private readonly aircraftCurrentPosition = new THREE.Vector3();
-  private readonly aircraftPreviousPosition = new THREE.Vector3();
   private readonly chainSourcePosition = new THREE.Vector3();
   private readonly chainTargetPosition = new THREE.Vector3();
   private readonly chainTowardTarget = new THREE.Vector3();
@@ -2311,7 +2305,6 @@ class Game {
   private readonly visibleRenderMaterialsScratch = new Set<THREE.Material>();
 
   private settings: GameSettings;
-  private readonly gameMode: GameMode;
   private selectedProjectile: ProjectileId = "slug";
   private powerScale = 1;
   private sizeScale = 1;
@@ -2321,11 +2314,13 @@ class Game {
   private levelOptionsCacheProgress: ArcadeProgress | null = null;
   private arcadeResult: ArcadeResult | null = null;
   private arcadeResultMeta: UIResultMeta | null = null;
+  private runFeedback: RunFeedback | null = null;
   private runSeed = createRunSeed();
   private runVariant: RunVariant = runVariantForSeed("hazard-junction", this.runSeed);
   private mayhemContract: MayhemContract | null = null;
   private shotMayhemContract: MayhemContract | null = null;
   private primaryImpactStarted = false;
+  private readonly runScoreEvents: ScoreEvent[] = [];
   private readonly chainMilestonesAwarded = new Set<number>();
   private scoreReadyToFinalize = false;
   private scoreAutoRevealAt: number | null = null;
@@ -2345,7 +2340,6 @@ class Game {
   private moneyShotLockedUntil = 0;
   private readonly projectileSpectacleFocus = new THREE.Vector3();
   private hasProjectileSpectacleFocus = false;
-  private aircraftFlightStartedAt: number | null = null;
   private disposed = false;
   private frozenForCapture = false;
   private levelReloadInProgress = false;
@@ -2391,7 +2385,6 @@ class Game {
     }
 
     this.settings = settings;
-    this.gameMode = options.gameMode ?? DEFAULT_GAME_MODE;
     this.renderer = rendererBundle.renderer;
     this.rendererBackend = rendererBundle.backend;
     this.renderer.domElement.dataset.rendererBackend = this.rendererBackend;
@@ -2409,8 +2402,6 @@ class Game {
     this.explosion = new ExplosionSystem(this.particles);
     this.projectiles = new ProjectileSystem(this.physics, this.materials, this.rng);
     this.cannon = new Cannon(this.scene);
-    this.aircraft = new AircraftController();
-    this.scene.add(this.aircraft.getObject3D());
     this.scene.add(this.aimMarker);
     this.scorePopups = new ScorePopupLayer();
 
@@ -2423,7 +2414,6 @@ class Game {
       selectProjectile: (id) => this.selectProjectile(id),
       selectLevel: (index) => this.selectLevel(index),
       nextLevel: () => this.nextLevel(),
-      setPlaneBoost: (active) => this.setPlaneBoost(active),
       updateSettings: (patch) => this.updateSettings(patch),
       resetSettings: () => this.resetSettings()
     });
@@ -2435,10 +2425,8 @@ class Game {
       clearDebris: () => this.clearDebris(),
       finishRun: () => this.finishRun(),
       selectProjectile: (id) => this.selectProjectile(id),
-      nextLevel: () => this.nextLevel(),
-      setTouchFlightIndicator: (state) => this.ui.setTouchFlightIndicator(state)
+      nextLevel: () => this.nextLevel()
     });
-    this.input.setMode(this.gameMode);
 
     this.scene.add(createDaySkyDome(this.premiumSceneTextures));
     this.configureLights();
@@ -2476,6 +2464,18 @@ class Game {
     return this.cannon.getVisualState();
   }
 
+  getRunFeedback(): RunFeedback | null {
+    return this.runFeedback;
+  }
+
+  getLiveMastery(): UILiveMastery | null {
+    return this.liveMasteryPreview();
+  }
+
+  getDailyContract(): DailyContractDefinition | null {
+    return this.options.dailyContract ?? null;
+  }
+
   flushPerfLog(reason?: string): void {
     this.perfDiskLogger?.flush(reason ?? "manual");
   }
@@ -2487,7 +2487,7 @@ class Game {
   freezeForCapture(): DowntownMayhemRenderStats {
     this.frozenForCapture = true;
     void this.renderer.setAnimationLoop(null);
-    if (this.gameMode === "cannon" && this.runState.phase === "aim") {
+    if (this.runState.phase === "aim") {
       this.cameraRig.setCityAimView(this.cannon.getCameraAnchor(), this.currentLevel().cameraTarget);
     }
     this.cameraRig.snapToDesiredView();
@@ -2520,8 +2520,6 @@ class Game {
     this.particles.dispose();
     this.destruction.clearVisualFragments();
     this.projectiles.clearActive();
-    this.scene.remove(this.aircraft.getObject3D());
-    this.aircraft.dispose();
     this.physics.clearDynamic();
     this.physics.clearStatics();
     this.clearLevelDecorations();
@@ -2669,11 +2667,9 @@ class Game {
   private updateHud(): void {
     const level = this.currentLevel();
     this.ui.update({
-      gameMode: this.gameMode,
       projectileId: this.selectedProjectile,
       projectile: PROJECTILES[this.selectedProjectile],
       shotAvailable: this.runState.shotAvailable,
-      isFlyingRun: this.gameMode === "plane" && this.runState.phase === "flight" && !this.aircraft.isCrashed(),
       canFinishRun: this.runState.phase === "spectacle" && !this.runState.score && this.scoreReadyToFinalize,
       bodyCount: this.physics.getDynamicBodyCount(),
       levelName: level.name,
@@ -2688,10 +2684,12 @@ class Game {
       totalStars: this.arcadeProgress.totalStars,
       arcadeResult: this.arcadeResult,
       resultMeta: this.arcadeResultMeta,
+      runFeedback: this.runFeedback,
       settings: this.settings,
       status: this.status,
       fps: this.displayedFps,
       liveScore: this.liveScorePreview(),
+      liveMastery: this.liveMasteryPreview(),
       score: this.runState.score
     });
   }
@@ -2701,6 +2699,40 @@ class Game {
       return null;
     }
     return this.scoreTracker.preview();
+  }
+
+  private liveMasteryPreview(): UILiveMastery | null {
+    const score = this.liveScorePreview();
+    if (!score) {
+      return null;
+    }
+    const level = this.currentLevel();
+    const scoreTarget =
+      score.totalScore < level.mission.scoreThresholds.oneStar
+        ? level.mission.scoreThresholds.oneStar
+        : score.totalScore < level.mission.scoreThresholds.twoStar
+          ? level.mission.scoreThresholds.twoStar
+          : level.mission.scoreThresholds.threeStar;
+    const bonusMetric = level.mission.bonusThreshold.metric;
+    const bonusValue = score[bonusMetric];
+    const bonusTarget = level.mission.bonusThreshold.minimum;
+    const contractResult = evaluateMayhemContract(this.shotMayhemContract?.objectives ?? this.mayhemContract?.objectives, score, {
+      projectileId: this.selectedProjectile
+    });
+    const completedContract = contractResult?.objectives.filter((objective) => objective.completed).length ?? 0;
+    const totalContract = contractResult?.objectives.length ?? 0;
+    return {
+      scoreLabel: "Mayhem",
+      scoreValue: `${formatCompactScore(score.totalScore)} / ${formatCompactScore(scoreTarget)}`,
+      scoreProgress: scoreTarget <= 0 ? 1 : THREE.MathUtils.clamp(score.totalScore / scoreTarget, 0, 1),
+      bonusLabel: metricShortLabel(bonusMetric),
+      bonusValue: `${formatCompactScore(bonusValue)} / ${formatCompactScore(bonusTarget)}`,
+      bonusProgress: bonusTarget <= 0 ? 1 : THREE.MathUtils.clamp(bonusValue / bonusTarget, 0, 1),
+      contractLabel: this.shotMayhemContract?.label ?? this.mayhemContract?.label ?? "Contract",
+      contractValue: totalContract > 0 ? `${completedContract}/${totalContract}` : "0/0",
+      contractProgress: totalContract > 0 ? completedContract / totalContract : 0,
+      contractCompleted: totalContract > 0 && completedContract === totalContract
+    };
   }
 
   private refreshRunPlanning(): void {
@@ -2726,6 +2758,8 @@ class Game {
     this.shotMayhemContract = null;
     this.primaryImpactStarted = false;
     this.chainMilestonesAwarded.clear();
+    this.runScoreEvents.length = 0;
+    this.runFeedback = null;
     this.scoreReadyToFinalize = false;
     this.scoreAutoRevealAt = null;
     this.scoreSpectacleStartedAt = null;
@@ -2746,6 +2780,7 @@ class Game {
     if (events.length === 0) {
       return;
     }
+    this.runScoreEvents.push(...events);
     this.scoreSettleLastActivityAt = performance.now();
     this.scorePopups.push(events, revealDelaySeconds);
     const milestone = this.nextChainMilestone(events);
@@ -2868,12 +2903,7 @@ class Game {
     }
   }
 
-  private updatePhase(deltaSeconds: number): void {
-    if (this.gameMode === "plane") {
-      this.updateAircraftPhase(deltaSeconds);
-      return;
-    }
-
+  private updatePhase(_deltaSeconds: number): void {
     const active = this.projectiles.getActive();
     if (this.runState.phase === "aim") {
       this.cannon.setTrajectoryVisible(true);
@@ -2893,30 +2923,6 @@ class Game {
       const impact = this.detectImpact(active);
       if (impact || active.age > 7.5) {
         this.handleImpact(impact?.point ?? position, active, impact?.object ?? null);
-      }
-      return;
-    }
-
-    this.updateScoreReveal();
-  }
-
-  private updateAircraftPhase(deltaSeconds: number): void {
-    if (this.runState.phase === "aim") {
-      this.cameraRig.followAircraft(this.aircraft.getPosition(), this.aircraft.getForward(), this.aircraft.getUp());
-      this.status = this.aircraftReadyStatus();
-      return;
-    }
-
-    if (this.runState.phase === "flight" && !this.aircraft.isCrashed()) {
-      this.aircraft.update(this.input.getPlaneInput(), deltaSeconds);
-      this.cameraRig.followAircraft(this.aircraft.getPosition(), this.aircraft.getForward(), this.aircraft.getUp());
-      const impact = this.detectAircraftCrash();
-      if (impact) {
-        this.handleAircraftCrash(impact.point, impact.object);
-      } else if (this.aircraftFlightStartedAt !== null && performance.now() - this.aircraftFlightStartedAt >= AIRCRAFT_FLIGHT_TIMEOUT_MS) {
-        this.handleAircraftCrash(this.aircraft.getPosition(), null);
-      } else {
-        this.status = this.aircraftFlightStatus();
       }
       return;
     }
@@ -3239,17 +3245,24 @@ class Game {
     this.nextChainCooldownSweep = 0;
     this.spectacleFocusScore = 0;
     this.spectacleFocusUpdatedAt = 0;
-    this.aircraftFlightStartedAt = null;
     this.clearProjectileSpectacleFocus();
     this.runState.resetAim();
     this.arcadeResult = null;
     this.arcadeResultMeta = null;
+    this.runFeedback = null;
     this.resetRunTelemetry();
-    this.runSeed = createRunSeed();
+    const daily = this.options.dailyContract?.levelId === level.id ? this.options.dailyContract : null;
+    if (daily) {
+      this.runSeed = daily.seed;
+      this.selectedProjectile = daily.projectileId;
+      this.runVariant = daily.variant;
+    } else {
+      this.runSeed = createRunSeed();
+      this.runVariant = runVariantForSeed(level.id, this.runSeed);
+    }
     this.rng.reset(this.runSeed);
-    this.runVariant = runVariantForSeed(level.id, this.runSeed);
     if (import.meta.env.DEV) {
-      console.debug(`[Downtown Mayhem] run seed ${this.runSeed}`);
+      console.debug(`[Downtown Mayhem] run seed ${this.runSeed}${daily ? ` daily ${daily.dateKey}` : ""}`);
     }
     this.scorePopups.clear();
     this.slowMotionTimer = 0;
@@ -3257,25 +3270,17 @@ class Game {
     this.aimTrafficAccumulator = 0;
     this.cameraRig.resetTransientMotion();
     this.cannon.setBasePosition(level.cannonPosition);
-    this.cannon.group.visible = this.gameMode === "cannon";
-    this.cannon.setTrajectoryVisible(this.gameMode === "cannon");
+    this.cannon.group.visible = true;
+    this.cannon.setTrajectoryVisible(true);
     this.positionCannonBattery(level.cannonPosition);
     for (const object of this.cannonBatteryObjects) {
-      object.visible = this.gameMode === "cannon";
+      object.visible = true;
     }
     this.aimPoint.copy(level.defaultAimPoint ?? DEFAULT_AIM_POINT);
     this.aimMarkerPoint.set(this.aimPoint.x, AIM_FALLBACK_SURFACE_Y, this.aimPoint.z);
     this.aimSurfaceNormal.copy(AIM_SURFACE_NORMAL);
-    if (this.gameMode === "plane") {
-      const start = aircraftStartPosition(level);
-      const target = level.cameraTarget.clone().add(new THREE.Vector3(0, 2.2, 0));
-      this.aircraft.reset(start, target.sub(start));
-      this.status = this.aircraftReadyStatus();
-    } else {
-      this.aircraft.setVisible(false);
-      this.status = "";
-      this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
-    }
+    this.status = "";
+    this.cannon.aimAtWorldPoint(this.aimPoint, PROJECTILES[this.selectedProjectile].speed * this.powerScale);
     this.refreshRunPlanning();
   }
 
@@ -3371,10 +3376,6 @@ class Game {
       if (this.runState.phase === "aim" && this.runState.shotAvailable) {
         const level = this.currentLevel();
         this.status = `${level.name}: ${level.objective}`;
-      } else if (this.gameMode === "plane" && this.runState.phase === "flight") {
-        this.status = this.aircraftFlightStatus();
-      } else if (this.gameMode === "plane" && this.runState.phase === "aim") {
-        this.status = this.aircraftReadyStatus();
       }
     } catch (error) {
       if (this.disposed || token !== this.renderWarmupToken) {
@@ -3579,10 +3580,6 @@ class Game {
       if (this.runState.phase === "aim" && this.runState.shotAvailable) {
         const level = this.currentLevel();
         this.status = `${level.name}: ${level.objective}`;
-      } else if (this.gameMode === "plane" && this.runState.phase === "flight") {
-        this.status = this.aircraftFlightStatus();
-      } else if (this.gameMode === "plane" && this.runState.phase === "aim") {
-        this.status = this.aircraftReadyStatus();
       }
     } catch (error) {
       if (this.disposed || token !== this.renderWarmupToken) {
@@ -3998,10 +3995,6 @@ class Game {
     if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
-    if (this.gameMode === "plane") {
-      this.startAircraftRun();
-      return;
-    }
     if (this.renderWarmupState.phase === "warming") {
       this.status = "Renderer preparing impact shaders. Fire is armed in a moment.";
       this.audio.playUiReject();
@@ -4030,29 +4023,6 @@ class Game {
     this.cameraRig.shake(projectile.id === "gravity" ? 0.36 : 0.24, 0.48);
     this.runState.beginFlight();
     this.status = `${projectile.name} fired from the high battery.`;
-  }
-
-  private startAircraftRun(): void {
-    if (this.renderWarmupState.phase === "warming") {
-      this.status = "Renderer preparing impact shaders. RC run is armed in a moment.";
-      this.audio.playUiReject();
-      return;
-    }
-    if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
-      this.status = this.aircraft.isCrashed() ? "Retry to launch another RC crash run." : "RC Crash Run is already moving.";
-      return;
-    }
-    if (perfMonitor.isEnabled()) {
-      perfMonitor.clear();
-      this.perfDiskLogger?.flush("plane-run-start");
-    }
-    this.clearProjectileSpectacleFocus();
-    this.resetRunTelemetry();
-    this.shotMayhemContract = this.mayhemContract;
-    this.scoreTracker.beginShot(AIRCRAFT_CRASH_PROJECTILE);
-    this.aircraftFlightStartedAt = performance.now();
-    this.runState.beginFlight();
-    this.status = this.aircraftFlightStatus();
   }
 
   private openMainMenu(): void {
@@ -4094,6 +4064,16 @@ class Game {
     });
     this.arcadeProgress = recorded.progress;
     this.arcadeResult = recorded.result;
+    this.runFeedback = runFeedbackForScore({
+      score,
+      mission: level.mission,
+      variant: this.runVariant,
+      contract: shotContract,
+      contractResult: recorded.result.contract,
+      topSources: summarizeScoreSources(this.runScoreEvents),
+      replayMoment: replayMomentFromEvents(this.runScoreEvents),
+      projectileId: this.selectedProjectile
+    });
     const newBest = score.totalScore > previousBestScore;
     this.arcadeResultMeta = {
       previousBestScore,
@@ -4148,142 +4128,6 @@ class Game {
 
     active.previousPosition.copy(current);
     return best ? { point: best.point, object: best.object } : null;
-  }
-
-  private detectAircraftCrash(): { point: THREE.Vector3; object: PhysicsObject | null } | null {
-    const current = this.aircraftCurrentPosition.copy(this.aircraft.getPosition());
-    const previous = this.aircraftPreviousPosition.copy(this.aircraft.getPreviousPosition());
-    if (current.y <= AIRCRAFT_GROUND_CRASH_Y) {
-      return { point: current.clone().setY(0.08), object: null };
-    }
-
-    let best: { point: THREE.Vector3; object: PhysicsObject; distance: number } | null = null;
-    for (const object of this.physics.getSegmentCandidatesInto(
-      this.aircraftSegmentCandidates,
-      previous,
-      current,
-      AIRCRAFT_COLLISION_RADIUS + 0.42
-    )) {
-      if (object.category === "projectile" || object.isDebris || object.zoneId === "surface") {
-        continue;
-      }
-      const candidate = sweptImpactCandidate(AIRCRAFT_COLLISION_RADIUS, object, previous, current);
-      if (candidate && (!best || candidate.distance < best.distance)) {
-        best = candidate;
-      }
-    }
-
-    return best ? { point: best.point, object: best.object } : null;
-  }
-
-  private handleAircraftCrash(point: THREE.Vector3, hitObject: PhysicsObject | null): void {
-    if (this.aircraft.isCrashed() || this.runState.phase !== "flight") {
-      return;
-    }
-    this.primaryImpactStarted = true;
-    const velocity = this.aircraft.getVelocity();
-    const speed = velocity.length();
-    const directionVector = speed > 0.01 ? velocity.clone().normalize() : this.aircraft.getForward();
-    const sourceObject = this.createAircraftImpactSource(point, directionVector, velocity);
-    const penetration = this.computeAircraftPenetration(point, directionVector, speed, sourceObject, hitObject);
-    this.aircraftFlightStartedAt = null;
-    this.aircraft.markCrashed();
-    this.input.setPlaneBoost(false);
-    this.clearProjectileSpectacleFocus();
-    this.resolveArcadeImpact({
-      point: penetration.detonationPoint,
-      projectile: AIRCRAFT_CRASH_PROJECTILE,
-      sourceObject,
-      hitObject,
-      directionVector,
-      sourceSpeed: Math.max(AIRCRAFT_DIRECT_IMPACT_MIN_SPEED, speed * 1.55),
-      powerScale: THREE.MathUtils.clamp(0.92 + speed / 80, 1.02, 1.28),
-      sizeScale: 1.08,
-      cleanupSource: () => this.physics.removeObject(sourceObject.id),
-      directResults: penetration.directResults.length > 0 ? penetration.directResults : undefined,
-      statusName: "RC crash"
-    });
-  }
-
-  private computeAircraftPenetration(
-    entryPoint: THREE.Vector3,
-    directionVector: THREE.Vector3,
-    speed: number,
-    sourceObject: PhysicsObject,
-    hitObject: PhysicsObject | null
-  ): { detonationPoint: THREE.Vector3; directResults: ExplosionResult[] } {
-    if (!hitObject || !hitObject.destructible || speed <= 0.01) {
-      return { detonationPoint: entryPoint.clone(), directResults: [] };
-    }
-
-    const penetrationDistance = THREE.MathUtils.clamp(
-      THREE.MathUtils.mapLinear(speed, 14, 28, AIRCRAFT_PENETRATION_MIN_DISTANCE, AIRCRAFT_PENETRATION_MAX_DISTANCE),
-      AIRCRAFT_PENETRATION_MIN_DISTANCE,
-      AIRCRAFT_PENETRATION_MAX_DISTANCE
-    );
-    const pathStart = entryPoint.clone().addScaledVector(directionVector, -0.28);
-    const pathEnd = entryPoint.clone().addScaledVector(directionVector, penetrationDistance);
-    pathEnd.y = Math.max(0.08, pathEnd.y);
-
-    const candidates: Array<{ point: THREE.Vector3; object: PhysicsObject; distance: number }> = [];
-    const seen = new Set<number>();
-    const addCandidate = (candidate: { point: THREE.Vector3; object: PhysicsObject; distance: number } | null): void => {
-      if (!candidate || seen.has(candidate.object.id)) {
-        return;
-      }
-      seen.add(candidate.object.id);
-      candidates.push(candidate);
-    };
-
-    addCandidate({ point: entryPoint.clone(), object: hitObject, distance: 0 });
-    for (const object of this.physics.getSegmentCandidatesInto(
-      this.aircraftSegmentCandidates,
-      pathStart,
-      pathEnd,
-      AIRCRAFT_PENETRATION_RADIUS + 0.55
-    )) {
-      if (object.category === "projectile" || object.isDebris || object.zoneId === "surface") {
-        continue;
-      }
-      addCandidate(sweptImpactCandidate(AIRCRAFT_PENETRATION_RADIUS, object, pathStart, pathEnd));
-    }
-
-    candidates.sort((a, b) => a.distance - b.distance);
-    const directResults: ExplosionResult[] = [];
-    const impactSpeed = Math.max(AIRCRAFT_DIRECT_IMPACT_MIN_SPEED, speed * 1.62);
-    for (const candidate of candidates.slice(0, AIRCRAFT_PENETRATION_MAX_HITS)) {
-      if (!candidate.object.canFracture) {
-        this.applyDirectImpactImpulse(AIRCRAFT_CRASH_PROJECTILE, candidate.object, directionVector, 1.05);
-      }
-      directResults.push(this.destruction.impact(sourceObject, candidate.object, candidate.point, impactSpeed));
-    }
-
-    const deepestHit = candidates[Math.min(candidates.length - 1, AIRCRAFT_PENETRATION_MAX_HITS - 1)];
-    const detonationPoint = (deepestHit?.point ?? entryPoint).clone().lerp(pathEnd, deepestHit ? 0.48 : 1);
-    detonationPoint.y = Math.max(0.08, detonationPoint.y);
-    return { detonationPoint, directResults };
-  }
-
-  private createAircraftImpactSource(point: THREE.Vector3, direction: THREE.Vector3, velocity: THREE.Vector3): PhysicsObject {
-    const source = this.physics.addDynamicBox({
-      label: "RC crash impact proxy",
-      material: this.materials.get("metal"),
-      renderMaterial: this.materials.getRenderMaterial("metal"),
-      position: point.clone().add(direction.clone().multiplyScalar(-0.24)),
-      size: new THREE.Vector3(0.9, 0.28, 1.35),
-      rotation: this.aircraft.getObject3D().quaternion.clone(),
-      linearVelocity: velocity,
-      category: "projectile",
-      destructible: false,
-      canFracture: false,
-      isDebris: false,
-      scoreValue: 0,
-      collisionEvents: false,
-      ccd: false,
-      density: 0.9
-    });
-    source.mesh.visible = false;
-    return source;
   }
 
   private handleImpact(point: THREE.Vector3, active: ActiveProjectile, hitObject: PhysicsObject | null): void {
@@ -5285,16 +5129,8 @@ class Game {
     this.status = "Loose debris cleared. The trial state is unchanged.";
   }
 
-  private setPlaneBoost(active: boolean): void {
-    this.input.setPlaneBoost(active);
-  }
-
   private selectProjectile(id: ProjectileId): void {
     if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
-      return;
-    }
-    if (this.gameMode === "plane") {
-      this.status = "RC Crash Run uses the plane as the single arcade projectile.";
       return;
     }
     if (!this.runState.shotAvailable || this.runState.phase !== "aim") {
@@ -5358,14 +5194,6 @@ class Game {
     return TEST_CHAMBERS[this.levelIndex];
   }
 
-  private aircraftReadyStatus(): string {
-    return `${this.currentLevel().name}: RC plane ready. Press START RUN, then steer into the city.`;
-  }
-
-  private aircraftFlightStatus(): string {
-    return `${this.currentLevel().name}: steer the RC plane into the city. Boost for a harder arcade crash.`;
-  }
-
   private currentLevelProgress() {
     return this.arcadeProgress.levels[this.currentLevel().id];
   }
@@ -5389,13 +5217,13 @@ class Game {
   private resize(): void {
     const viewport = window.visualViewport;
     this.cameraRig.resize(Math.round(viewport?.width ?? window.innerWidth), Math.round(viewport?.height ?? window.innerHeight));
-    if (this.gameMode === "cannon" && this.runState.phase === "aim") {
+    if (this.runState.phase === "aim") {
       this.cameraRig.setCityAimView(this.cannon.getCameraAnchor(), this.currentLevel().cameraTarget);
     }
   }
 
   private updateAimMarker(): void {
-    const visible = this.gameMode === "cannon" && this.runState.phase === "aim";
+    const visible = this.runState.phase === "aim";
     this.aimMarker.visible = visible;
     this.renderer.domElement.classList.toggle("is-cannon-aim", visible);
     if (!visible) {
@@ -5493,8 +5321,11 @@ async function boot(): Promise<void> {
   registerDowntownMayhemServiceWorker();
   activeShell?.dispose();
   const shell = new AppShell({
-    startLevel: (levelIndex, gameMode) => {
-      void startLevelFromShell(shell, levelIndex, gameMode);
+    startLevel: (levelIndex) => {
+      void startLevelFromShell(shell, levelIndex);
+    },
+    startDaily: (contract) => {
+      void startLevelFromShell(shell, contract.levelIndex, contract);
     }
   });
   activeShell = shell;
@@ -5516,7 +5347,11 @@ async function boot(): Promise<void> {
   }
 }
 
-async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number, gameMode: GameMode): Promise<void> {
+async function startLevelFromShell(
+  shell: AppShell,
+  requestedLevelIndex: number,
+  dailyContract: DailyContractDefinition | null = null
+): Promise<void> {
   const progress = loadArcadeProgress(ARCADE_LEVELS);
   const levelIndex = clampInitialLevelIndex(requestedLevelIndex, progress.highestUnlockedLevel);
   const level = TEST_CHAMBERS[levelIndex];
@@ -5545,7 +5380,7 @@ async function startLevelFromShell(shell: AppShell, requestedLevelIndex: number,
     await waitForDomPaint();
     const game = new Game(settings, rendererBundle, {
       initialLevelIndex: levelIndex,
-      gameMode,
+      dailyContract: dailyContract?.levelIndex === levelIndex ? dailyContract : null,
       onMainMenu: () => returnToMainMenu(shell),
       showLoading: (levelName, status) => shell.showLoading(levelName, status),
       updateLoadingStatus: (status) => shell.updateLoadingStatus(status),
@@ -5598,6 +5433,9 @@ function installDebugApi(game: Game): void {
     getPerfReport: () => perfMonitor.report(),
     getRenderWarmupState: () => game.getRenderWarmupState(),
     getCannonVisualState: () => game.getCannonVisualState(),
+    getRunFeedback: () => game.getRunFeedback(),
+    getLiveMastery: () => game.getLiveMastery(),
+    getDailyContract: () => game.getDailyContract(),
     setPerfEnabled: (enabled) => perfMonitor.setEnabled(enabled),
     clearPerfReport: () => perfMonitor.clear(),
     flushPerfLog: (reason) => game.flushPerfLog(reason),
@@ -5610,10 +5448,6 @@ function clampInitialLevelIndex(index: number | undefined, highestUnlockedLevel:
   const requested = typeof index === "number" && Number.isFinite(index) ? Math.trunc(index) : 0;
   const maxUnlockedLevel = Math.max(0, Math.min(TEST_CHAMBERS.length - 1, highestUnlockedLevel));
   return THREE.MathUtils.clamp(requested, 0, maxUnlockedLevel);
-}
-
-function aircraftStartPosition(level: TestChamber): THREE.Vector3 {
-  return level.cameraTarget.clone().add(new THREE.Vector3(0, 10.5, 24.5));
 }
 
 function vectorFromRapier(v: { x: number; y: number; z: number }): THREE.Vector3 {
@@ -6703,6 +6537,34 @@ function scoreStatus(score: ScoreBreakdown, result: ArcadeResult): string {
     return `Perfect run: ${score.totalScore}. 3/3 stars earned.`;
   }
   return `Mission complete: ${score.totalScore}. ${result.stars}/3 stars earned.`;
+}
+
+function formatCompactScore(value: number): string {
+  const rounded = Math.round(value);
+  if (Math.abs(rounded) >= 1_000_000) {
+    return `${Math.round(rounded / 100_000) / 10}M`;
+  }
+  if (Math.abs(rounded) >= 10_000) {
+    return `${Math.round(rounded / 1_000)}K`;
+  }
+  return rounded.toLocaleString("en-US");
+}
+
+function metricShortLabel(metric: TestChamber["mission"]["bonusThreshold"]["metric"]): string {
+  switch (metric) {
+    case "targetDamage":
+      return "Object";
+    case "collateralChaos":
+      return "Chaos";
+    case "chainReactionBonus":
+      return "Chain score";
+    case "remainingDebrisMotion":
+      return "Motion";
+    case "chainReactionCount":
+      return "Hits";
+    case "maxChainCombo":
+      return "Combo";
+  }
 }
 
 function cinematicImpactStatus(result: ExplosionResult, focusScore: number): string {
