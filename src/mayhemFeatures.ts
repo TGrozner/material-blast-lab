@@ -1,8 +1,9 @@
-import type { ArcadeContractObjective, ArcadeContractResult, ArcadeStars } from "./arcade";
+import type { ArcadeContractObjective, ArcadeContractResult, ArcadeProgress, ArcadeStars } from "./arcade";
 import type { ArcadeMissionFields } from "./levels";
 import {
   IGNITE_CHAIN_LABEL,
   IGNITE_CHAIN_OBJECTIVE_ID,
+  LATE_GAME_PROJECTILE_ORDER,
   projectileOrderForUnlockedLevels,
   type ProjectileId
 } from "./projectile";
@@ -26,6 +27,13 @@ export interface ProjectileObjective {
   projectileIds?: ProjectileId[];
 }
 
+export type ProjectileObjectivesByProjectile = Record<ProjectileId, ProjectileObjective>;
+
+export interface LevelProjectileObjectives {
+  levelId: string;
+  objectives: ProjectileObjectivesByProjectile;
+}
+
 export interface MayhemContract {
   id: string;
   label: string;
@@ -39,15 +47,21 @@ export interface RunScoreSource {
   points: number;
 }
 
+export type RunReplayMomentKind = "impact" | "boss" | "ignition" | "chain" | "source";
+
 export interface RunReplayMoment {
+  id: string;
+  kind: RunReplayMomentKind;
   label: string;
   points: number;
+  position: { x: number; y: number; z: number };
 }
 
 export interface RunFeedback {
   topSources: RunScoreSource[];
   nearMisses: string[];
   replayMoment: RunReplayMoment | null;
+  replayTimeline: RunReplayMoment[];
   projectileObjective: ProjectileObjective | null;
   variant: RunVariant;
   contract: MayhemContract | null;
@@ -89,9 +103,33 @@ export interface DailyResultMeta {
   shareText: string;
 }
 
-interface DailyContractLevel {
+export interface MayhemFeatureLevel {
   id: string;
   mission: ArcadeMissionFields;
+}
+
+export interface WeeklyMayhemRouteEntry {
+  weekKey: string;
+  seed: number;
+  runIndex: number;
+  levelIndex: number;
+  levelId: string;
+  projectileId: ProjectileId;
+  variant: RunVariant;
+  projectileObjective: ProjectileObjective;
+  contract: MayhemContract;
+  localBestScore: number;
+  localBestStars: ArcadeStars;
+  localThreeStarCleared: boolean;
+}
+
+export interface WeeklyMayhemRoute {
+  weekKey: string;
+  seed: number;
+  entries: WeeklyMayhemRouteEntry[];
+  localCumulativeBestScore: number;
+  localCompletedRuns: number;
+  localStars: number;
 }
 
 type DailyResultStorage = Pick<Storage, "getItem" | "setItem">;
@@ -128,6 +166,173 @@ const RUN_VARIANTS: RunVariant[] = [
   }
 ];
 
+const DISTRICT_PROJECTILE_OBJECTIVES: Record<
+  string,
+  Partial<
+    Record<
+      ProjectileId,
+      {
+        idSuffix: string;
+        label: string;
+        metric?: ArcadeContractObjective["metric"];
+        minimum?: number;
+        minimumMultiplier?: number;
+        projectileIds?: ProjectileId[];
+      }
+    >
+  >
+> = {
+  "hazard-junction": {
+    slug: {
+      idSuffix: "slug-toxic-core",
+      label: "Normal objective: crack the toxic core before chasing street debris",
+      minimumMultiplier: 0.95
+    },
+    scatter: {
+      idSuffix: "frag-tanker-spray",
+      label: "Frag objective: spray clusters through tankers, booths, and traffic",
+      minimumMultiplier: 1.08
+    },
+    pulse: {
+      idSuffix: "impulse-storefront-wave",
+      label: "Impulse objective: shove storefront glass and vehicles into one wave",
+      minimumMultiplier: 1.05
+    },
+    gravity: {
+      idSuffix: "heavy-pump-line",
+      label: "Heavy objective: pierce pump, sign, and depot in one line",
+      metric: "totalScore",
+      minimumMultiplier: 0.9
+    },
+    ignite: {
+      idSuffix: "ignite-fuel-relay",
+      label: `${IGNITE_CHAIN_LABEL}: light the fuel lane and wait for the junction relay`,
+      minimumMultiplier: 0.96
+    }
+  },
+  "breaker-yard": {
+    slug: {
+      idSuffix: "slug-breaker-spine",
+      label: "Normal objective: split the breaker spine and cash the transformer yard",
+      minimumMultiplier: 1.02
+    },
+    scatter: {
+      idSuffix: "frag-relay-row",
+      label: "Frag objective: flood both relay rows with secondary hits",
+      minimumMultiplier: 1.14
+    },
+    pulse: {
+      idSuffix: "impulse-yard-surge",
+      label: "Impulse objective: shove substation cargo through the breaker market",
+      minimumMultiplier: 1.08
+    },
+    gravity: {
+      idSuffix: "heavy-transformer-punch",
+      label: "Heavy objective: punch through spine, transformer, and control house",
+      metric: "targetDamage",
+      minimumMultiplier: 1.04
+    },
+    ignite: {
+      idSuffix: "ignite-power-grid",
+      label: `${IGNITE_CHAIN_LABEL}: arm the power grid before the capacitor yard pops`,
+      minimumMultiplier: 1.02
+    }
+  },
+  "switchback-crush": {
+    slug: {
+      idSuffix: "slug-archive-spine",
+      label: "Normal objective: break the archive spine before the switchback redirects",
+      minimumMultiplier: 1
+    },
+    scatter: {
+      idSuffix: "frag-glass-baffles",
+      label: "Frag objective: bounce shards across both glass baffle lanes",
+      minimumMultiplier: 1.1
+    },
+    pulse: {
+      idSuffix: "impulse-foam-redirect",
+      label: "Impulse objective: push foam redirects into archive glass and service traffic",
+      metric: "collateralChaos",
+      minimumMultiplier: 1.16
+    },
+    gravity: {
+      idSuffix: "heavy-switchback-line",
+      label: "Heavy objective: line up both switchback blocks in one pass",
+      metric: "totalScore",
+      minimumMultiplier: 0.94
+    },
+    ignite: {
+      idSuffix: "ignite-archive-fire",
+      label: `${IGNITE_CHAIN_LABEL}: start the service tanker and let archive glass carry fire`,
+      minimumMultiplier: 1
+    }
+  },
+  "relay-gauntlet": {
+    slug: {
+      idSuffix: "slug-capacitor-shield",
+      label: "Normal objective: break the capacitor shield phase cleanly",
+      metric: "targetDamage",
+      minimumMultiplier: 1.06
+    },
+    scatter: {
+      idSuffix: "frag-relay-gates",
+      label: "Frag objective: keep every relay gate feeding the boss lane",
+      metric: "chainReactionCount",
+      minimumMultiplier: 1.2
+    },
+    pulse: {
+      idSuffix: "impulse-traffic-latch",
+      label: "Impulse objective: flip traffic into the latch phase and rebound pad",
+      metric: "collateralChaos",
+      minimumMultiplier: 1.14
+    },
+    gravity: {
+      idSuffix: "heavy-capacitor-core",
+      label: "Heavy objective: pierce the shield, latch, and capacitor core",
+      metric: "totalScore",
+      minimumMultiplier: 0.98
+    },
+    ignite: {
+      idSuffix: "ignite-relay-chain",
+      label: `${IGNITE_CHAIN_LABEL}: chain the relay gates before the core cash-out`,
+      metric: "maxChainCombo",
+      minimumMultiplier: 1.08
+    }
+  },
+  "overdrive-core": {
+    slug: {
+      idSuffix: "slug-prism-order",
+      label: "Normal objective: open the prism order seal and keep the lens exposed",
+      metric: "targetDamage",
+      minimumMultiplier: 1.04
+    },
+    scatter: {
+      idSuffix: "frag-pressure-bulbs",
+      label: "Frag objective: spray pressure bulbs across both archive arms",
+      metric: "chainReactionCount",
+      minimumMultiplier: 1.16
+    },
+    pulse: {
+      idSuffix: "impulse-cashout-wave",
+      label: "Impulse objective: rebound the cash-out wave through the final bowl",
+      metric: "collateralChaos",
+      minimumMultiplier: 1.2
+    },
+    gravity: {
+      idSuffix: "heavy-prism-core",
+      label: "Heavy objective: drive one line through order, latch, and cash-out core",
+      metric: "totalScore",
+      minimumMultiplier: 1
+    },
+    ignite: {
+      idSuffix: "ignite-overdrive-route",
+      label: `${IGNITE_CHAIN_LABEL}: light both pressure bulbs before the prism cash-out`,
+      metric: "maxChainCombo",
+      minimumMultiplier: 1.12
+    }
+  }
+};
+
 export function runVariantForSeed(levelId: string, seed: number): RunVariant {
   const hash = hashString(`${levelId}:${seed}`);
   return RUN_VARIANTS[hash % RUN_VARIANTS.length];
@@ -141,7 +346,7 @@ export function dailyDateKey(date = new Date()): string {
 }
 
 export function dailyContractForDate(
-  levels: readonly DailyContractLevel[],
+  levels: readonly MayhemFeatureLevel[],
   date = new Date()
 ): DailyContractDefinition | null {
   if (levels.length === 0) {
@@ -163,6 +368,57 @@ export function dailyContractForDate(
     projectileId,
     variant,
     contract: mayhemContractForRun(level.id, level.mission, projectileId, variant)
+  };
+}
+
+export function weeklyRouteKey(date = new Date()): string {
+  const utcDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = utcDate.getUTCDay() || 7;
+  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - day);
+  const weekYear = utcDate.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const weekNumber = Math.ceil(((utcDate.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `${weekYear}-W${String(weekNumber).padStart(2, "0")}`;
+}
+
+export function weeklyMayhemRouteForDate(
+  levels: readonly MayhemFeatureLevel[],
+  date = new Date(),
+  progress: ArcadeProgress | null = null
+): WeeklyMayhemRoute {
+  const weekKey = weeklyRouteKey(date);
+  const seed = hashString(`downtown-weekly:${weekKey}`);
+  const projectileOrder = weeklyProjectileOrder(seed);
+  const routeLevels = levels.slice(0, 5);
+  const entries = routeLevels.map((level, levelIndex): WeeklyMayhemRouteEntry => {
+    const projectileId = projectileOrder[levelIndex % projectileOrder.length];
+    const variantSeed = hashString(`${weekKey}:${level.id}:${projectileId}:${levelIndex}`);
+    const variant = runVariantForSeed(level.id, variantSeed);
+    const localProgress = progress?.levels[level.id];
+    const localBestStars = normalizeStars(localProgress?.stars);
+    return {
+      weekKey,
+      seed: variantSeed,
+      runIndex: levelIndex + 1,
+      levelIndex,
+      levelId: level.id,
+      projectileId,
+      variant,
+      projectileObjective: projectileObjectiveForRun(level.id, projectileId, level.mission),
+      contract: mayhemContractForRun(level.id, level.mission, projectileId, variant),
+      localBestScore: clampWholeNumber(localProgress?.bestScore),
+      localBestStars,
+      localThreeStarCleared: localBestStars >= 3
+    };
+  });
+
+  return {
+    weekKey,
+    seed,
+    entries,
+    localCumulativeBestScore: entries.reduce((sum, entry) => sum + entry.localBestScore, 0),
+    localCompletedRuns: entries.filter((entry) => entry.localBestStars >= 2).length,
+    localStars: entries.reduce((sum, entry) => sum + entry.localBestStars, 0)
   };
 }
 
@@ -290,13 +546,61 @@ export function projectileObjectiveFor(projectileId: ProjectileId, mission: Arca
   }
 }
 
+export function projectileObjectivesForLevel(level: MayhemFeatureLevel): LevelProjectileObjectives {
+  return {
+    levelId: level.id,
+    objectives: projectileObjectivesByProjectileForLevel(level.id, level.mission)
+  };
+}
+
+export function projectileObjectiveForLevel(
+  levels: readonly MayhemFeatureLevel[],
+  levelId: string,
+  projectileId: ProjectileId
+): ProjectileObjective | null {
+  const level = levels.find((candidate) => candidate.id === levelId);
+  return level ? projectileObjectiveForRun(level.id, projectileId, level.mission) : null;
+}
+
+export function projectileObjectivesForLevels(levels: readonly MayhemFeatureLevel[]): LevelProjectileObjectives[] {
+  return levels.map((level) => projectileObjectivesForLevel(level));
+}
+
+export function projectileObjectiveForRun(
+  levelId: string,
+  projectileId: ProjectileId,
+  mission: ArcadeMissionFields
+): ProjectileObjective {
+  const base = projectileObjectiveFor(projectileId, mission);
+  const override = DISTRICT_PROJECTILE_OBJECTIVES[levelId]?.[projectileId];
+  if (!override) {
+    return {
+      ...base,
+      id: `${levelId}-${base.id}`
+    };
+  }
+  const minimum =
+    override.minimum ??
+    (typeof base.minimum === "number"
+      ? Math.round(base.minimum * (override.minimumMultiplier ?? 1))
+      : undefined);
+  return {
+    ...base,
+    id: `${levelId}-${override.idSuffix}`,
+    label: override.label,
+    metric: override.metric ?? base.metric,
+    minimum,
+    projectileIds: override.projectileIds ?? base.projectileIds
+  };
+}
+
 export function mayhemContractForRun(
   levelId: string,
   mission: ArcadeMissionFields,
   projectileId: ProjectileId,
   variant: RunVariant
 ): MayhemContract {
-  const projectileObjective = projectileObjectiveFor(projectileId, mission);
+  const projectileObjective = projectileObjectiveForRun(levelId, projectileId, mission);
   const districtMetric = districtContractMetric(variant, projectileId);
   const districtMinimum = districtContractMinimum(mission, districtMetric, variant.contractMultiplier);
   const objectives: ArcadeContractObjective[] = [
@@ -330,13 +634,17 @@ export function runFeedbackForScore(options: {
   contractResult: ArcadeContractResult | null;
   topSources: RunScoreSource[];
   replayMoment: RunReplayMoment | null;
+  replayTimeline?: RunReplayMoment[];
   projectileId: ProjectileId;
+  levelId?: string;
 }): RunFeedback {
+  const replayTimeline = options.replayTimeline ?? (options.replayMoment ? [options.replayMoment] : []);
   return {
     topSources: options.topSources,
     nearMisses: nearMissHints(options.score, options.mission, options.contractResult, options.projectileId, options.variant),
     replayMoment: options.replayMoment,
-    projectileObjective: projectileObjectiveFor(options.projectileId, options.mission),
+    replayTimeline,
+    projectileObjective: projectileObjectiveForRun(options.levelId ?? "generic", options.projectileId, options.mission),
     variant: options.variant,
     contract: options.contract,
     contractResult: options.contractResult
@@ -367,22 +675,25 @@ export function summarizeScoreSources(events: readonly ScoreEvent[], limit = 3):
 }
 
 export function replayMomentFromEvents(events: readonly ScoreEvent[]): RunReplayMoment | null {
-  let best: ScoreEvent | null = null;
+  return replayTimelineFromEvents(events, 1)[0] ?? null;
+}
+
+export function replayTimelineFromEvents(events: readonly ScoreEvent[], limit = 4): RunReplayMoment[] {
+  const bestByKind = new Map<RunReplayMomentKind, ScoreEvent>();
   for (const event of events) {
     if (event.points <= 0) {
       continue;
     }
-    if (!best || replayMomentWeight(event) > replayMomentWeight(best)) {
-      best = event;
+    const kind = replayMomentKind(event);
+    const current = bestByKind.get(kind);
+    if (!current || replayMomentWeight(event) > replayMomentWeight(current)) {
+      bestByKind.set(kind, event);
     }
   }
-  if (!best) {
-    return null;
-  }
-  return {
-    label: best.combo && best.combo >= 2 ? `${best.label} combo` : best.label,
-    points: best.points
-  };
+  return [...bestByKind.entries()]
+    .sort((a, b) => replayMomentWeight(b[1]) - replayMomentWeight(a[1]))
+    .slice(0, Math.max(0, limit))
+    .map(([kind, event], index) => replayMomentFromEvent(event, kind, index));
 }
 
 export function scoreSourceKey(event: ScoreEvent): string {
@@ -401,7 +712,41 @@ export function scoreSourceKey(event: ScoreEvent): string {
 }
 
 function replayMomentWeight(event: ScoreEvent): number {
-  return event.points + (event.combo ?? 0) * 18 + (event.kind === "chain" ? 120 : 0);
+  const kind = replayMomentKind(event);
+  const bossBonus = kind === "boss" ? 220 : 0;
+  const ignitionBonus = kind === "ignition" ? 180 : 0;
+  return event.points + (event.combo ?? 0) * 18 + (event.kind === "chain" ? 120 : 0) + bossBonus + ignitionBonus;
+}
+
+function replayMomentFromEvent(event: ScoreEvent, kind: RunReplayMomentKind, index: number): RunReplayMoment {
+  return {
+    id: `${kind}-${index}-${Math.max(0, Math.round(event.points))}`,
+    kind,
+    label: event.combo && event.combo >= 2 ? `${event.label} combo` : event.label,
+    points: event.points,
+    position: {
+      x: event.position.x,
+      y: event.position.y,
+      z: event.position.z
+    }
+  };
+}
+
+function replayMomentKind(event: ScoreEvent): RunReplayMomentKind {
+  const label = event.label.toLowerCase();
+  if (label.includes("boss") || label.includes("weak point") || label.includes("weak-point")) {
+    return "boss";
+  }
+  if (label.includes(IGNITE_CHAIN_LABEL.toLowerCase()) || label.includes("ignite") || label.includes("ignition")) {
+    return "ignition";
+  }
+  if (event.kind === "chain" || (event.combo ?? 0) >= 4) {
+    return "chain";
+  }
+  if (event.kind === "target") {
+    return "impact";
+  }
+  return "source";
 }
 
 export function chainMilestoneForCombo(combo: number): { combo: number; label: string } | null {
@@ -608,6 +953,19 @@ function dailyResultKey(contract: DailyContractDefinition): string {
 
 function maxStars(first: ArcadeStars, second: ArcadeStars): ArcadeStars {
   return normalizeStars(Math.max(first, second));
+}
+
+function projectileObjectivesByProjectileForLevel(levelId: string, mission: ArcadeMissionFields): ProjectileObjectivesByProjectile {
+  return Object.fromEntries(
+    LATE_GAME_PROJECTILE_ORDER.map((projectileId) => [projectileId, projectileObjectiveForRun(levelId, projectileId, mission)])
+  ) as ProjectileObjectivesByProjectile;
+}
+
+function weeklyProjectileOrder(seed: number): readonly ProjectileId[] {
+  const offset = seed % LATE_GAME_PROJECTILE_ORDER.length;
+  return LATE_GAME_PROJECTILE_ORDER.map(
+    (_projectileId, index) => LATE_GAME_PROJECTILE_ORDER[(index + offset) % LATE_GAME_PROJECTILE_ORDER.length]
+  );
 }
 
 function normalizeStars(value: unknown): ArcadeStars {

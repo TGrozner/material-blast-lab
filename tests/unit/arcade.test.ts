@@ -6,6 +6,7 @@ import {
   type ArcadeLevelDefinition,
   type ArcadeStorage,
   createInitialArcadeProgress,
+  districtMasteryForLevel,
   evaluateArcadeResult,
   loadArcadeProgress,
   recordArcadeRun,
@@ -169,17 +170,37 @@ describe("Arcade progress", () => {
       initial,
       LEVELS,
       "alpha",
-      score({ totalScore: 2100, chainReactionCount: 3 })
+      score({ totalScore: 2100, chainReactionCount: 3, maxChainCombo: 9 }),
+      { projectileId: "scatter" }
     ).progress;
-    const second = recordArcadeRun(first, LEVELS, "alpha", score({ totalScore: 1200 })).progress;
+    const second = recordArcadeRun(
+      first,
+      LEVELS,
+      "alpha",
+      score({ totalScore: 1200, maxChainCombo: 14 }),
+      { projectileId: "pulse" }
+    ).progress;
 
     expect(second.levels.alpha).toEqual({
       attempts: 2,
       bestScore: 2100,
       stars: 3,
-      completed: true
+      completed: true,
+      threeStarCleared: true,
+      bestProjectileId: "scatter",
+      bestCombo: 14
     });
     expect(second.totalStars).toBe(3);
+    expect(districtMasteryForLevel(second, "alpha")).toEqual({
+      levelId: "alpha",
+      attempts: 2,
+      bestScore: 2100,
+      stars: 3,
+      completed: true,
+      threeStarCleared: true,
+      bestProjectileId: "scatter",
+      bestCombo: 14
+    });
   });
 
   test("unlocks the next highest level only after earning two stars", () => {
@@ -210,6 +231,7 @@ describe("Arcade progress storage", () => {
 
     expect(saveArcadeProgress(progress, storage)).toBe(true);
     expect(JSON.parse(storage.getItem(ARCADE_PROGRESS_STORAGE_KEY) ?? "{}")).toMatchObject({
+      version: 2,
       highestUnlockedLevel: 1,
       totalStars: 3
     });
@@ -249,10 +271,49 @@ describe("Arcade progress storage", () => {
     );
 
     expect(loadArcadeProgress(LEVELS, storage)).toMatchObject({
+      version: 2,
       highestUnlockedLevel: 0,
       levels: {
-        alpha: { stars: 1, completed: false }
+        alpha: {
+          stars: 1,
+          completed: false,
+          threeStarCleared: false,
+          bestProjectileId: null,
+          bestCombo: 0
+        }
       }
+    });
+  });
+
+  test("migrates old saves while preserving new mastery fields when present", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      ARCADE_PROGRESS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        highestUnlockedLevel: 1,
+        totalStars: 3,
+        levels: {
+          alpha: {
+            attempts: 4,
+            bestScore: 2400,
+            stars: 3,
+            completed: true,
+            bestProjectileId: "gravity",
+            bestCombo: 31
+          }
+        }
+      })
+    );
+
+    expect(loadArcadeProgress(LEVELS, storage).levels.alpha).toEqual({
+      attempts: 4,
+      bestScore: 2400,
+      stars: 3,
+      completed: true,
+      threeStarCleared: true,
+      bestProjectileId: "gravity",
+      bestCombo: 31
     });
   });
 });

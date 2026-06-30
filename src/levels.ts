@@ -465,7 +465,7 @@ function setupRelayGauntletCity(context: LevelContext): void {
   spawnVacantLotInfill(context);
   spawnBreakerYardCore(context);
   spawnBreakerYardRelayWeb(context);
-  spawnBreakerBossCapacitor(context);
+  spawnBreakerBossCapacitor(context, { phaseReadout: true });
   spawnRelayGauntletRoutePaint(context);
   spawnRelayGauntletCapacitorRoute(context);
   spawnRelayGauntletTraffic(context);
@@ -480,7 +480,7 @@ function setupOverdriveCoreCity(context: LevelContext): void {
   spawnVacantLotInfill(context);
   spawnSwitchbackArchiveCore(context);
   spawnSwitchbackRedirectors(context);
-  spawnArchiveBossLens(context);
+  spawnArchiveBossLens(context, { phaseReadout: true });
   spawnOverdriveCoreRoutePaint(context);
   spawnOverdriveCoreSetpieces(context);
   spawnOverdriveCoreTraffic(context);
@@ -651,7 +651,7 @@ function spawnBreakerYardRelayWeb(context: LevelContext): void {
   });
 }
 
-function spawnBreakerBossCapacitor(context: LevelContext): void {
+function spawnBreakerBossCapacitor(context: LevelContext, options: BossPhaseReadoutOptions = {}): void {
   const rotationY = Math.PI * 0.06;
   const base = alignCityObjectToRoadEdges(
     new THREE.Vector3(4.92, 0, -5.24),
@@ -683,20 +683,69 @@ function spawnBreakerBossCapacitor(context: LevelContext): void {
   });
   decorateBossCore(core, coreSize, "breaker");
 
-  for (const weakPoint of [
-    { label: "Breaker boss shear pin", local: new THREE.Vector3(-0.68, 0.72, 0.5), size: new THREE.Vector3(0.32, 0.24, 0.26), scoreValue: 260 },
-    { label: "Breaker boss support coupler", local: new THREE.Vector3(0.66, 1.52, 0.5), size: new THREE.Vector3(0.34, 0.22, 0.28), scoreValue: 280 },
-    { label: "Breaker boss release latch", local: new THREE.Vector3(0.02, 2.46, -0.5), size: new THREE.Vector3(0.38, 0.22, 0.24), scoreValue: 320 }
-  ] as const) {
+  const weakPoints: BossWeakPointSpec[] = options.phaseReadout
+    ? [
+        {
+          label: "Breaker boss phase 1 shield clamp",
+          local: new THREE.Vector3(-0.68, 0.72, 0.5),
+          size: new THREE.Vector3(0.32, 0.24, 0.26),
+          scoreValue: 260,
+          zoneTags: "boss-phase phase-1 shield",
+          phaseIndex: 1
+        },
+        {
+          label: "Breaker boss phase 2 latch coupler",
+          local: new THREE.Vector3(0.66, 1.52, 0.5),
+          size: new THREE.Vector3(0.34, 0.22, 0.28),
+          scoreValue: 280,
+          zoneTags: "boss-phase phase-2 latch",
+          phaseIndex: 2
+        },
+        {
+          label: "Breaker boss phase 3 capacitor core",
+          local: new THREE.Vector3(0.02, 2.46, -0.5),
+          size: new THREE.Vector3(0.38, 0.22, 0.24),
+          scoreValue: 320,
+          zoneTags: "boss-phase phase-3 core cashout",
+          phaseIndex: 3
+        }
+      ]
+    : [
+        {
+          label: "Breaker boss shear pin",
+          local: new THREE.Vector3(-0.68, 0.72, 0.5),
+          size: new THREE.Vector3(0.32, 0.24, 0.26),
+          scoreValue: 260,
+          zoneTags: ""
+        },
+        {
+          label: "Breaker boss support coupler",
+          local: new THREE.Vector3(0.66, 1.52, 0.5),
+          size: new THREE.Vector3(0.34, 0.22, 0.28),
+          scoreValue: 280,
+          zoneTags: ""
+        },
+        {
+          label: "Breaker boss release latch",
+          local: new THREE.Vector3(0.02, 2.46, -0.5),
+          size: new THREE.Vector3(0.38, 0.22, 0.24),
+          scoreValue: 320,
+          zoneTags: ""
+        }
+      ];
+
+  for (const weakPoint of weakPoints) {
     addReadableWeakPoint(context, {
       label: weakPoint.label,
       position: bossWorldPosition(base, rotationY, weakPoint.local),
       size: weakPoint.size,
       rotation,
-      zoneId: "breaker-boss weak-point capacitor-bank hazard-core",
+      zoneId: `breaker-boss weak-point capacitor-bank hazard-core${weakPoint.zoneTags ? ` ${weakPoint.zoneTags}` : ""}`,
       scoreValue: weakPoint.scoreValue,
       kind: "electric",
-      support
+      support,
+      phaseIndex: weakPoint.phaseIndex,
+      phaseTheme: "breaker"
     });
   }
 
@@ -961,7 +1010,7 @@ function spawnSwitchbackRedirectors(context: LevelContext): void {
   }
 }
 
-function spawnArchiveBossLens(context: LevelContext): void {
+function spawnArchiveBossLens(context: LevelContext, options: BossPhaseReadoutOptions = {}): void {
   const rotationY = -Math.PI * 0.12;
   const base = alignCityObjectToRoadEdges(
     new THREE.Vector3(7.38, 0, -4.52),
@@ -993,20 +1042,69 @@ function spawnArchiveBossLens(context: LevelContext): void {
   });
   decorateBossCore(core, coreSize, "archive");
 
-  for (const weakPoint of [
-    { label: "Archive boss shear pin", local: new THREE.Vector3(-0.62, 0.66, 0.46), size: new THREE.Vector3(0.3, 0.22, 0.24), scoreValue: 280 },
-    { label: "Archive boss lens latch", local: new THREE.Vector3(0.62, 1.34, 0.44), size: new THREE.Vector3(0.32, 0.2, 0.24), scoreValue: 300 },
-    { label: "Archive boss support column", local: new THREE.Vector3(0, 2.18, -0.45), size: new THREE.Vector3(0.36, 0.22, 0.24), scoreValue: 320 }
-  ] as const) {
+  const weakPoints: BossWeakPointSpec[] = options.phaseReadout
+    ? [
+        {
+          label: "Archive boss phase 1 order seal",
+          local: new THREE.Vector3(-0.62, 0.66, 0.46),
+          size: new THREE.Vector3(0.3, 0.22, 0.24),
+          scoreValue: 280,
+          zoneTags: "boss-phase phase-1 order",
+          phaseIndex: 1
+        },
+        {
+          label: "Archive boss phase 2 prism latch",
+          local: new THREE.Vector3(0.62, 1.34, 0.44),
+          size: new THREE.Vector3(0.32, 0.2, 0.24),
+          scoreValue: 300,
+          zoneTags: "boss-phase phase-2 latch",
+          phaseIndex: 2
+        },
+        {
+          label: "Archive boss phase 3 cashout core",
+          local: new THREE.Vector3(0, 2.18, -0.45),
+          size: new THREE.Vector3(0.36, 0.22, 0.24),
+          scoreValue: 320,
+          zoneTags: "boss-phase phase-3 core cashout",
+          phaseIndex: 3
+        }
+      ]
+    : [
+        {
+          label: "Archive boss shear pin",
+          local: new THREE.Vector3(-0.62, 0.66, 0.46),
+          size: new THREE.Vector3(0.3, 0.22, 0.24),
+          scoreValue: 280,
+          zoneTags: ""
+        },
+        {
+          label: "Archive boss lens latch",
+          local: new THREE.Vector3(0.62, 1.34, 0.44),
+          size: new THREE.Vector3(0.32, 0.2, 0.24),
+          scoreValue: 300,
+          zoneTags: ""
+        },
+        {
+          label: "Archive boss support column",
+          local: new THREE.Vector3(0, 2.18, -0.45),
+          size: new THREE.Vector3(0.36, 0.22, 0.24),
+          scoreValue: 320,
+          zoneTags: ""
+        }
+      ];
+
+  for (const weakPoint of weakPoints) {
     addReadableWeakPoint(context, {
       label: weakPoint.label,
       position: bossWorldPosition(base, rotationY, weakPoint.local),
       size: weakPoint.size,
       rotation,
-      zoneId: "archive-boss weak-point glass-depot hazard-core",
+      zoneId: `archive-boss weak-point glass-depot hazard-core${weakPoint.zoneTags ? ` ${weakPoint.zoneTags}` : ""}`,
       scoreValue: weakPoint.scoreValue,
       kind: "explosive",
-      support
+      support,
+      phaseIndex: weakPoint.phaseIndex,
+      phaseTheme: "archive"
     });
   }
 
@@ -2876,6 +2974,22 @@ function setpieceGlowMaterial(key: string, color: THREE.ColorRepresentation, opa
   );
 }
 
+type BossPhaseIndex = 1 | 2 | 3;
+type BossPhaseTheme = "breaker" | "archive";
+
+interface BossPhaseReadoutOptions {
+  phaseReadout?: boolean;
+}
+
+interface BossWeakPointSpec {
+  label: string;
+  local: THREE.Vector3;
+  size: THREE.Vector3;
+  scoreValue: number;
+  zoneTags: string;
+  phaseIndex?: BossPhaseIndex;
+}
+
 interface BossSupportOptions {
   supportGroupId: string;
   supportReleaseRadius: number;
@@ -2943,6 +3057,8 @@ function addReadableWeakPoint(
     scoreValue: number;
     kind: "electric" | "explosive";
     support: BossSupportOptions;
+    phaseIndex?: BossPhaseIndex;
+    phaseTheme: BossPhaseTheme;
   }
 ): void {
   const object = context.physics.addDynamicBox({
@@ -2974,6 +3090,10 @@ function addReadableWeakPoint(
   object.mesh.userData.disposeMaterial = false;
   disableSetpieceShadows(object.mesh);
   decorateHazardIndicator(object.mesh, { size: options.size, kind: options.kind });
+  decorateReadableWeakPointMarker(object.mesh, options.size, options.kind === "electric" ? "electric" : "hazard");
+  if (options.phaseIndex !== undefined) {
+    decorateBossPhaseMarker(object.mesh, options.size, options.phaseIndex, options.phaseTheme);
+  }
 }
 
 function addBossRelayCanister(
@@ -3022,6 +3142,25 @@ function addBossRelayCanister(
 
 function bossWorldPosition(base: THREE.Vector3, rotationY: number, local: THREE.Vector3): THREE.Vector3 {
   return base.clone().add(local.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rotationY));
+}
+
+function decorateBossPhaseMarker(mesh: THREE.Mesh, size: THREE.Vector3, phaseIndex: BossPhaseIndex, theme: BossPhaseTheme): void {
+  const accent = theme === "breaker" ? 0x5de7ff : 0xff6b93;
+  const marker = setpieceGlowMaterial(`boss-phase:${theme}:${phaseIndex}`, accent, 0.82);
+  const pipWidth = THREE.MathUtils.clamp(size.x * 0.14, 0.035, 0.07);
+  const pipHeight = THREE.MathUtils.clamp(size.y * 0.16, 0.035, 0.065);
+  const gap = pipWidth * 0.45;
+  const totalWidth = phaseIndex * pipWidth + (phaseIndex - 1) * gap;
+  const y = THREE.MathUtils.clamp(size.y * 0.32, 0.055, size.y * 0.42);
+  const z = size.z * 0.5 + 0.044;
+
+  for (let index = 0; index < phaseIndex; index += 1) {
+    const pip = new THREE.Mesh(sharedLevelBoxGeometry(pipWidth, pipHeight, 0.038), marker);
+    pip.name = `${mesh.name || "boss weak point"} phase ${phaseIndex} pip ${index + 1}`;
+    pip.position.set(-totalWidth * 0.5 + pipWidth * 0.5 + index * (pipWidth + gap), y, z);
+    pip.userData.disposeMaterial = false;
+    mesh.add(pip);
+  }
 }
 
 function decorateBossCore(mesh: THREE.Mesh, size: THREE.Vector3, theme: "breaker" | "archive"): void {

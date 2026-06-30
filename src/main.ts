@@ -24,13 +24,17 @@ import {
   mayhemContractForRun,
   recordDailyResult,
   replayMomentFromEvents,
+  replayTimelineFromEvents,
   runFeedbackForScore,
   runVariantForSeed,
   summarizeScoreSources,
+  weeklyMayhemRouteForDate,
   type DailyContractDefinition,
   type MayhemContract,
   type RunFeedback,
-  type RunVariant
+  type RunVariant,
+  type WeeklyMayhemRoute,
+  type WeeklyMayhemRouteEntry
 } from "./mayhemFeatures";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
@@ -1030,6 +1034,7 @@ type AppShellScreen = "menu" | "settings" | "loading";
 interface AppShellCallbacks {
   startLevel(levelIndex: number): void;
   startDaily(contract: DailyContractDefinition): void;
+  startWeekly(entry: WeeklyMayhemRouteEntry): void;
 }
 
 class AppShell {
@@ -1038,6 +1043,7 @@ class AppShell {
   private readonly statusValue: HTMLDivElement;
   private readonly progressSummaryValue: HTMLDivElement;
   private readonly dailyValue: HTMLDivElement;
+  private readonly weeklyValue: HTMLDivElement;
   private readonly loadingTitle: HTMLElement;
   private readonly loadingStatus: HTMLElement;
   private readonly settingsSummaryValue: HTMLElement;
@@ -1055,8 +1061,11 @@ class AppShell {
   private settings = loadGameSettings();
   private progress = loadArcadeProgress(ARCADE_LEVELS);
   private dailyContract: DailyContractDefinition | null = null;
+  private weeklyRoute: WeeklyMayhemRoute | null = null;
+  private weeklyStartEntry: WeeklyMayhemRouteEntry | null = null;
   private renderedLevelKey = "";
   private renderedDailyKey = "";
+  private renderedWeeklyKey = "";
   private renderedSettingsKey = "";
 
   constructor(private readonly callbacks: AppShellCallbacks) {
@@ -1089,6 +1098,7 @@ class AppShell {
             <p>Choose a district, wait through the renderer warmup, then make one spectacular cannon shot count.</p>
             <div class="app-shell__progress" data-role="shell-progress"></div>
             <div class="app-shell__daily" data-role="shell-daily"></div>
+            <div class="app-shell__weekly" data-role="shell-weekly"></div>
             <div class="app-shell__status" data-role="shell-status"></div>
           </section>
           <section class="app-shell__levels" data-role="shell-levels" aria-label="Districts"></section>
@@ -1159,6 +1169,7 @@ class AppShell {
     this.statusValue = this.requireElement("[data-role='shell-status']");
     this.progressSummaryValue = this.requireElement("[data-role='shell-progress']");
     this.dailyValue = this.requireElement("[data-role='shell-daily']");
+    this.weeklyValue = this.requireElement("[data-role='shell-weekly']");
     this.loadingTitle = this.requireElement("[data-role='shell-loading-title']");
     this.loadingStatus = this.requireElement("[data-role='shell-loading-status']");
     this.settingsSummaryValue = this.requireElement("[data-role='shell-settings-summary']");
@@ -1242,6 +1253,12 @@ class AppShell {
       }
       return;
     }
+    if (action === "start-weekly") {
+      if (this.weeklyStartEntry) {
+        this.callbacks.startWeekly(this.weeklyStartEntry);
+      }
+      return;
+    }
     if (action === "settings") {
       this.screen = "settings";
       this.render();
@@ -1303,6 +1320,7 @@ class AppShell {
     this.root.dataset.screen = this.screen;
     this.renderLevels();
     this.renderDaily();
+    this.renderWeekly();
     this.renderSettings();
   }
 
@@ -1312,7 +1330,17 @@ class AppShell {
       this.progress.totalStars,
       ...TEST_CHAMBERS.flatMap((level, index) => {
         const progress = this.progress.levels[level.id];
-        return [index, level.name, level.objective, progress?.stars ?? 0, progress?.bestScore ?? 0, progress?.attempts ?? 0];
+        return [
+          index,
+          level.name,
+          level.objective,
+          progress?.stars ?? 0,
+          progress?.bestScore ?? 0,
+          progress?.attempts ?? 0,
+          progress?.threeStarCleared ? 1 : 0,
+          progress?.bestProjectileId ?? "none",
+          progress?.bestCombo ?? 0
+        ];
       })
     ].join("|");
     if (this.renderedLevelKey === key) {
@@ -1320,9 +1348,10 @@ class AppShell {
     }
     this.renderedLevelKey = key;
     const unlockedDistricts = Math.max(0, Math.min(TEST_CHAMBERS.length, this.progress.highestUnlockedLevel + 1));
+    const perfectDistricts = TEST_CHAMBERS.filter((level) => this.progress.levels[level.id]?.threeStarCleared).length;
     setText(
       this.progressSummaryValue,
-      `Campaign ${this.progress.totalStars}/${TEST_CHAMBERS.length * 3} stars / ${unlockedDistricts}/${TEST_CHAMBERS.length} districts open`
+      `Campaign ${this.progress.totalStars}/${TEST_CHAMBERS.length * 3} stars / ${unlockedDistricts}/${TEST_CHAMBERS.length} districts open / Mastery ${perfectDistricts}/${TEST_CHAMBERS.length}`
     );
     this.levelRail.innerHTML = TEST_CHAMBERS.map((level, index) => {
       const progress = this.progress.levels[level.id];
@@ -1340,9 +1369,10 @@ class AppShell {
         ? `Earn ${missingStars} more ${missingStars === 1 ? "star" : "stars"} on ${previousLevel.name}.`
         : "Earn 2 stars on the previous district.";
       const missionBrief = `${level.description} Target ${formatShellScore(level.mission.targetDamageThreshold)} object damage, ${formatShellScore(level.mission.scoreThresholds.twoStar)} for unlock, ${formatShellScore(level.mission.scoreThresholds.threeStar)} for 3 stars.`;
+      const masteryLine = progressMasteryLine(progress);
       const ariaLabel = locked
         ? `${level.name}, locked. ${lockedText}`
-        : `${level.name}, ${level.objective}. ${missionBrief} ${attempts} attempts, best ${formatShellScore(bestScore)}.`;
+        : `${level.name}, ${level.objective}. ${missionBrief} ${attempts} attempts, best ${formatShellScore(bestScore)}. ${masteryLine}.`;
       return `
         <button type="button" class="app-shell__level-card${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${index}" aria-label="${escapeShellHtml(ariaLabel)}" title="${escapeShellHtml(locked ? lockedText : missionBrief)}" ${locked ? "disabled" : ""}>
           <span>${String(index + 1).padStart(2, "0")} / ${progressText}</span>
@@ -1350,6 +1380,7 @@ class AppShell {
           <em>${escapeShellHtml(level.objective)}</em>
           <small>${escapeShellHtml(locked ? lockedText : missionBrief)}</small>
           <small>${locked ? "Previous district gate: 2 stars" : `Start ${GAME_MODES.cannon.name} / ${formatShellScore(attempts)} attempts / Best ${formatShellScore(bestScore)}`}</small>
+          <small>${locked ? "Mastery hidden until unlock" : escapeShellHtml(masteryLine)}</small>
         </button>
       `;
     }).join("");
@@ -1394,6 +1425,49 @@ class AppShell {
         <em>${escapeShellHtml(projectile.shortName)} / ${escapeShellHtml(daily.contract.label)} / ${escapeShellHtml(daily.contract.summary)}</em>
         <small>${escapeShellHtml(replayLine)}</small>
         <small>${escapeShellHtml(bestLine)}</small>
+      </button>
+    `;
+  }
+
+  private renderWeekly(): void {
+    this.weeklyRoute = weeklyMayhemRouteForDate(TEST_CHAMBERS, new Date(), this.progress);
+    const route = this.weeklyRoute;
+    const unlockedHighest = this.progress.highestUnlockedLevel;
+    this.weeklyStartEntry =
+      route.entries.find((entry) => entry.levelIndex <= unlockedHighest && entry.localBestStars < 2) ??
+      route.entries.find((entry) => entry.levelIndex <= unlockedHighest) ??
+      null;
+    const key = [
+      route.weekKey,
+      route.seed,
+      route.localCumulativeBestScore,
+      route.localCompletedRuns,
+      route.localStars,
+      this.weeklyStartEntry?.levelId ?? "none",
+      this.weeklyStartEntry?.projectileId ?? "none"
+    ].join("|");
+    if (this.renderedWeeklyKey === key) {
+      return;
+    }
+    this.renderedWeeklyKey = key;
+    if (!this.weeklyStartEntry) {
+      this.weeklyValue.innerHTML = "";
+      return;
+    }
+
+    const nextLevel = TEST_CHAMBERS[this.weeklyStartEntry.levelIndex];
+    const nextProjectile = PROJECTILES[this.weeklyStartEntry.projectileId];
+    const routeLine = route.entries
+      .map((entry) => `${TEST_CHAMBERS[entry.levelIndex]?.name ?? entry.levelId} ${PROJECTILES[entry.projectileId].shortName}`)
+      .join(" / ");
+    const routeStatus = `${route.localCompletedRuns}/${route.entries.length} cleared / ${route.localStars}/${route.entries.length * 3} stars / ${formatShellScore(route.localCumulativeBestScore)} cumulative`;
+    this.weeklyValue.innerHTML = `
+      <button type="button" data-action="start-weekly" aria-label="Weekly Mayhem Route, ${escapeShellHtml(nextLevel.name)} with ${escapeShellHtml(nextProjectile.shortName)}.">
+        <span>Weekly Mayhem Route / ${escapeShellHtml(route.weekKey)}</span>
+        <strong>${escapeShellHtml(nextLevel.name)} next</strong>
+        <em>${escapeShellHtml(nextProjectile.shortName)} / ${escapeShellHtml(this.weeklyStartEntry.contract.label)} / ${escapeShellHtml(this.weeklyStartEntry.contract.summary)}</em>
+        <small>${escapeShellHtml(routeStatus)}</small>
+        <small>${escapeShellHtml(routeLine)}</small>
       </button>
     `;
   }
@@ -1456,6 +1530,25 @@ function settingsRenderKey(settings: GameSettings): string {
 
 function formatShellScore(value: number): string {
   return Math.round(value).toLocaleString("en-US");
+}
+
+function progressMasteryLine(progress: ArcadeProgress["levels"][string] | undefined): string {
+  const bestProjectile = progress?.bestProjectileId ? PROJECTILES[progress.bestProjectileId].shortName : "No payload best";
+  const combo = progress?.bestCombo && progress.bestCombo > 0 ? `x${formatShellScore(progress.bestCombo)} combo` : "no combo best";
+  const perfect = progress?.threeStarCleared ? "3-star badge" : "3-star badge open";
+  return `District Mastery: ${perfect} / ${bestProjectile} / ${combo}`;
+}
+
+function weeklyEntryToFixedContract(entry: WeeklyMayhemRouteEntry): DailyContractDefinition {
+  return {
+    dateKey: entry.weekKey,
+    seed: entry.seed,
+    levelIndex: entry.levelIndex,
+    levelId: entry.levelId,
+    projectileId: entry.projectileId,
+    variant: entry.variant,
+    contract: entry.contract
+  };
 }
 
 function escapeShellHtml(value: string): string {
@@ -1598,6 +1691,9 @@ function installAppShellStyles(): void {
     .app-shell__daily span,
     .app-shell__daily em,
     .app-shell__daily small,
+    .app-shell__weekly span,
+    .app-shell__weekly em,
+    .app-shell__weekly small,
     .app-shell__level-card span,
     .app-shell__level-card small,
     .app-shell__settings-panel > span,
@@ -1614,6 +1710,7 @@ function installAppShellStyles(): void {
     .app-shell__settings-head button,
     .app-shell__segmented button,
     .app-shell__daily button,
+    .app-shell__weekly button,
     .app-shell__level-card {
       min-height: 40px;
       border: 1px solid rgba(185, 245, 255, 0.2);
@@ -1685,11 +1782,13 @@ function installAppShellStyles(): void {
       min-width: 0;
     }
 
-    .app-shell__daily {
+    .app-shell__daily,
+    .app-shell__weekly {
       width: min(520px, 100%);
     }
 
-    .app-shell__daily button {
+    .app-shell__daily button,
+    .app-shell__weekly button {
       display: grid;
       gap: 5px;
       width: 100%;
@@ -1700,27 +1799,43 @@ function installAppShellStyles(): void {
       background: rgba(255, 207, 105, 0.1);
     }
 
+    .app-shell__weekly button {
+      border-color: rgba(117, 230, 255, 0.34);
+      background: rgba(117, 230, 255, 0.1);
+    }
+
     .app-shell__daily button:hover,
-    .app-shell__daily button:focus-visible {
+    .app-shell__daily button:focus-visible,
+    .app-shell__weekly button:hover,
+    .app-shell__weekly button:focus-visible {
       border-color: rgba(255, 224, 139, 0.86);
       background: rgba(255, 207, 105, 0.16);
       outline: none;
     }
 
-    .app-shell__daily strong {
+    .app-shell__weekly button:hover,
+    .app-shell__weekly button:focus-visible {
+      border-color: rgba(147, 246, 255, 0.86);
+      background: rgba(117, 230, 255, 0.16);
+    }
+
+    .app-shell__daily strong,
+    .app-shell__weekly strong {
       color: #ffffff;
       font-size: 17px;
       line-height: 1.05;
     }
 
-    .app-shell__daily em {
+    .app-shell__daily em,
+    .app-shell__weekly em {
       color: #b8ccd6;
       font-size: 12px;
       font-style: normal;
       line-height: 1.25;
     }
 
-    .app-shell__daily small {
+    .app-shell__daily small,
+    .app-shell__weekly small {
       color: #ffe08b;
       font-size: 12px;
       font-weight: 900;
@@ -1990,6 +2105,7 @@ function installAppShellStyles(): void {
 interface GameOptions {
   initialLevelIndex?: number;
   dailyContract?: DailyContractDefinition | null;
+  challengeKind?: "daily" | "weekly";
   onMainMenu?: () => void;
   showLoading?: (levelName: string, status: string) => void;
   updateLoadingStatus?: (status: string) => void;
@@ -2464,6 +2580,7 @@ class Game {
       selectProjectile: (id) => this.selectProjectile(id),
       selectLevel: (index) => this.selectLevel(index),
       nextLevel: () => this.nextLevel(),
+      focusReplayMoment: (index) => this.focusReplayMoment(index),
       updateSettings: (patch) => this.updateSettings(patch),
       resetSettings: () => this.resetSettings()
     });
@@ -2523,7 +2640,7 @@ class Game {
   }
 
   getDailyContract(): DailyContractDefinition | null {
-    return this.options.dailyContract ?? null;
+    return this.options.challengeKind === "daily" ? (this.options.dailyContract ?? null) : null;
   }
 
   flushPerfLog(reason?: string): void {
@@ -2735,7 +2852,7 @@ class Game {
       arcadeResult: this.arcadeResult,
       resultMeta: this.arcadeResultMeta,
       runFeedback: this.runFeedback,
-      loadoutLocked: Boolean(this.activeDailyContract()),
+      loadoutLocked: Boolean(this.activeFixedContract()),
       settings: this.settings,
       status: this.status,
       fps: this.displayedFps,
@@ -2782,8 +2899,39 @@ class Game {
       contractLabel: this.shotMayhemContract?.label ?? this.mayhemContract?.label ?? "Contract",
       contractValue: totalContract > 0 ? `${completedContract}/${totalContract}` : "0/0",
       contractProgress: totalContract > 0 ? completedContract / totalContract : 0,
-      contractCompleted: totalContract > 0 && completedContract === totalContract
+      contractCompleted: totalContract > 0 && completedContract === totalContract,
+      signals: this.liveMasterySignals(score, level, contractResult)
     };
+  }
+
+  private liveMasterySignals(
+    score: ScoreBreakdown,
+    level: TestChamber,
+    contractResult: ReturnType<typeof evaluateMayhemContract>
+  ): string[] {
+    const signals: string[] = [];
+    if (score.bossBreakCount > 0 || score.weakPointBreakCount >= 2) {
+      signals.push(score.bossBreakCount > 0 ? "Boss core armed" : "Weak-point route active");
+    }
+    if (level.id === "relay-gauntlet" || score.chainReactionCount >= 16) {
+      signals.push(score.chainReactionCount >= 16 ? "Relay chain active" : "Relay route primed");
+    }
+    if (score.totalScore >= level.mission.scoreThresholds.twoStar * 0.86) {
+      signals.push(score.totalScore >= level.mission.scoreThresholds.twoStar ? "2-star pace locked" : "2-star pace");
+    }
+    if (this.selectedProjectile === "ignite") {
+      const igniteTarget =
+        level.mission.bonusThreshold.metric === "maxChainCombo"
+          ? Math.max(12, Math.round(level.mission.bonusThreshold.minimum * 0.68))
+          : 12;
+      if (score.maxChainCombo >= igniteTarget || score.chainReactionBonus > level.mission.scoreThresholds.oneStar * 0.2) {
+        signals.push("Ignition Chain ready");
+      }
+    }
+    if (contractResult?.completed) {
+      signals.push("Contract armed");
+    }
+    return signals.slice(0, 3);
   }
 
   private refreshRunPlanning(): void {
@@ -3302,18 +3450,22 @@ class Game {
     this.arcadeResultMeta = null;
     this.runFeedback = null;
     this.resetRunTelemetry();
-    const daily = this.options.dailyContract?.levelId === level.id ? this.options.dailyContract : null;
-    if (daily) {
-      this.runSeed = daily.seed;
-      this.selectedProjectile = daily.projectileId;
-      this.runVariant = daily.variant;
+    const fixedContract = this.activeFixedContract();
+    if (fixedContract) {
+      this.runSeed = fixedContract.seed;
+      this.selectedProjectile = fixedContract.projectileId;
+      this.runVariant = fixedContract.variant;
     } else {
       this.runSeed = createRunSeed();
       this.runVariant = runVariantForSeed(level.id, this.runSeed);
     }
     this.rng.reset(this.runSeed);
     if (import.meta.env.DEV) {
-      console.debug(`[Downtown Mayhem] run seed ${this.runSeed}${daily ? ` daily ${daily.dateKey}` : ""}`);
+      console.debug(
+        `[Downtown Mayhem] run seed ${this.runSeed}${
+          fixedContract ? ` ${this.options.challengeKind ?? "daily"} ${fixedContract.dateKey}` : ""
+        }`
+      );
     }
     this.scorePopups.clear();
     this.slowMotionTimer = 0;
@@ -4133,7 +4285,9 @@ class Game {
       contractResult: recorded.result.contract,
       topSources: summarizeScoreSources(this.runScoreEvents),
       replayMoment: replayMomentFromEvents(this.runScoreEvents),
-      projectileId: this.selectedProjectile
+      replayTimeline: replayTimelineFromEvents(this.runScoreEvents),
+      projectileId: this.selectedProjectile,
+      levelId: level.id
     });
     const newBest = score.totalScore > previousBestScore;
     this.arcadeResultMeta = {
@@ -4153,6 +4307,21 @@ class Game {
     this.scoreAutoRevealAt = null;
     this.status = `${statusPrefix}${statusPrefix ? " " : ""}${scoreStatus(score, recorded.result)}`;
     this.perfDiskLogger?.flush("score-finalized");
+  }
+
+  private focusReplayMoment(index: number): void {
+    const moment = this.runFeedback?.replayTimeline[index];
+    if (!moment) {
+      this.status = "Replay moment is no longer available.";
+      this.updateHud();
+      return;
+    }
+    const focus = new THREE.Vector3(moment.position.x, moment.position.y, moment.position.z);
+    focus.y = THREE.MathUtils.clamp(focus.y + 0.6, 0.9, 5.2);
+    this.cameraRig.spectacle(focus);
+    this.cameraRig.shake(0.12, 0.24);
+    this.status = `Replay focus: ${moment.label}`;
+    this.updateHud();
   }
 
   private detectImpact(active: ActiveProjectile): { point: THREE.Vector3; object: PhysicsObject | null } | null {
@@ -5199,8 +5368,8 @@ class Game {
     if (this.ui.isGameplayBlocked() || this.levelReloadInProgress) {
       return;
     }
-    if (this.activeDailyContract()) {
-      this.status = "Daily Contract locks today's payload.";
+    if (this.activeFixedContract()) {
+      this.status = "Fixed contract locks this payload.";
       this.audio.playUiReject();
       return;
     }
@@ -5217,6 +5386,13 @@ class Game {
   }
 
   private activeDailyContract(): DailyContractDefinition | null {
+    if (this.options.challengeKind === "weekly") {
+      return null;
+    }
+    return this.activeFixedContract();
+  }
+
+  private activeFixedContract(): DailyContractDefinition | null {
     const daily = this.options.dailyContract;
     if (!daily || daily.levelId !== this.currentLevel().id) {
       return null;
@@ -5404,7 +5580,10 @@ async function boot(): Promise<void> {
       void startLevelFromShell(shell, levelIndex);
     },
     startDaily: (contract) => {
-      void startLevelFromShell(shell, contract.levelIndex, contract);
+      void startLevelFromShell(shell, contract.levelIndex, contract, "daily");
+    },
+    startWeekly: (entry) => {
+      void startLevelFromShell(shell, entry.levelIndex, weeklyEntryToFixedContract(entry), "weekly");
     }
   });
   activeShell = shell;
@@ -5429,7 +5608,8 @@ async function boot(): Promise<void> {
 async function startLevelFromShell(
   shell: AppShell,
   requestedLevelIndex: number,
-  dailyContract: DailyContractDefinition | null = null
+  dailyContract: DailyContractDefinition | null = null,
+  challengeKind: "daily" | "weekly" = "daily"
 ): Promise<void> {
   const progress = loadArcadeProgress(ARCADE_LEVELS);
   const levelIndex = clampInitialLevelIndex(requestedLevelIndex, progress.highestUnlockedLevel);
@@ -5460,6 +5640,7 @@ async function startLevelFromShell(
     const game = new Game(settings, rendererBundle, {
       initialLevelIndex: levelIndex,
       dailyContract: dailyContract?.levelIndex === levelIndex ? dailyContract : null,
+      challengeKind,
       onMainMenu: () => returnToMainMenu(shell),
       showLoading: (levelName, status) => shell.showLoading(levelName, status),
       updateLoadingStatus: (status) => shell.updateLoadingStatus(status),

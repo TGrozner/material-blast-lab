@@ -7,13 +7,17 @@ import {
   dailyContractForDate,
   loadDailyResult,
   mayhemContractForRun,
+  projectileObjectiveForLevel,
+  projectileObjectivesForLevels,
   recordDailyResult,
   replayMomentFromEvents,
+  replayTimelineFromEvents,
   runFeedbackForScore,
   runVariantForSeed,
-  summarizeScoreSources
+  summarizeScoreSources,
+  weeklyMayhemRouteForDate
 } from "../../src/mayhemFeatures";
-import { IGNITE_CHAIN_LABEL, IGNITE_CHAIN_OBJECTIVE_ID } from "../../src/projectile";
+import { IGNITE_CHAIN_LABEL } from "../../src/projectile";
 
 const MISSION: ArcadeMissionFields = {
   arc: "object-destruction",
@@ -39,10 +43,68 @@ describe("mayhem feature helpers", () => {
     expect(contract.label).toContain(variant.label);
     expect(contract.objectives).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "scatter-secondary-hits", metric: "chainReactionCount" }),
+        expect.objectContaining({
+          id: "hazard-junction-frag-tanker-spray",
+          label: expect.stringContaining("tankers"),
+          metric: "chainReactionCount"
+        }),
         expect.objectContaining({ id: `${variant.id}-district-contract` })
       ])
     );
+  });
+
+  test("varies projectile objectives by district and builds a five-stop weekly route", () => {
+    const levels = [
+      { id: "hazard-junction", mission: MISSION },
+      { id: "breaker-yard", mission: { ...MISSION, order: 2, targetZone: "breaker-spine" } },
+      { id: "switchback-crush", mission: { ...MISSION, order: 3, targetZone: "glass-depot" } },
+      { id: "relay-gauntlet", mission: { ...MISSION, order: 4, targetZone: "breaker-boss" } },
+      { id: "overdrive-core", mission: { ...MISSION, order: 5, targetZone: "archive-boss" } }
+    ];
+
+    expect(projectileObjectiveForLevel(levels, "hazard-junction", "pulse")).toMatchObject({
+      id: "hazard-junction-impulse-storefront-wave",
+      label: expect.stringContaining("storefront")
+    });
+    expect(projectileObjectiveForLevel(levels, "relay-gauntlet", "pulse")).toMatchObject({
+      id: "relay-gauntlet-impulse-traffic-latch",
+      label: expect.stringContaining("latch phase")
+    });
+    expect(projectileObjectivesForLevels(levels)).toHaveLength(5);
+
+    const route = weeklyMayhemRouteForDate(levels, new Date("2026-06-30T22:30:00.000Z"), {
+      version: 2,
+      highestUnlockedLevel: 4,
+      totalStars: 5,
+      levels: {
+        "hazard-junction": {
+          attempts: 2,
+          bestScore: 120_000,
+          stars: 2,
+          completed: true,
+          threeStarCleared: false,
+          bestProjectileId: "slug",
+          bestCombo: 12
+        },
+        "breaker-yard": {
+          attempts: 1,
+          bestScore: 240_000,
+          stars: 3,
+          completed: true,
+          threeStarCleared: true,
+          bestProjectileId: "scatter",
+          bestCombo: 31
+        }
+      }
+    });
+
+    expect(route.weekKey).toBe("2026-W27");
+    expect(route.entries).toHaveLength(5);
+    expect(route.entries.map((entry) => entry.levelId)).toEqual(levels.map((level) => level.id));
+    expect(route.localCumulativeBestScore).toBe(360_000);
+    expect(route.localCompletedRuns).toBe(2);
+    expect(route.localStars).toBe(5);
+    expect(route.entries[0].contract.objectives[0].id).toContain(route.entries[0].levelId);
   });
 
   test("builds a deterministic daily contract from the UTC date", () => {
@@ -104,10 +166,10 @@ describe("mayhem feature helpers", () => {
     expect(contract.objectives).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: IGNITE_CHAIN_OBJECTIVE_ID,
+          id: "relay-gauntlet-ignite-relay-chain",
           label: expect.stringContaining(IGNITE_CHAIN_LABEL),
           metric: "maxChainCombo",
-          minimum: 24
+          minimum: 26
         }),
         expect.objectContaining({
           id: `${variant.id}-district-contract`,
@@ -124,18 +186,19 @@ describe("mayhem feature helpers", () => {
       contractResult: {
         completed: false,
         objectives: [
-          { id: IGNITE_CHAIN_OBJECTIVE_ID, label: `${IGNITE_CHAIN_LABEL}: arm hazards`, completed: false, value: 8, target: 24 }
+          { id: "relay-gauntlet-ignite-relay-chain", label: `${IGNITE_CHAIN_LABEL}: arm hazards`, completed: false, value: 8, target: 26 }
         ]
       },
       topSources: [{ kind: "chain", label: "Secondary chain", points: 18_000 }],
-      replayMoment: { label: `${IGNITE_CHAIN_LABEL}: GAS RELAY BLAST combo`, points: 900 },
-      projectileId: "ignite"
+      replayMoment: replayMoment(`${IGNITE_CHAIN_LABEL}: GAS RELAY BLAST combo`, 900, "ignition"),
+      projectileId: "ignite",
+      levelId: "relay-gauntlet"
     });
 
     expect(feedback.nearMisses[0]).toContain("Ignition route:");
     expect(feedback.nearMisses.join(" ")).toContain("delayed Ignition Chain");
     expect(feedback.projectileObjective).toMatchObject({
-      id: IGNITE_CHAIN_OBJECTIVE_ID,
+      id: "relay-gauntlet-ignite-relay-chain",
       metric: "maxChainCombo"
     });
   });
@@ -152,10 +215,14 @@ describe("mayhem feature helpers", () => {
       { kind: "target", label: "Target damage", points: 600 },
       { kind: "chain", label: "Secondary chain", points: 260 }
     ]);
-    expect(replayMomentFromEvents(events)).toEqual({
+    expect(replayMomentFromEvents(events)).toMatchObject({
+      id: "chain-0-260",
+      kind: "chain",
       label: "CHAIN x8 combo",
-      points: 260
+      points: 260,
+      position: { x: 0, y: 0, z: 0 }
     });
+    expect(replayTimelineFromEvents(events).map((moment) => moment.kind)).toEqual(["chain", "impact", "source"]);
   });
 
   test("records daily best results without overwriting them with weaker runs", () => {
@@ -278,8 +345,9 @@ describe("mayhem feature helpers", () => {
         objectives: [{ id: "district", label: "District contract", completed: false, value: 120, target: 140 }]
       },
       topSources: [{ kind: "chain", label: "Secondary chain", points: 22_000 }],
-      replayMoment: { label: "CHAIN x120 combo", points: 900 },
-      projectileId: "pulse"
+      replayMoment: replayMoment("CHAIN x120 combo", 900, "chain"),
+      projectileId: "pulse",
+      levelId: "hazard-junction"
     });
 
     expect(feedback.nearMisses).toEqual(
@@ -291,9 +359,23 @@ describe("mayhem feature helpers", () => {
     );
     expect(feedback.nearMisses[0]).toContain("Impulse Orb");
     expect(feedback.nearMisses[1]).toContain("target core");
-    expect(feedback.projectileObjective?.id).toBe("pulse-chaos-wave");
+    expect(feedback.projectileObjective?.id).toBe("hazard-junction-impulse-storefront-wave");
   });
 });
+
+function replayMoment(
+  label: string,
+  points: number,
+  kind: "impact" | "boss" | "ignition" | "chain" | "source"
+) {
+  return {
+    id: `${kind}-test`,
+    kind,
+    label,
+    points,
+    position: { x: 0, y: 0, z: 0 }
+  };
+}
 
 function event(kind: ScoreEvent["kind"], label: string, points: number, combo?: number): ScoreEvent {
   return {

@@ -2,7 +2,7 @@ import type { ProjectileId } from "./projectile";
 import type { ScoreBreakdown } from "./scoring";
 
 export const ARCADE_PROGRESS_STORAGE_KEY = "downtown-mayhem:arcade-progress";
-const ARCADE_PROGRESS_VERSION = 1;
+const ARCADE_PROGRESS_VERSION = 2;
 
 export type ArcadeStars = 0 | 1 | 2 | 3;
 
@@ -75,6 +75,20 @@ export interface ArcadeLevelProgress {
   bestScore: number;
   stars: ArcadeStars;
   completed: boolean;
+  threeStarCleared: boolean;
+  bestProjectileId: ProjectileId | null;
+  bestCombo: number;
+}
+
+export interface ArcadeDistrictMastery {
+  levelId: string;
+  attempts: number;
+  bestScore: number;
+  stars: ArcadeStars;
+  completed: boolean;
+  threeStarCleared: boolean;
+  bestProjectileId: ProjectileId | null;
+  bestCombo: number;
 }
 
 export interface ArcadeProgress {
@@ -183,14 +197,29 @@ export function recordArcadeRun(
 
   const result = evaluateArcadeResult(levels[levelIndex], score, context);
   const previousLevel = progress.levels[levelId] ?? createEmptyLevelProgress();
+  const previousAttempts = Math.max(0, toFiniteInteger(previousLevel.attempts, 0));
+  const previousBestScore = Math.max(0, toFiniteInteger(previousLevel.bestScore, 0));
   const stars = maxStars(previousLevel.stars, result.stars);
+  const bestScore = Math.max(previousBestScore, result.score);
+  const isBestScoreRun = previousAttempts <= 0 || result.score > previousBestScore;
+  const bestProjectileId =
+    isBestScoreRun && context.projectileId
+      ? context.projectileId
+      : normalizeProjectileId(previousLevel.bestProjectileId);
+  const bestCombo = Math.max(
+    Math.max(0, toFiniteInteger(previousLevel.bestCombo, 0)),
+    Math.max(0, toFiniteInteger(score.maxChainCombo, 0))
+  );
   const levelsProgress: Record<string, ArcadeLevelProgress> = {
     ...progress.levels,
     [levelId]: {
-      attempts: previousLevel.attempts + 1,
-      bestScore: Math.max(previousLevel.bestScore, result.score),
+      attempts: previousAttempts + 1,
+      bestScore,
       stars,
-      completed: stars >= 2
+      completed: stars >= 2,
+      threeStarCleared: stars >= 3,
+      bestProjectileId,
+      bestCombo
     }
   };
 
@@ -238,6 +267,22 @@ export function saveArcadeProgress(
   } catch {
     return false;
   }
+}
+
+export function districtMasteryForLevel(progress: ArcadeProgress, levelId: string): ArcadeDistrictMastery {
+  const levelProgress = progress.levels[levelId] ?? createEmptyLevelProgress();
+  const stars = normalizeStars(levelProgress.stars);
+  const bestScore = Math.max(0, toFiniteInteger(levelProgress.bestScore, 0));
+  return {
+    levelId,
+    attempts: Math.max(0, toFiniteInteger(levelProgress.attempts, 0)),
+    bestScore,
+    stars,
+    completed: stars >= 2,
+    threeStarCleared: stars >= 3,
+    bestProjectileId: normalizeProjectileId(levelProgress.bestProjectileId),
+    bestCombo: Math.max(0, toFiniteInteger(levelProgress.bestCombo, 0))
+  };
 }
 
 function evaluateBonus(score: ScoreBreakdown, bonus: ArcadeBonusThreshold | undefined): boolean {
@@ -294,7 +339,10 @@ function createEmptyLevelProgress(): ArcadeLevelProgress {
     attempts: 0,
     bestScore: 0,
     stars: 0,
-    completed: false
+    completed: false,
+    threeStarCleared: false,
+    bestProjectileId: null,
+    bestCombo: 0
   };
 }
 
@@ -327,7 +375,10 @@ function normalizeLevelProgress(value: unknown): ArcadeLevelProgress {
     attempts: Math.max(0, toFiniteInteger(value.attempts, 0)),
     bestScore: Math.max(0, toFiniteInteger(value.bestScore, 0)),
     stars,
-    completed: stars >= 2
+    completed: stars >= 2,
+    threeStarCleared: stars >= 3,
+    bestProjectileId: normalizeProjectileId(value.bestProjectileId ?? value.bestProjectile),
+    bestCombo: Math.max(0, toFiniteInteger(value.bestCombo, 0))
   };
 }
 
@@ -365,6 +416,13 @@ function normalizeStars(value: unknown): ArcadeStars {
     return value;
   }
   return 0;
+}
+
+function normalizeProjectileId(value: unknown): ProjectileId | null {
+  if (value === "slug" || value === "scatter" || value === "pulse" || value === "gravity" || value === "ignite") {
+    return value;
+  }
+  return null;
 }
 
 function toFiniteInteger(value: unknown, fallback: number): number {

@@ -31,6 +31,7 @@ export interface UILiveMastery {
   contractValue: string;
   contractProgress: number;
   contractCompleted: boolean;
+  signals: string[];
 }
 
 interface UIState {
@@ -79,6 +80,7 @@ interface UICallbacks {
   selectProjectile(id: ProjectileId): void;
   selectLevel(index: number): boolean;
   nextLevel(): void;
+  focusReplayMoment(index: number): void;
   updateSettings(patch: Partial<GameSettings>): void;
   resetSettings(): void;
 }
@@ -461,7 +463,7 @@ export class GameUI {
       const locked = state.loadoutLocked;
       button.disabled = locked;
       button.title = locked
-        ? "Daily Contract locks today's payload."
+        ? "Fixed contract locks this payload."
         : `${PROJECTILES[id].key}: ${PROJECTILES[id].name} - ${PROJECTILES[id].role}. ${PROJECTILES[id].description}`;
     }
 
@@ -566,9 +568,10 @@ export class GameUI {
         const detailText = locked
           ? `${previous ? previous.name : "Previous district"} needs 2 stars to unlock this card.`
           : `${formatScoreNumber(level.progress.attempts)} attempts / Best ${formatScoreNumber(level.progress.bestScore)}`;
+        const masteryText = locked ? "District Mastery hidden" : districtMasteryText(level.progress);
         const ariaLabel = locked
           ? `${level.name}, locked. Earn ${missingPreviousStars} more ${missingPreviousStars === 1 ? "star" : "stars"} on ${previous?.name ?? "the previous district"}.`
-          : `${level.name}, ${level.objective}. ${level.description}. ${detailText}.`;
+          : `${level.name}, ${level.objective}. ${level.description}. ${detailText}. ${masteryText}.`;
         return `
           <button type="button" class="hud__level-card${active ? " is-current" : ""}${locked ? " is-locked" : ""}" data-action="start-arcade" data-level-index="${level.index}" aria-label="${escapeHtml(ariaLabel)}" ${locked ? "disabled" : ""}>
             <span>${String(level.index + 1).padStart(2, "0")} / ${progressText}</span>
@@ -576,6 +579,7 @@ export class GameUI {
             <em>${escapeHtml(level.objective)}</em>
             <small>${escapeHtml(level.description)}</small>
             <small>${escapeHtml(detailText)}</small>
+            <small>${escapeHtml(masteryText)}</small>
           </button>
         `;
       })
@@ -616,6 +620,9 @@ export class GameUI {
     this.scorePanel.querySelector<HTMLButtonElement>("[data-action='result-retry']")?.addEventListener("click", () => this.callbacks.reset());
     this.scorePanel.querySelector<HTMLButtonElement>("[data-action='result-next']")?.addEventListener("click", () => this.callbacks.nextLevel());
     this.scorePanel.querySelector<HTMLButtonElement>("[data-action='result-menu']")?.addEventListener("click", () => this.callbacks.openMainMenu());
+    for (const button of this.scorePanel.querySelectorAll<HTMLButtonElement>("[data-action='replay-focus']")) {
+      button.addEventListener("click", () => this.callbacks.focusReplayMoment(Number(button.dataset.replayIndex ?? -1)));
+    }
   }
 
   private startScoreCountUp(totalScore: number): void {
@@ -697,7 +704,10 @@ function homeRenderKey(state: UIState): string {
       Number(level.locked),
       level.progress.stars,
       level.progress.bestScore,
-      level.progress.attempts
+      level.progress.attempts,
+      level.progress.threeStarCleared ? 1 : 0,
+      level.progress.bestProjectileId ?? "none",
+      level.progress.bestCombo
     ])
   ].join("|");
 }
@@ -928,8 +938,46 @@ function renderShareCard(state: UIState, score: ScoreBreakdown): string {
           <strong>${topSource ? `${escapeHtml(topSource.label)} / ${formatScoreNumber(topSource.points)}` : "No dominant source"}</strong>
         </div>
       </div>
+      ${renderReplayTimeline(feedback)}
     </div>
   `;
+}
+
+function renderReplayTimeline(feedback: RunFeedback | null): string {
+  const timeline = feedback?.replayTimeline.slice(0, 4) ?? [];
+  if (timeline.length === 0) {
+    return "";
+  }
+  return `
+    <div class="hud__replay-timeline" data-role="replay-timeline" aria-label="Replay timeline">
+      ${timeline
+        .map(
+          (moment, index) => `
+            <button type="button" data-action="replay-focus" data-replay-index="${index}" aria-label="Focus replay moment ${escapeHtml(moment.label)}">
+              <span>${escapeHtml(replayKindLabel(moment.kind))}</span>
+              <strong>${escapeHtml(moment.label)}</strong>
+              <em>${formatScoreNumber(moment.points)}</em>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function replayKindLabel(kind: RunFeedback["replayTimeline"][number]["kind"]): string {
+  switch (kind) {
+    case "impact":
+      return "Impact";
+    case "boss":
+      return "Boss break";
+    case "ignition":
+      return "Ignition Chain";
+    case "chain":
+      return "Chain";
+    case "source":
+      return "Best source";
+  }
 }
 
 function resultShareText(state: UIState, score: ScoreBreakdown): string {
@@ -1212,7 +1260,8 @@ function renderContractObjectives(completed: boolean, objectives: readonly Arcad
 
 function liveMasteryText(mastery: UILiveMastery): string {
   const contractState = mastery.contractCompleted ? "done" : `${Math.round(mastery.contractProgress * 100)}%`;
-  return `${mastery.bonusLabel}: ${mastery.bonusValue} / ${mastery.contractLabel}: ${mastery.contractValue} (${contractState})`;
+  const signals = mastery.signals.length > 0 ? ` / ${mastery.signals.join(" / ")}` : "";
+  return `${mastery.bonusLabel}: ${mastery.bonusValue} / ${mastery.contractLabel}: ${mastery.contractValue} (${contractState})${signals}`;
 }
 
 function renderContractObjective(objective: ArcadeContractObjectiveResult): string {
@@ -1347,6 +1396,13 @@ function renderStars(stars: number): string {
 
 function starText(stars: number): string {
   return `${stars}/3 stars`;
+}
+
+function districtMasteryText(progress: ArcadeLevelProgress): string {
+  const projectile = progress.bestProjectileId ? PROJECTILES[progress.bestProjectileId].shortName : "No payload best";
+  const combo = progress.bestCombo > 0 ? `x${formatScoreNumber(progress.bestCombo)} combo` : "no combo best";
+  const badge = progress.threeStarCleared ? "3-star badge" : "3-star badge open";
+  return `District Mastery: ${badge} / ${projectile} / ${combo}`;
 }
 
 function percent(value: number): number {
@@ -2302,6 +2358,50 @@ function installStyles(): void {
       border: 1px solid rgba(255, 207, 105, 0.2);
       border-radius: 7px;
       background: rgba(255, 207, 105, 0.055);
+    }
+
+    .hud__replay-timeline {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .hud__replay-timeline button {
+      display: grid;
+      gap: 3px;
+      min-height: 56px;
+      padding: 7px 8px;
+      border: 1px solid rgba(255, 207, 105, 0.24);
+      border-radius: 6px;
+      color: #f8fdff;
+      background: rgba(255, 255, 255, 0.06);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .hud__replay-timeline button:hover,
+    .hud__replay-timeline button:focus-visible {
+      border-color: rgba(255, 224, 139, 0.82);
+      background: rgba(255, 207, 105, 0.13);
+      outline: none;
+    }
+
+    .hud__replay-timeline span,
+    .hud__replay-timeline em {
+      color: #9db6c4;
+      font-size: 10px;
+      font-style: normal;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .hud__replay-timeline strong {
+      overflow: hidden;
+      color: #ffffff;
+      font-size: 12px;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .hud__daily-result {
