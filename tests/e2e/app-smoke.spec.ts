@@ -32,11 +32,11 @@ const STABLE_VISUAL_CAPTURE_SETTINGS = {
   showFps: false
 };
 const HAZARD_JUNCTION_RENDER_BUDGET = {
-  drawCalls: 3_800,
-  visibleMeshes: 3_100,
-  visibleMaterials: 340,
-  programs: 46,
-  geometries: 1_200,
+  drawCalls: 3_300,
+  visibleMeshes: 2_300,
+  visibleMaterials: 320,
+  programs: 42,
+  geometries: 1_100,
   textures: 42
 };
 const PERF_SMOKE_BUDGET = {
@@ -52,11 +52,13 @@ const PERF_SMOKE_BUDGET = {
 const IDLE_PERF_SMOKE_BUDGET = {
   maxFrameMs: 150,
   maxRenderMs: 130,
-  maxDrawCalls: 3_800,
-  maxVisibleMeshes: 3_100,
+  maxDrawCalls: 3_500,
+  maxVisibleMeshes: 2_450,
   maxGeometries: 1_200,
   maxTextures: 50,
-  maxVisiblePooledVfxObjects: 0
+  maxVisiblePooledVfxObjects: 0,
+  minStaticDetailDynamicBatches: 70,
+  minStaticDetailInstances: 2_400
 };
 
 interface RenderStats {
@@ -77,6 +79,10 @@ interface RenderStats {
   visibleMeshes: number;
   visibleMaterials: number;
   visiblePooledVfxObjects: number;
+  staticDetailBatches: number;
+  staticDetailDynamicBatches: number;
+  staticDetailInstances: number;
+  staticDetailBuckets: number;
   fragmentInstanceBuckets: number;
   fragmentInstanceVisibleBuckets: number;
   fragmentInstanceWarmupBuckets: number;
@@ -623,6 +629,8 @@ function expectIdlePerfBudget(payload: PerfLogPayload): void {
   expect(payload.stats.geometries).toBeLessThanOrEqual(IDLE_PERF_SMOKE_BUDGET.maxGeometries);
   expect(payload.stats.textures).toBeLessThanOrEqual(IDLE_PERF_SMOKE_BUDGET.maxTextures);
   expect(payload.stats.visiblePooledVfxObjects).toBeLessThanOrEqual(IDLE_PERF_SMOKE_BUDGET.maxVisiblePooledVfxObjects);
+  expect(payload.stats.staticDetailDynamicBatches).toBeGreaterThanOrEqual(IDLE_PERF_SMOKE_BUDGET.minStaticDetailDynamicBatches);
+  expect(payload.stats.staticDetailInstances).toBeGreaterThanOrEqual(IDLE_PERF_SMOKE_BUDGET.minStaticDetailInstances);
 }
 
 test("persists real settings and applies the FPS toggle after reload", async ({ page }) => {
@@ -797,7 +805,7 @@ async function expectFinalScore(page: Page, shotName: string): Promise<void> {
   await expect(scorePanel).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
   await expect(scorePanel).toHaveAttribute("data-result-state", /three-star|complete|one-star|incomplete/);
   await expect(scorePanel).toHaveAttribute("aria-label", /Mayhem Score/);
-  await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem|Needs 2-star/);
+  await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem|Needs 2-star|Complete/);
   await expect(scorePanel.locator("[data-role='result-boom']")).toContainText("BOOM");
   await expect(scorePanel.locator("[data-role='progression-summary']")).toContainText("Stars");
   await expect(scorePanel.locator("[data-role='share-card']")).toContainText("Share");

@@ -245,6 +245,10 @@ interface DowntownMayhemRenderStats {
   visibleMeshes: number;
   visibleMaterials: number;
   visiblePooledVfxObjects: number;
+  staticDetailBatches: number;
+  staticDetailDynamicBatches: number;
+  staticDetailInstances: number;
+  staticDetailBuckets: number;
   fragmentInstanceBuckets: number;
   fragmentInstanceVisibleBuckets: number;
   fragmentInstanceWarmupBuckets: number;
@@ -2568,6 +2572,10 @@ class Game {
     visibleMeshes: 0,
     visibleMaterials: 0,
     visiblePooledVfxObjects: 0,
+    staticDetailBatches: 0,
+    staticDetailDynamicBatches: 0,
+    staticDetailInstances: 0,
+    staticDetailBuckets: 0,
     fragmentInstanceBuckets: 0,
     fragmentInstanceVisibleBuckets: 0,
     fragmentInstanceWarmupBuckets: 0,
@@ -3044,6 +3052,7 @@ class Game {
     visibleMaterials.clear();
     let visibleMeshes = 0;
     const physicsStats = this.physics.getRuntimeStats();
+    const staticDetailStats = this.physics.getStaticDetailStats();
     const fragmentStats = this.destruction.getFragmentInstanceStats();
     this.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || !object.visible) {
@@ -3082,6 +3091,10 @@ class Game {
       visibleMeshes,
       visibleMaterials: visibleMaterials.size,
       visiblePooledVfxObjects: this.particles.getVisiblePooledEffectCount(),
+      staticDetailBatches: staticDetailStats.batches,
+      staticDetailDynamicBatches: staticDetailStats.dynamicBatches,
+      staticDetailInstances: staticDetailStats.instances,
+      staticDetailBuckets: staticDetailStats.buckets,
       fragmentInstanceBuckets: fragmentStats.buckets,
       fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
       fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
@@ -3094,6 +3107,7 @@ class Game {
 
   private captureFastRenderStats(): DowntownMayhemRenderStats {
     const physicsStats = this.physics.getRuntimeStats();
+    const staticDetailStats = this.physics.getStaticDetailStats();
     const fragmentStats = this.destruction.getFragmentInstanceStats();
     this.lastRenderStats = {
       ...this.lastRenderStats,
@@ -3117,6 +3131,10 @@ class Game {
       textures: this.renderer.info.memory.textures,
       programs: rendererProgramCount(this.renderer),
       visiblePooledVfxObjects: this.particles.getVisiblePooledEffectCount(),
+      staticDetailBatches: staticDetailStats.batches,
+      staticDetailDynamicBatches: staticDetailStats.dynamicBatches,
+      staticDetailInstances: staticDetailStats.instances,
+      staticDetailBuckets: staticDetailStats.buckets,
       fragmentInstanceBuckets: fragmentStats.buckets,
       fragmentInstanceVisibleBuckets: fragmentStats.visibleBuckets,
       fragmentInstanceWarmupBuckets: fragmentStats.warmupBuckets,
@@ -4385,6 +4403,7 @@ class Game {
       perfMonitor.clear();
       this.perfDiskLogger?.flush("shot-start");
     }
+    this.physics.restoreDynamicStaticDetailBatches();
     const projectile = PROJECTILES[this.selectedProjectile];
     const muzzle = this.cannon.getMuzzlePosition();
     const direction = this.cannon.getDirection();

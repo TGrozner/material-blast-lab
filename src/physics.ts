@@ -21,7 +21,7 @@ const FROZEN_RUBBLE_BUCKET_RADIUS = Math.hypot(
   FROZEN_RUBBLE_BUCKET_TILE_SIZE * 0.5
 );
 const STATIC_DETAIL_BUCKET_CAPACITY = 1024;
-const STATIC_DETAIL_BUCKET_TILE_SIZE = 24;
+const STATIC_DETAIL_BUCKET_TILE_SIZE = 48;
 const STATIC_DETAIL_BUCKET_CENTER_Y = 22;
 const STATIC_DETAIL_BUCKET_HALF_Y = 48;
 const STATIC_DETAIL_BUCKET_RADIUS = Math.hypot(
@@ -118,6 +118,13 @@ export interface PhysicsRuntimeStats {
   activeDebrisCount: number;
   frozenDebrisCount: number;
   pendingSupportReleaseCount: number;
+}
+
+export interface StaticDetailStats {
+  batches: number;
+  dynamicBatches: number;
+  instances: number;
+  buckets: number;
 }
 
 export interface DynamicVisualProxy {
@@ -260,6 +267,7 @@ interface StaticDetailRecord {
 interface StaticDetailDetachedChild {
   mesh: THREE.Mesh;
   parent: THREE.Object3D;
+  renderOrder: number;
 }
 
 interface StaticDetailInstance {
@@ -901,6 +909,51 @@ export class PhysicsWorld {
       perfMonitor.addCount("physics.staticDetailBatchedParts", batchedParts);
       perfMonitor.addTiming("physics.batchStaticDetails", startedAt);
     }
+  }
+
+  restoreDynamicStaticDetailBatches(): number {
+    let restored = 0;
+    const dynamicObjectIds: number[] = [];
+    for (const objectId of this.staticDetailRecords.keys()) {
+      const object = this.objects.get(objectId);
+      if (object?.bodyType === "dynamic") {
+        dynamicObjectIds.push(objectId);
+      }
+    }
+    for (const objectId of dynamicObjectIds) {
+      const object = this.objects.get(objectId);
+      if (!object) {
+        continue;
+      }
+      this.restoreStaticDetailBatch(object);
+      restored += 1;
+    }
+    if (restored > 0) {
+      perfMonitor.addCount("physics.staticDetailDynamicBatchesRestored", restored);
+    }
+    return restored;
+  }
+
+  getStaticDetailStats(): StaticDetailStats {
+    let instances = 0;
+    let buckets = 0;
+    let dynamicBatches = 0;
+    for (const record of this.staticDetailRecords.values()) {
+      instances += record.instances.length;
+      const object = this.objects.get(record.objectId);
+      if (object?.bodyType === "dynamic") {
+        dynamicBatches += 1;
+      }
+    }
+    for (const bucketSet of this.staticDetailBuckets.values()) {
+      buckets += bucketSet.length;
+    }
+    return {
+      batches: this.staticDetailRecords.size,
+      dynamicBatches,
+      instances,
+      buckets
+    };
   }
 
   createSphereGeometryWarmupObjects(segments: readonly number[], material: THREE.Material): THREE.Object3D[] {
@@ -1878,6 +1931,8 @@ export class PhysicsWorld {
 
   private createStaticDetailRecord(object: PhysicsObject): StaticDetailRecord | null {
     object.mesh.updateMatrixWorld(true);
+    const canBatchRoot = shouldBatchStaticRootVisual(object) && isStaticRootMeshBatchable(object.mesh);
+    const dynamicRootBatch = canBatchRoot && object.bodyType === "dynamic";
     const record: StaticDetailRecord = {
       objectId: object.id,
       roots: [],
@@ -1906,16 +1961,16 @@ export class PhysicsWorld {
           geometry: child.geometry,
           material: child.material,
           matrix: child.matrixWorld.clone(),
-          renderOrder: child.renderOrder,
+          renderOrder: dynamicRootBatch ? Math.max(child.renderOrder, object.mesh.renderOrder + 1) : child.renderOrder,
           castShadow: child.castShadow,
           receiveShadow: child.receiveShadow
         }
       });
     });
     let batchRoot = false;
-    if (shouldBatchStaticRootVisual(object) && isStaticRootMeshBatchable(object.mesh)) {
+    if (canBatchRoot) {
       batchRoot = true;
-      const rootMesh = object.mesh;
+      const rootMesh = object.mesh as THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
       parts.unshift({
         mesh: rootMesh,
         root: true,
@@ -1939,7 +1994,11 @@ export class PhysicsWorld {
         if (!child.parent || hasAncestorInSet(child, detachedSet, object.mesh)) {
           continue;
         }
-        record.detachedChildren.push({ mesh: child, parent: child.parent });
+        const renderOrder = child.renderOrder;
+        if (dynamicRootBatch) {
+          child.renderOrder = Math.max(child.renderOrder, object.mesh.renderOrder + 1);
+        }
+        record.detachedChildren.push({ mesh: child, parent: child.parent, renderOrder });
         this.scene.attach(child);
       }
     }
@@ -2027,7 +2086,8 @@ export class PhysicsWorld {
       root.visible = true;
       delete root.userData.aimRaycastProxy;
     }
-    for (const { mesh, parent } of record.detachedChildren) {
+    for (const { mesh, parent, renderOrder } of record.detachedChildren) {
+      mesh.renderOrder = renderOrder;
       parent.attach(mesh);
     }
     for (const child of record.children) {
@@ -2341,12 +2401,12 @@ function isStaticDetailMeshBatchable(mesh: THREE.Mesh): mesh is THREE.Mesh<THREE
 
 function shouldBatchStaticRootVisual(object: PhysicsObject): boolean {
   return (
-    object.bodyType === "fixed" &&
     object.category === "structure" &&
     object.shape === "box" &&
     !object.isDebris &&
     !object.visualProxy &&
-    !object.trafficRoute
+    !object.trafficRoute &&
+    (object.bodyType === "fixed" || (object.bodyType === "dynamic" && object.body.isSleeping()))
   );
 }
 
@@ -2357,7 +2417,13 @@ function shouldBatchIdleDetailObject(object: PhysicsObject): boolean {
   if (object.bodyType === "fixed") {
     return true;
   }
-  return false;
+  return (
+    object.bodyType === "dynamic" &&
+    object.category === "structure" &&
+    object.body.isSleeping() &&
+    !object.visualProxy &&
+    !object.trafficRoute
+  );
 }
 
 function isStaticRootMeshBatchable(mesh: THREE.Mesh): mesh is THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
