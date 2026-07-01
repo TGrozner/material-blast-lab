@@ -188,13 +188,16 @@ export const perfMonitor = new PerfMonitor();
 
 function shouldEnablePerfMonitor(): boolean {
   try {
-    return shouldEnablePerfFromSearch(globalThis.location?.search ?? "");
+    return shouldEnablePerfFromSearch(globalThis.location?.search ?? "", import.meta.env.DEV);
   } catch {
     return false;
   }
 }
 
-export function shouldEnablePerfFromSearch(search: string): boolean {
+export function shouldEnablePerfFromSearch(search: string, diagnosticsAllowed = true): boolean {
+  if (!diagnosticsAllowed) {
+    return false;
+  }
   const params = new URLSearchParams(search);
   return params.has("perf") || params.has("perfFull");
 }

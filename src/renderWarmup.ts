@@ -85,13 +85,16 @@ export function createInitialRenderWarmupState(): RenderWarmupState {
 
 export function currentRenderWarmupMode(): RenderWarmupMode {
   try {
-    return renderWarmupModeFromSearch(globalThis.location?.search ?? "");
+    return renderWarmupModeFromSearch(globalThis.location?.search ?? "", import.meta.env.DEV);
   } catch {
     return "none";
   }
 }
 
-export function renderWarmupModeFromSearch(search: string): RenderWarmupMode {
+export function renderWarmupModeFromSearch(search: string, diagnosticsAllowed = true): RenderWarmupMode {
+  if (!diagnosticsAllowed) {
+    return "none";
+  }
   const params = new URLSearchParams(search);
   if (params.has("smoke")) {
     return "smoke";

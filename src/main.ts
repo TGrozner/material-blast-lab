@@ -237,6 +237,7 @@ interface ImpactBlastProfile {
 
 interface DowntownMayhemDebugApi {
   getRenderStats(): DowntownMayhemRenderStats;
+  getFastRenderStats(): DowntownMayhemRenderStats;
   getPerfReport(): PerfReport;
   getRenderWarmupState(): RenderWarmupState;
   getCannonVisualState(): CannonVisualState;
@@ -1971,7 +1972,7 @@ class PerfDiskLogger {
   private intervalId: number | null = null;
   private sequence = 0;
   private inFlight = false;
-  private queuedReason: string | null = null;
+  private queuedFlush: { reason: string; forceFullStats: boolean } | null = null;
 
   constructor(private readonly game: Game) {}
 
@@ -1990,12 +1991,13 @@ class PerfDiskLogger {
     this.flush(reason);
   }
 
-  flush(reason = "manual"): void {
+  flush(reason = "manual", options: { forceFullStats?: boolean } = {}): void {
+    const forceFullStats = options.forceFullStats === true;
     if (this.inFlight) {
-      this.queuedReason = reason;
+      this.queuedFlush = { reason, forceFullStats };
       return;
     }
-    const payload = this.createPayload(reason);
+    const payload = this.createPayload(reason, forceFullStats);
     const body = JSON.stringify(payload);
     this.inFlight = true;
     void fetch(PERF_DISK_LOG_ENDPOINT, {
@@ -2011,15 +2013,15 @@ class PerfDiskLogger {
       })
       .finally(() => {
         this.inFlight = false;
-        const queuedReason = this.queuedReason;
-        this.queuedReason = null;
-        if (queuedReason) {
-          this.flush(queuedReason);
+        const queuedFlush = this.queuedFlush;
+        this.queuedFlush = null;
+        if (queuedFlush) {
+          this.flush(queuedFlush.reason, { forceFullStats: queuedFlush.forceFullStats });
         }
       });
   }
 
-  private createPayload(reason: string) {
+  private createPayload(reason: string, forceFullStats: boolean) {
     const report = perfMonitor.report();
     const payload: {
       sessionId: string;
@@ -2039,7 +2041,7 @@ class PerfDiskLogger {
       createdAt: new Date().toISOString(),
       pageTimeMs: Math.round(performance.now() * 10) / 10,
       href: redactedPerfLogHref(),
-      stats: this.game.getPerfLogRenderStats(this.shouldCaptureFullStats(reason)),
+      stats: this.game.getPerfLogRenderStats(this.shouldCaptureFullStats(reason, forceFullStats)),
       warmup: this.game.getRenderWarmupState(),
       summary: summarizePerfReport(report)
     };
@@ -2049,8 +2051,8 @@ class PerfDiskLogger {
     return payload;
   }
 
-  private shouldCaptureFullStats(reason: string): boolean {
-    return this.includeFullReport || reason === "manual" || reason === "score-finalized";
+  private shouldCaptureFullStats(reason: string, forceFullStats: boolean): boolean {
+    return forceFullStats || reason === "manual" || reason === "score-finalized";
   }
 }
 
@@ -2282,6 +2284,10 @@ class Game {
     return this.captureRenderStats();
   }
 
+  getFastRenderStats(): DowntownMayhemRenderStats {
+    return this.captureFastRenderStats();
+  }
+
   getPerfLogRenderStats(captureFullStats: boolean): DowntownMayhemRenderStats {
     return captureFullStats ? this.captureRenderStats() : this.captureFastRenderStats();
   }
@@ -2307,7 +2313,7 @@ class Game {
   }
 
   flushPerfLog(reason?: string): void {
-    this.perfDiskLogger?.flush(reason ?? "manual");
+    this.perfDiskLogger?.flush(reason ?? "manual", { forceFullStats: true });
   }
 
   showPlayScreen(): void {
@@ -2342,7 +2348,7 @@ class Game {
     window.visualViewport?.removeEventListener("resize", this.handleResize);
     window.removeEventListener("beforeunload", this.handleBeforeUnload);
     this.perfDiskLogger?.dispose("game-dispose");
-    if (window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().frame === this.lastRenderStats.frame) {
+    if (activeGame === this) {
       delete window.__DOWNTOWN_MAYHEM_DEBUG__;
     }
     this.input.dispose();
@@ -5512,6 +5518,7 @@ function returnToMainMenu(shell: AppShell): void {
 function installDebugApi(game: Game): void {
   window.__DOWNTOWN_MAYHEM_DEBUG__ = {
     getRenderStats: () => game.getRenderStats(),
+    getFastRenderStats: () => game.getFastRenderStats(),
     getPerfReport: () => perfMonitor.report(),
     getRenderWarmupState: () => game.getRenderWarmupState(),
     getCannonVisualState: () => game.getCannonVisualState(),

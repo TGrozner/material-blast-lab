@@ -10,6 +10,11 @@ describe("perf monitor query flags", () => {
     expect(shouldEnablePerfFromSearch("?smoke=1")).toBe(false);
   });
 
+  test("ignores perf query flags when diagnostics are unavailable", () => {
+    expect(shouldEnablePerfFromSearch("?perfFull", false)).toBe(false);
+    expect(shouldEnablePerfFromSearch("?perf=1", false)).toBe(false);
+  });
+
   test("summarizes shot slow frames in one ordered report", () => {
     const idle = perfFrame(1, 41, {
       timings: { "renderer.render": 9 },

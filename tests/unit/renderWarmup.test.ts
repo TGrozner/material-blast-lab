@@ -13,6 +13,11 @@ describe("render warmup helpers", () => {
     expect(renderWarmupModeFromSearch("?perf=1")).toBe("none");
   });
 
+  test("ignores warmup query flags when diagnostics are unavailable", () => {
+    expect(renderWarmupModeFromSearch("?smoke=1", false)).toBe("none");
+    expect(renderWarmupModeFromSearch("?fullWarmup=1", false)).toBe("none");
+  });
+
   test("creates an idle initial warmup state", () => {
     expect(createInitialRenderWarmupState()).toEqual({
       phase: "idle",

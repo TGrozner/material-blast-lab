@@ -117,6 +117,7 @@ declare global {
   interface Window {
     __DOWNTOWN_MAYHEM_DEBUG__?: {
       getRenderStats(): RenderStats;
+      getFastRenderStats(): RenderStats;
       getPerfReport(): unknown;
       getRenderWarmupState(): RenderWarmupState;
       getCannonVisualState(): CannonVisualState;
@@ -549,7 +550,9 @@ test("records post-shot perf budgets", async ({ page }) => {
     })
     .toBe("ready");
   await expect(page.locator(".hud [data-role='shots']")).toHaveText("READY");
-  await expect.poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().visiblePooledVfxObjects ?? -1)).toBe(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getFastRenderStats().visiblePooledVfxObjects ?? -1))
+    .toBe(0);
   await expect(fireButton(page)).toBeEnabled();
 
   await clickUi(fireButton(page));
@@ -581,7 +584,9 @@ test("records idle aim perf budgets", async ({ page }) => {
   await expect(page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getPerfReport())).resolves.toMatchObject({
     enabled: true
   });
-  await expect.poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().visiblePooledVfxObjects ?? -1)).toBe(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getFastRenderStats().visiblePooledVfxObjects ?? -1))
+    .toBe(0);
 
   await page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.clearPerfReport());
   await expect
@@ -935,7 +940,7 @@ async function useStableVisualCapture(page: Page): Promise<void> {
 }
 
 async function waitForRenderStats(page: Page): Promise<RenderStats> {
-  await expect.poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().drawCalls ?? 0), {
+  await expect.poll(() => page.evaluate(() => window.__DOWNTOWN_MAYHEM_DEBUG__?.getFastRenderStats().drawCalls ?? 0), {
     timeout: UI_READY_TIMEOUT_MS
   }).toBeGreaterThan(0);
   return page.evaluate(() => {
@@ -1017,7 +1022,7 @@ function hasRenderableCanvasSize(): boolean {
 }
 
 function hasInitializedRenderer(): boolean {
-  return Boolean(window.__DOWNTOWN_MAYHEM_DEBUG__?.getRenderStats().rendererBackend);
+  return Boolean(window.__DOWNTOWN_MAYHEM_DEBUG__?.getFastRenderStats().rendererBackend);
 }
 
 function hasWebglAntialias(): boolean | null {
