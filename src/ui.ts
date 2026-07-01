@@ -1,4 +1,4 @@
-import type { ArcadeContractObjectiveResult, ArcadeLevelProgress, ArcadeResult } from "./arcade";
+import type { ArcadeLevelProgress, ArcadeResult } from "./arcade";
 import type { ArcadeMissionFields } from "./levels";
 import type { DailyResultMeta, RunFeedback } from "./mayhemFeatures";
 import type { ProjectileDefinition, ProjectileId } from "./projectile";
@@ -756,41 +756,9 @@ function renderScore(state: UIState): string {
   const stars = result?.stars ?? 0;
   const resultLabel = result?.completed ? (stars >= 3 ? "Max Mayhem" : "Complete") : "Needs 2-star";
   const districtRating = districtMayhemRating(state, score);
-  const callouts = resultCallouts(state, score);
+  const callouts = resultCallouts(state, score).slice(0, 3);
   const primaryAction = primaryResultAction(state);
   const hasNextDistrict = canStartNextDistrict(state);
-  const bonusValue = bonusMetricValue(score, state.mission.bonusThreshold.metric);
-  const hotspots = score.damageHotspots.slice(0, 4);
-  const contractObjectives = result?.contract?.objectives ?? [];
-  const feedback = state.runFeedback;
-  const goals = [
-    {
-      label: "Damage",
-      value: `${formatScoreNumber(score.targetDamage)} / ${formatScoreNumber(state.mission.targetDamageThreshold)}`,
-      passed: score.targetDamage >= state.mission.targetDamageThreshold
-    },
-    {
-      label: "1-star score",
-      value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.oneStar)}`,
-      passed: score.totalScore >= state.mission.scoreThresholds.oneStar
-    },
-    {
-      label: "2-star unlock",
-      value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.twoStar)}`,
-      passed: score.totalScore >= state.mission.scoreThresholds.twoStar
-    },
-    {
-      label: "3-star score",
-      value: `${formatScoreNumber(score.totalScore)} / ${formatScoreNumber(state.mission.scoreThresholds.threeStar)}`,
-      passed: score.totalScore >= state.mission.scoreThresholds.threeStar
-    },
-    {
-      label: "Bonus",
-      value: `${formatScoreNumber(bonusValue)} / ${formatScoreNumber(state.mission.bonusThreshold.minimum)}`,
-      passed: result?.bonusCompleted ?? false,
-      hint: bonusGoalHint(state, score)
-    }
-  ];
 
   return `
       <div class="hud__result-head">
@@ -806,45 +774,9 @@ function renderScore(state: UIState): string {
       <strong data-role="result-total">${formatScoreNumber(score.totalScore)}</strong>
       <em>${bestScoreLabel(state)}</em>
     </div>
-    ${renderProgressionSummary(state, score)}
-    ${renderShareCard(state, score)}
-    ${state.resultMeta?.dailyResult ? renderDailyResultSummary(state.resultMeta.dailyResult) : ""}
-    ${feedback ? renderRunCoach(feedback) : ""}
-    <div class="hud__objective-list">
-      ${goals
-        .map(
-          (goal) => `
-            <div class="${goal.passed ? "is-passed" : "is-missed"}">
-              <span>${escapeHtml(goal.label)}</span>
-              <strong>${escapeHtml(goal.value)}</strong>
-              ${"hint" in goal && goal.hint ? `<em>${escapeHtml(goal.hint)}</em>` : ""}
-            </div>
-          `
-        )
-        .join("")}
-    </div>
-    ${contractObjectives.length > 0 ? renderContractObjectives(result?.contract?.completed ?? false, contractObjectives) : ""}
-    <div class="hud__score-breakdown">
-      <div><span>Payload</span><strong>${escapeHtml(score.shotName)}</strong></div>
-      <div><span>Chaos</span><strong>${formatScoreNumber(score.collateralChaos)}</strong></div>
-      <div><span>Chain</span><strong>${formatScoreNumber(score.chainReactionBonus)}</strong></div>
-      <div><span>Hits</span><strong>${formatScoreNumber(score.chainReactionCount)}</strong></div>
-      ${score.maxChainCombo > 1 ? `<div><span>Best Chain</span><strong>${formatScoreNumber(score.maxChainCombo)}</strong></div>` : ""}
-      ${score.weakPointBreakCount > 0 ? `<div><span>Weak Points</span><strong>${score.weakPointBreakCount}</strong></div>` : ""}
-      ${score.bossBreakCount > 0 ? `<div><span>Boss Breaks</span><strong>${score.bossBreakCount}</strong></div>` : ""}
-      <div><span>Motion</span><strong>${formatScoreNumber(score.remainingDebrisMotion)}</strong></div>
-    </div>
-    <div class="hud__damage-hotspots">
-      <div class="hud__damage-hotspots-head"><span>Top Damage</span><strong>${hotspots.length > 0 ? `${hotspots.length} zones` : "None"}</strong></div>
-      ${
-        hotspots.length > 0
-          ? hotspots.map(renderDamageHotspot).join("")
-          : `<div class="hud__damage-hotspot"><span><strong>No major zone</strong><em>No dominant damage source</em></span><b>0</b></div>`
-      }
-    </div>
     <div class="hud__result-actions">
       <button type="button" data-action="result-menu" aria-label="Return to district menu">Menu</button>
-      ${primaryAction === "retry" ? `<button class="is-primary" type="button" data-action="result-retry" aria-label="${result?.completed ? "Retry this district for three stars" : "Retry this run with the coach recipe"}">${result?.completed ? "Retry 3-star" : "Retry Run"}</button>` : `<button type="button" data-action="result-retry" aria-label="Retry this district">Retry</button>`}
+      ${primaryAction === "retry" ? `<button class="is-primary" type="button" data-action="result-retry" aria-label="${result?.completed ? "Retry this district for three stars" : "Retry this run"}">${result?.completed ? "Retry 3-star" : "Retry Run"}</button>` : `<button type="button" data-action="result-retry" aria-label="Retry this district">Retry</button>`}
       ${hasNextDistrict ? (primaryAction === "next" ? `<button class="is-primary" type="button" data-action="result-next" aria-label="Start the next unlocked district">Next District</button>` : `<button type="button" data-action="result-next" aria-label="Start the next unlocked district">Next District</button>`) : ""}
     </div>
   `;
@@ -874,161 +806,6 @@ function renderResultCeremony(state: UIState, score: ScoreBreakdown): string {
       </div>
     </div>
   `;
-}
-
-function renderProgressionSummary(state: UIState, score: ScoreBreakdown): string {
-  const currentProgress = state.levels[state.levelIndex]?.progress ?? state.levelProgress;
-  const stars = state.arcadeResult?.stars ?? currentProgress.stars;
-  const starsGained = state.resultMeta?.starsGained ?? 0;
-  const unlockedDistricts = state.levels.filter((level) => !level.locked).length;
-  const nextDistrict = state.levels[state.levelIndex + 1];
-  const nextStar = nextStarGap(state, score);
-  const unlockLine = progressionUnlockLine(state, currentProgress.stars, nextDistrict);
-  const starLine =
-    stars >= 3
-      ? "3-star secured"
-      : nextStar > 0
-        ? `+${formatScoreNumber(nextStar)} Mayhem`
-        : "Next star cleared";
-  return `
-    <div class="hud__progression-card" data-role="progression-summary">
-      <div class="hud__progression-head">
-        <span>Stars</span>
-        <strong>${state.totalStars}/${state.levelCount * 3} stars</strong>
-      </div>
-      <div class="hud__progression-grid">
-        <div>
-          <span>District</span>
-          <strong>${stars}/3 stars${starsGained > 0 ? ` / +${starsGained}` : ""}</strong>
-        </div>
-        <div>
-          <span>Gate</span>
-          <strong>${escapeHtml(unlockLine)}</strong>
-        </div>
-        <div>
-          <span>Open</span>
-          <strong>${unlockedDistricts}/${state.levelCount}</strong>
-        </div>
-        <div>
-          <span>Next</span>
-          <strong>${escapeHtml(starLine)}</strong>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function progressionUnlockLine(state: UIState, currentStars: number, nextDistrict: UILevelOption | undefined): string {
-  if (state.resultMeta?.justUnlockedPayloadName) {
-    return `New payload unlocked: ${state.resultMeta.justUnlockedPayloadName}`;
-  }
-  if (state.resultMeta?.justUnlockedLevelName) {
-    return `Unlocked ${state.resultMeta.justUnlockedLevelName}`;
-  }
-  if (!nextDistrict) {
-    return "Final district reached";
-  }
-  if (!nextDistrict.locked) {
-    return `${nextDistrict.name} ready`;
-  }
-  const missing = Math.max(0, 2 - currentStars);
-  return `${missing} more ${missing === 1 ? "star" : "stars"} for ${nextDistrict.name}`;
-}
-
-function renderShareCard(state: UIState, score: ScoreBreakdown): string {
-  const feedback = state.runFeedback;
-  const shareText = state.resultMeta?.dailyResult?.shareText ?? resultShareText(state, score);
-  const replayMoment = feedback?.replayMoment;
-  const topSource = feedback?.topSources[0];
-  return `
-    <div class="hud__share-card" data-role="share-card">
-      <div class="hud__share-head">
-        <span>Share</span>
-        <strong>${escapeHtml(state.levelName)} / ${state.arcadeResult?.stars ?? 0}/3</strong>
-      </div>
-      <code data-role="result-share">${escapeHtml(shareText)}</code>
-      <div class="hud__replay-grid" data-role="replay-summary">
-        <div>
-          <span>Replay</span>
-          <strong>${escapeHtml(score.shotName)}</strong>
-        </div>
-        <div>
-          <span>Moment</span>
-          <strong>${replayMoment ? `${escapeHtml(replayMoment.label)} / ${formatScoreNumber(replayMoment.points)}` : "None"}</strong>
-        </div>
-        <div>
-          <span>Source</span>
-          <strong>${topSource ? `${escapeHtml(topSource.label)} / ${formatScoreNumber(topSource.points)}` : "None"}</strong>
-        </div>
-        <div>
-          <span>Combo</span>
-          <strong>${score.maxChainCombo > 1 ? `x${formatScoreNumber(score.maxChainCombo)}` : "No chain"}</strong>
-        </div>
-      </div>
-      ${renderReplayTimeline(feedback)}
-    </div>
-  `;
-}
-
-function renderReplayTimeline(feedback: RunFeedback | null): string {
-  const timeline = feedback?.replayTimeline.slice(0, 4) ?? [];
-  if (timeline.length === 0) {
-    return "";
-  }
-  return `
-    <div class="hud__replay-timeline" data-role="replay-timeline" aria-label="Replay timeline">
-      ${timeline
-        .map(
-          (moment, index) => `
-            <button type="button" data-action="replay-focus" data-replay-index="${index}" aria-label="Focus replay moment ${escapeHtml(moment.label)}">
-              <span>${escapeHtml(replayKindLabel(moment.kind))}</span>
-              <strong>${escapeHtml(moment.label)}</strong>
-              <em>${formatScoreNumber(moment.points)}</em>
-            </button>
-          `
-        )
-        .join("")}
-    </div>
-  `;
-}
-
-function replayKindLabel(kind: RunFeedback["replayTimeline"][number]["kind"]): string {
-  switch (kind) {
-    case "impact":
-      return "Impact";
-    case "boss":
-      return "Boss break";
-    case "ignition":
-      return "Ignition";
-    case "chain":
-      return "Chain";
-    case "source":
-      return "Source";
-  }
-}
-
-function resultShareText(state: UIState, score: ScoreBreakdown): string {
-  const stars = state.arcadeResult?.stars ?? 0;
-  const replay = state.runFeedback?.replayMoment;
-  const contract = contractShareLine(state.arcadeResult?.contract ?? null);
-  return [
-    `Downtown Mayhem ${state.levelName}`,
-    `${stars}/3 stars`,
-    `${formatScoreNumber(score.totalScore)} Mayhem`,
-    score.shotName,
-    replay ? `${replay.label} ${formatScoreNumber(replay.points)}` : null,
-    contract
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join(" | ");
-}
-
-function contractShareLine(contract: ArcadeResult["contract"]): string | null {
-  if (!contract || contract.objectives.length === 0) {
-    return null;
-  }
-  const completed = contract.objectives.filter((objective) => objective.completed).length;
-  return contract.completed ? "contract complete" : `contract ${completed}/${contract.objectives.length}`;
 }
 
 function resultPanelLabel(state: UIState): string {
@@ -1108,43 +885,6 @@ function resultCallouts(state: UIState, score: ScoreBreakdown): Array<{ classNam
       value: meta.justUnlockedPayloadName
     });
   }
-  if (state.arcadeResult?.bonusCompleted) {
-    callouts.push({
-      className: "is-bonus-complete",
-      label: "Bonus goal",
-      value: "Complete"
-    });
-  }
-  if (state.arcadeResult?.contract) {
-    const completed = state.arcadeResult.contract.objectives.filter((objective) => objective.completed).length;
-    const total = state.arcadeResult.contract.objectives.length;
-    callouts.push({
-      className: state.arcadeResult.contract.completed ? "is-contract-complete" : "is-contract-missed",
-      label: "Contract",
-      value: state.arcadeResult.contract.completed ? "Complete" : `${completed}/${total}`
-    });
-  }
-  if (score.bossBreakCount > 0) {
-    callouts.push({
-      className: "is-boss-break",
-      label: "Boss breaks",
-      value: String(score.bossBreakCount)
-    });
-  }
-  if (score.weakPointBreakCount > 0) {
-    callouts.push({
-      className: "is-weakpoint-break",
-      label: "Weak points",
-      value: String(score.weakPointBreakCount)
-    });
-  }
-  if (score.chainReactionCount >= 20) {
-    callouts.push({
-      className: "is-chain-combo",
-      label: "Hits",
-      value: formatScoreNumber(score.chainReactionCount)
-    });
-  }
   return callouts;
 }
 
@@ -1152,199 +892,10 @@ function renderResultCallout(callout: { className: string; label: string; value:
   return `<div class="${callout.className}"><span>${escapeHtml(callout.label)}</span><strong>${escapeHtml(callout.value)}</strong></div>`;
 }
 
-function renderRunCoach(feedback: RunFeedback): string {
-  const topSources = feedback.topSources.slice(0, 3);
-  const nearMisses = feedback.nearMisses.slice(0, 3);
-  const recipe = retryRecipe(feedback, topSources, nearMisses);
-  const actionSteps = coachActionSteps(feedback, topSources, nearMisses);
-  return `
-    <div class="hud__run-coach" data-role="run-coach" aria-label="Next Shot retry recipe">
-      <div class="hud__run-coach-head">
-        <span>Next Shot</span>
-        <strong>${escapeHtml(feedback.variant.label)}</strong>
-      </div>
-      <div class="hud__coach-steps" aria-label="Next run plan">
-        <span>Plan</span>
-        ${actionSteps
-          .map(
-            (step, index) => `
-              <div class="hud__coach-step">
-                <em>${index + 1}</em>
-                <span>${escapeHtml(step.label)}</span>
-                <strong>${escapeHtml(step.value)}</strong>
-              </div>
-            `
-          )
-          .join("")}
-      </div>
-      <div class="hud__run-coach-grid">
-        <div class="hud__run-coach-recipe">
-          <span>Recipe</span>
-          <strong>${escapeHtml(recipe)}</strong>
-        </div>
-        <div>
-          <span>Sources</span>
-          <strong>${topSources.length > 0 ? escapeHtml(topSources.map((source) => `${source.label} ${formatScoreNumber(source.points)}`).join(" / ")) : "None"}</strong>
-        </div>
-        <div>
-          <span>Target</span>
-          <strong>${escapeHtml(compactCoachValue(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.variant.description))}</strong>
-        </div>
-        <div>
-          <span>Replay</span>
-          <strong>${feedback.replayMoment ? `${escapeHtml(feedback.replayMoment.label)} / ${formatScoreNumber(feedback.replayMoment.points)}` : "None"}</strong>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function coachActionSteps(
-  feedback: RunFeedback,
-  topSources: readonly { label: string; points: number }[],
-  nearMisses: readonly string[]
-): Array<{ label: string; value: string }> {
-  const missedContract = feedback.contractResult?.objectives.find((objective) => !objective.completed);
-  const opener = compactCoachValue(cleanCoachHint(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.variant.description));
-  const amplifier = topSources[0]
-    ? `${topSources[0].label} +${formatScoreNumber(topSources[0].points)}`
-    : feedback.replayMoment
-      ? `Replay ${feedback.replayMoment.label}`
-      : "Break one clear target";
-  const closer = missedContract
-    ? `${missedContract.label}: ${formatContractValue(missedContract.value)} / ${formatContractValue(missedContract.target)}.`
-    : feedback.replayMoment
-      ? `Bank after ${feedback.replayMoment.label}`
-      : (feedback.contract?.summary ?? "Bank at Score Now");
-  return [
-    { label: "Open", value: opener },
-    { label: "Boost", value: compactCoachValue(amplifier) },
-    { label: "Lock", value: compactCoachValue(closer) }
-  ];
-}
-
-function cleanCoachHint(value: string): string {
-  return value
-    .replace(/^Retry route:\s*/i, "")
-    .replace(/^Aim plan:\s*/i, "")
-    .replace(/^Bonus route:\s*/i, "")
-    .replace(/^Contract route:\s*/i, "");
-}
-
-function compactCoachValue(value: string): string {
-  return value
-    .replace(/\s+before scoring\.?$/i, "")
-    .replace(/\s+before debris settles\.?$/i, "")
-    .replace(/\s+once Score Now appears\.?$/i, "")
-    .replace(/\s+for\s+/i, " / ")
-    .replace(/\s+more Mayhem\.?$/i, " Mayhem")
-    .replace(/\s+more object damage\.?$/i, " damage")
-    .replace(/\s+more\.?$/i, "")
-    .replace(/\.$/, "");
-}
-
-function retryRecipe(
-  feedback: RunFeedback,
-  topSources: readonly { label: string; points: number }[],
-  nearMisses: readonly string[]
-): string {
-  const firstTarget = compactCoachValue(nearMisses[0] ?? feedback.projectileObjective?.label ?? feedback.contract?.summary ?? feedback.variant.description);
-  const source = topSources[0]?.label;
-  const replay = feedback.replayMoment?.label;
-  const parts = [`Open: ${firstTarget}`];
-  if (source) {
-    parts.push(`Repeat: ${source}`);
-  }
-  if (replay) {
-    parts.push(`Replay: ${replay}`);
-  }
-  return parts.join(" / ");
-}
-
-function renderDailyResultSummary(result: DailyResultMeta): string {
-  const bestLabel = result.newBest
-    ? `New daily best from ${formatScoreNumber(result.previousBestScore)}`
-    : `Daily best ${formatScoreNumber(result.bestScore)}`;
-  return `
-    <div class="hud__daily-result" data-role="daily-result">
-      <div class="hud__daily-result-head">
-        <span>Daily Contract</span>
-        <strong>${escapeHtml(bestLabel)}</strong>
-      </div>
-      <div class="hud__daily-result-grid">
-        <div>
-          <span>Attempts</span>
-          <strong>${formatScoreNumber(result.attempts)}</strong>
-        </div>
-        <div>
-          <span>Best stars</span>
-          <strong>${result.bestStars}/3</strong>
-        </div>
-        <div>
-          <span>Contract</span>
-          <strong>${result.contractCompleted ? "Complete" : "Missed"}</strong>
-        </div>
-      </div>
-      <code data-role="daily-share">${escapeHtml(result.shareText)}</code>
-      <small>Replay from Daily card.</small>
-    </div>
-  `;
-}
-
-function renderContractObjectives(completed: boolean, objectives: readonly ArcadeContractObjectiveResult[]): string {
-  const completedCount = objectives.filter((objective) => objective.completed).length;
-  return `
-    <div class="hud__contract-list" aria-label="Run contract objectives">
-      <div class="hud__contract-head">
-        <span>Contract</span>
-        <strong>${completed ? "Complete" : `${completedCount}/${objectives.length}`}</strong>
-      </div>
-      ${objectives.map(renderContractObjective).join("")}
-    </div>
-  `;
-}
-
 function liveMasteryText(mastery: UILiveMastery): string {
   const contractState = mastery.contractCompleted ? "done" : `${Math.round(mastery.contractProgress * 100)}%`;
   const signals = mastery.signals.length > 0 ? ` | ${mastery.signals.join(" | ")}` : "";
   return `${mastery.bonusLabel} ${mastery.bonusValue} | ${mastery.contractLabel} ${mastery.contractValue} | ${contractState}${signals}`;
-}
-
-function renderContractObjective(objective: ArcadeContractObjectiveResult): string {
-  return `
-    <div class="hud__contract-objective ${objective.completed ? "is-passed" : "is-missed"}">
-      <span>${escapeHtml(objective.label)}</span>
-      <strong>${escapeHtml(formatContractValue(objective.value))} / ${escapeHtml(formatContractValue(objective.target))}</strong>
-    </div>
-  `;
-}
-
-function formatContractValue(value: number | string): string {
-  return typeof value === "number" ? formatScoreNumber(value) : value;
-}
-
-function renderDamageHotspot(hotspot: ScoreBreakdown["damageHotspots"][number]): string {
-  return `
-    <div class="hud__damage-hotspot">
-      <span>
-        <strong>${escapeHtml(hotspot.label)}</strong>
-        <em>${escapeHtml(damageHotspotDetail(hotspot))}</em>
-      </span>
-      <b>${formatScoreNumber(hotspot.points)}</b>
-    </div>
-  `;
-}
-
-function damageHotspotDetail(hotspot: ScoreBreakdown["damageHotspots"][number]): string {
-  const parts = [];
-  if (hotspot.targetDamage > 0) {
-    parts.push(`${formatScoreNumber(hotspot.targetDamage)} object`);
-  }
-  if (hotspot.collateralDamage > 0) {
-    parts.push(`${formatScoreNumber(hotspot.collateralDamage)} chaos`);
-  }
-  parts.push(`${formatScoreNumber(hotspot.hits)} ${hotspot.hits === 1 ? "hit" : "hits"}`);
-  return parts.join(" / ");
 }
 
 function bestScoreLabel(state: UIState): string {
@@ -1368,16 +919,6 @@ function canStartNextDistrict(state: UIState): boolean {
   return Boolean(next && !next.locked);
 }
 
-function bonusGoalHint(state: UIState, score: ScoreBreakdown): string {
-  const metric = state.mission.bonusThreshold.metric;
-  const value = bonusMetricValue(score, metric);
-  const minimum = state.mission.bonusThreshold.minimum;
-  if (value >= minimum) {
-    return "Bonus goal complete";
-  }
-  return `Need ${formatScoreNumber(minimum - value)} more ${metricUnit(metric)}`;
-}
-
 function nextStarGap(state: UIState, score: ScoreBreakdown): number {
   const thresholds = [
     state.mission.scoreThresholds.oneStar,
@@ -1396,10 +937,6 @@ function bonusSummary(mission: ArcadeMissionFields): string {
   return `${formatScoreNumber(mission.bonusThreshold.minimum)}+ ${metricLabel(mission.bonusThreshold.metric)}`;
 }
 
-function bonusMetricValue(score: ScoreBreakdown, metric: ArcadeMissionFields["bonusThreshold"]["metric"]): number {
-  return score[metric];
-}
-
 function metricLabel(metric: ArcadeMissionFields["bonusThreshold"]["metric"]): string {
   switch (metric) {
     case "targetDamage":
@@ -1412,23 +949,6 @@ function metricLabel(metric: ArcadeMissionFields["bonusThreshold"]["metric"]): s
       return "motion";
     case "chainReactionCount":
       return "hits";
-    case "maxChainCombo":
-      return "combo";
-  }
-}
-
-function metricUnit(metric: ArcadeMissionFields["bonusThreshold"]["metric"]): string {
-  switch (metric) {
-    case "targetDamage":
-      return "object damage";
-    case "collateralChaos":
-      return "collateral chaos";
-    case "chainReactionBonus":
-      return "chain score";
-    case "remainingDebrisMotion":
-      return "motion score";
-    case "chainReactionCount":
-      return "secondary hits";
     case "maxChainCombo":
       return "combo";
   }
@@ -1647,8 +1167,6 @@ function installStyles(): void {
     .hud__loadout-head,
     .hud__goal-grid span,
     .hud__total span,
-    .hud__score-breakdown span,
-    .hud__objective-list span,
     .hud__setting-row span {
       color: #9db6c4;
       font-size: 11px;
@@ -2192,13 +1710,7 @@ function installStyles(): void {
       gap: 3px;
     }
 
-    .hud__result-ceremony span,
-    .hud__progression-head span,
-    .hud__progression-grid span,
-    .hud__share-head span,
-    .hud__replay-grid span,
-    .hud__coach-steps > span,
-    .hud__coach-step span {
+    .hud__result-ceremony span {
       color: #9db6c4;
       font-size: 10px;
       font-weight: 900;
@@ -2262,31 +1774,10 @@ function installStyles(): void {
       background: rgba(114, 240, 165, 0.1);
     }
 
-    .hud__result-callouts .is-contract-complete {
-      border-color: rgba(114, 240, 165, 0.58);
-      background: rgba(114, 240, 165, 0.1);
-    }
-
     .hud__result-callouts .is-daily,
     .hud__result-callouts .is-daily-best {
       border-color: rgba(255, 226, 126, 0.62);
       background: rgba(255, 202, 76, 0.12);
-    }
-
-    .hud__result-callouts .is-contract-missed {
-      border-color: rgba(255, 124, 159, 0.54);
-      background: rgba(255, 124, 159, 0.1);
-    }
-
-    .hud__result-callouts .is-boss-break {
-      border-color: rgba(255, 112, 88, 0.62);
-      background: rgba(255, 92, 64, 0.12);
-    }
-
-    .hud__result-callouts .is-weakpoint-break,
-    .hud__result-callouts .is-chain-combo {
-      border-color: rgba(120, 234, 255, 0.54);
-      background: rgba(88, 208, 255, 0.1);
     }
 
     .hud__result-callouts span,
@@ -2335,32 +1826,6 @@ function installStyles(): void {
       font-style: normal;
     }
 
-    .hud__daily-result,
-    .hud__progression-card,
-    .hud__share-card,
-    .hud__run-coach,
-    .hud__objective-list,
-    .hud__contract-list,
-    .hud__score-breakdown,
-    .hud__damage-hotspots {
-      display: grid;
-      gap: 6px;
-    }
-
-    .hud__daily-result-head,
-    .hud__progression-head,
-    .hud__share-head,
-    .hud__daily-result-grid div,
-    .hud__progression-grid div,
-    .hud__replay-grid div,
-    .hud__run-coach-head,
-    .hud__run-coach-grid div,
-    .hud__objective-list div,
-    .hud__contract-head,
-    .hud__contract-objective,
-    .hud__score-breakdown div,
-    .hud__damage-hotspot,
-    .hud__damage-hotspots-head,
     .hud__setting-row {
       display: flex;
       align-items: center;
@@ -2378,257 +1843,6 @@ function installStyles(): void {
       accent-color: #79f0ff;
     }
 
-    .hud__objective-list div {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: flex-start;
-      border-left: 3px solid #ff7c9f;
-    }
-
-    .hud__run-coach {
-      padding: 8px;
-      border: 1px solid rgba(121, 240, 255, 0.18);
-      border-radius: 7px;
-      background: rgba(121, 240, 255, 0.055);
-    }
-
-    .hud__progression-card {
-      padding: 8px;
-      border: 1px solid rgba(114, 240, 165, 0.18);
-      border-radius: 7px;
-      background: rgba(114, 240, 165, 0.055);
-    }
-
-    .hud__share-card {
-      padding: 8px;
-      border: 1px solid rgba(255, 207, 105, 0.2);
-      border-radius: 7px;
-      background: rgba(255, 207, 105, 0.055);
-    }
-
-    .hud__replay-timeline {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
-    }
-
-    .hud__replay-timeline button {
-      display: grid;
-      gap: 3px;
-      min-height: 56px;
-      padding: 7px 8px;
-      border: 1px solid rgba(255, 207, 105, 0.24);
-      border-radius: 6px;
-      color: #f8fdff;
-      background: rgba(255, 255, 255, 0.06);
-      text-align: left;
-      cursor: pointer;
-    }
-
-    .hud__replay-timeline button:hover,
-    .hud__replay-timeline button:focus-visible {
-      border-color: rgba(255, 224, 139, 0.82);
-      background: rgba(255, 207, 105, 0.13);
-      outline: none;
-    }
-
-    .hud__replay-timeline span,
-    .hud__replay-timeline em {
-      color: #9db6c4;
-      font-size: 10px;
-      font-style: normal;
-      font-weight: 900;
-      text-transform: uppercase;
-    }
-
-    .hud__replay-timeline strong {
-      overflow: hidden;
-      color: #ffffff;
-      font-size: 12px;
-      line-height: 1.15;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .hud__daily-result {
-      padding: 8px;
-      border: 1px solid rgba(255, 207, 105, 0.22);
-      border-radius: 7px;
-      background: rgba(255, 207, 105, 0.07);
-    }
-
-    .hud__daily-result-head {
-      min-height: 28px;
-      background: rgba(255, 207, 105, 0.1);
-    }
-
-    .hud__progression-head {
-      min-height: 28px;
-      background: rgba(114, 240, 165, 0.08);
-    }
-
-    .hud__share-head {
-      min-height: 28px;
-      background: rgba(255, 207, 105, 0.08);
-    }
-
-    .hud__run-coach-head {
-      min-height: 28px;
-      background: rgba(121, 240, 255, 0.08);
-    }
-
-    .hud__daily-result-head span,
-    .hud__daily-result-grid span,
-    .hud__run-coach-head span,
-    .hud__run-coach-grid span {
-      color: #9db6c4;
-      font-size: 10px;
-      font-weight: 900;
-      text-transform: uppercase;
-    }
-
-    .hud__daily-result-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 6px;
-    }
-
-    .hud__progression-grid,
-    .hud__replay-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
-    }
-
-    .hud__run-coach-grid {
-      display: grid;
-      gap: 6px;
-    }
-
-    .hud__daily-result-grid div,
-    .hud__progression-grid div,
-    .hud__replay-grid div {
-      display: grid;
-      align-content: start;
-      gap: 2px;
-    }
-
-    .hud__run-coach-grid div {
-      display: grid;
-      grid-template-columns: 0.38fr minmax(0, 1fr);
-      align-items: start;
-    }
-
-    .hud__daily-result strong,
-    .hud__progression-card strong,
-    .hud__share-card strong,
-    .hud__run-coach strong {
-      min-width: 0;
-      overflow-wrap: anywhere;
-      color: #ffffff;
-      font-size: 11px;
-      line-height: 1.25;
-    }
-
-    .hud__daily-result code,
-    .hud__share-card code {
-      display: block;
-      min-width: 0;
-      padding: 7px 8px;
-      border-radius: 6px;
-      color: #ffe08b;
-      background: rgba(0, 0, 0, 0.22);
-      font: 800 11px/1.35 var(--hud-font);
-      white-space: normal;
-      overflow-wrap: anywhere;
-      user-select: text;
-    }
-
-    .hud__coach-steps {
-      display: grid;
-      gap: 6px;
-      padding: 7px;
-      border-radius: 6px;
-      background: rgba(121, 240, 255, 0.05);
-    }
-
-    .hud__coach-step {
-      display: grid;
-      grid-template-columns: 24px 0.34fr minmax(0, 1fr);
-      gap: 8px;
-      align-items: start;
-      min-width: 0;
-    }
-
-    .hud__coach-step em {
-      display: grid;
-      place-items: center;
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      color: #061419;
-      background: #79f0ff;
-      font-size: 11px;
-      font-style: normal;
-      font-weight: 900;
-    }
-
-    .hud__coach-step strong {
-      font-size: 10px;
-    }
-
-    .hud__daily-result small {
-      color: #ffe08b;
-      font-size: 11px;
-      font-weight: 800;
-      line-height: 1.3;
-    }
-
-    .hud__contract-head {
-      min-height: 28px;
-      border: 1px solid rgba(255, 207, 105, 0.22);
-      background: rgba(255, 207, 105, 0.08);
-    }
-
-    .hud__contract-head span {
-      color: #ffcf69;
-      font-size: 11px;
-      font-weight: 900;
-      text-transform: uppercase;
-    }
-
-    .hud__contract-objective {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: flex-start;
-      border-left: 3px solid #ff7c9f;
-    }
-
-    .hud__objective-list span,
-    .hud__contract-objective span {
-      min-width: 0;
-      white-space: normal;
-    }
-
-    .hud__objective-list em {
-      grid-column: 1 / -1;
-      color: #9db6c4;
-      font-size: 10px;
-      font-style: normal;
-      line-height: 1.2;
-    }
-
-    .hud__objective-list div.is-passed,
-    .hud__contract-objective.is-passed {
-      border-left-color: #72f0a5;
-    }
-
-    .hud__objective-list strong,
-    .hud__contract-head strong,
-    .hud__contract-objective strong,
-    .hud__score-breakdown strong,
-    .hud__damage-hotspots-head strong,
-    .hud__damage-hotspot b,
     .hud__setting-row strong {
       flex: 0 0 auto;
       min-width: max-content;
@@ -2638,62 +1852,6 @@ function installStyles(): void {
       text-align: right;
       text-overflow: clip;
       white-space: nowrap;
-    }
-
-    .hud__score-breakdown .is-penalty {
-      color: #ff8aa3;
-    }
-
-    .hud__damage-hotspots {
-      padding-top: 2px;
-    }
-
-    .hud__damage-hotspots-head {
-      min-height: 28px;
-      border: 1px solid rgba(121, 240, 255, 0.16);
-      background: rgba(121, 240, 255, 0.07);
-    }
-
-    .hud__damage-hotspots-head span {
-      color: #ffcf69;
-      font-size: 11px;
-      font-weight: 900;
-      text-transform: uppercase;
-    }
-
-    .hud__damage-hotspot {
-      align-items: flex-start;
-      border-left: 3px solid rgba(121, 240, 255, 0.56);
-    }
-
-    .hud__damage-hotspot span {
-      display: grid;
-      gap: 2px;
-      min-width: 0;
-    }
-
-    .hud__damage-hotspot span strong {
-      overflow: hidden;
-      color: #ffffff;
-      font-size: 12px;
-      line-height: 1.15;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .hud__damage-hotspot span em {
-      overflow: hidden;
-      color: #9db6c4;
-      font-size: 10px;
-      font-style: normal;
-      line-height: 1.15;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .hud__damage-hotspot b {
-      color: #96f4ff;
-      font-variant-numeric: tabular-nums;
     }
 
     @keyframes resultPanelIn {

@@ -291,7 +291,7 @@ test("starts the local daily contract as a cannon trial", async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 });
 
-test("records a local daily best and shows a shareable result summary", async ({ page }) => {
+test("records a local daily best from the simplified result", async ({ page }) => {
   test.skip(!RUN_FULL_SIMULATION_SMOKE, "Set RUN_FULL_SIMULATION_SMOKE=true to run the full daily score flow.");
   test.setTimeout(LONG_TEST_TIMEOUT_MS);
   const consoleErrors = trackRuntimeErrors(page);
@@ -319,9 +319,8 @@ test("records a local daily best and shows a shareable result summary", async ({
   await clickUi(finishRunButton);
   await expectFinalScore(page, shotNames[daily.projectileId]);
   const scorePanel = page.locator(".hud [data-role='score']");
-  await expect(scorePanel.locator("[data-role='daily-result']")).toContainText("Daily Contract");
-  await expect(scorePanel.locator("[data-role='daily-result']")).toContainText(/New daily best|Daily best/);
-  await expect(scorePanel.locator("[data-role='daily-share']")).toContainText(`Downtown Mayhem Daily ${daily.dateKey}`);
+  await expect(scorePanel.locator(".hud__result-callouts")).toContainText(/Daily best|Daily run/);
+  expect(daily.dateKey).toMatch(/\d{4}-\d{2}-\d{2}/);
 
   await clickUi(page.locator("[data-action='result-menu']"));
   await expect(page.locator("[data-action='start-daily']")).toContainText("Best");
@@ -805,28 +804,20 @@ async function expectSelectedProjectile(page: Page, shortName: string): Promise<
   await expect(page.getByRole("button", { name: shortName })).toHaveAttribute("aria-pressed", "true");
 }
 
-async function expectFinalScore(page: Page, shotName: string): Promise<void> {
+async function expectFinalScore(page: Page, _shotName: string): Promise<void> {
   const scorePanel = page.locator(".hud [data-role='score']");
   await expect(scorePanel).toBeVisible({ timeout: SCORE_REVEAL_TIMEOUT_MS });
   await expect(scorePanel).toHaveAttribute("data-result-state", /three-star|complete|one-star|incomplete/);
   await expect(scorePanel).toHaveAttribute("aria-label", /Mayhem Score/);
   await expect(scorePanel.locator(".hud__result-head")).toContainText(/Mayhem|Needs 2-star|Complete/);
   await expect(scorePanel.locator("[data-role='result-boom']")).toContainText("BOOM");
-  await expect(scorePanel.locator("[data-role='progression-summary']")).toContainText("Stars");
-  await expect(scorePanel.locator("[data-role='share-card']")).toContainText("Share");
-  await expect(scorePanel.locator("[data-role='replay-summary']")).toContainText("Replay");
-  await expect(scorePanel.locator(".hud__score-breakdown")).toContainText(shotName);
   await expect(scorePanel.locator(".hud__result-actions .is-primary")).toBeVisible();
   await expect(scorePanel.locator(".hud__total strong")).toHaveText(/\d+/);
   await expect(scorePanel.locator("[data-role='result-total']")).toHaveText(/\d+/);
-  await expect(scorePanel.getByText("Damage", { exact: true })).toBeVisible();
-  await expect(scorePanel.locator(".hud__contract-head").getByText("Contract", { exact: true })).toBeVisible();
-  await expect(scorePanel.locator(".hud__run-coach-head").getByText("Next Shot", { exact: true })).toBeVisible();
-  await expect(scorePanel.locator(".hud__run-coach-recipe").getByText("Recipe", { exact: true })).toBeVisible();
-  await expect(scorePanel.locator(".hud__coach-steps").getByText("Plan", { exact: true })).toBeVisible();
-  await expect(scorePanel.locator(".hud__score-breakdown").getByText("Chaos", { exact: true })).toBeVisible();
-  await expect(scorePanel.locator(".hud__score-breakdown").getByText("Hits", { exact: true })).toBeVisible();
-  await expect(scorePanel.locator(".hud__damage-hotspots-head").getByText("Top Damage", { exact: true })).toBeVisible();
+  await expect(scorePanel.locator("[data-role='share-card']")).toHaveCount(0);
+  await expect(scorePanel.locator("[data-role='run-coach']")).toHaveCount(0);
+  await expect(scorePanel.locator(".hud__score-breakdown")).toHaveCount(0);
+  await expect(scorePanel.locator(".hud__damage-hotspots")).toHaveCount(0);
 }
 
 async function waitForPerfLog(reason?: string): Promise<PerfLogPayload> {
