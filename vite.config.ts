@@ -8,6 +8,9 @@ import { defineConfig } from "vite";
 const basePath = process.env.BASE_PATH ?? "/";
 const PERF_LOG_ENDPOINT = "/__downtown-mayhem/perf-log";
 const PERF_LOG_DIR = path.resolve(process.cwd(), process.env.DOWNTOWN_MAYHEM_PERF_DIR ?? "test-results/perf-logs");
+const PERF_LOG_HEADER = "x-downtown-mayhem-perf-log";
+const PERF_LOG_HEADER_VALUE = "1";
+const PERF_LOG_MAX_BYTES = 512_000;
 
 export default defineConfig({
   base: basePath,
@@ -61,8 +64,26 @@ function downtownMayhemPerfLogPlugin(): Plugin {
 }
 
 async function writePerfLogRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readRequestBody(req, 2_000_000);
-  const payload = JSON.parse(body) as { sessionId?: unknown };
+  if (!isAllowedPerfLogRequest(req)) {
+    sendPlainStatus(res, 403, "Forbidden");
+    return;
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    const body = await readRequestBody(req, PERF_LOG_MAX_BYTES);
+    const parsed = JSON.parse(body) as unknown;
+    if (!isRecord(parsed)) {
+      sendPlainStatus(res, 400, "Perf log payload must be a JSON object");
+      return;
+    }
+    payload = parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid perf log payload";
+    sendPlainStatus(res, message.includes("exceeds") ? 413 : 400, message);
+    return;
+  }
+
   const sessionId = sanitizePerfSessionId(payload.sessionId);
   const record = {
     receivedAt: new Date().toISOString(),
@@ -79,6 +100,25 @@ async function writePerfLogRequest(req: IncomingMessage, res: ServerResponse): P
 
   res.statusCode = 204;
   res.end();
+}
+
+export function isAllowedPerfLogRequest(req: Pick<IncomingMessage, "headers">): boolean {
+  if (headerValue(req.headers[PERF_LOG_HEADER]) !== PERF_LOG_HEADER_VALUE) {
+    return false;
+  }
+  if (!contentTypeIsJson(headerValue(req.headers["content-type"]))) {
+    return false;
+  }
+  const origin = headerValue(req.headers.origin);
+  const host = headerValue(req.headers.host);
+  if (!origin || !host) {
+    return false;
+  }
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
 }
 
 function readRequestBody(req: IncomingMessage, maxBytes: number): Promise<string> {
@@ -99,11 +139,29 @@ function readRequestBody(req: IncomingMessage, maxBytes: number): Promise<string
   });
 }
 
-function sanitizePerfSessionId(value: unknown): string {
+export function sanitizePerfSessionId(value: unknown): string {
   const fallback = new Date().toISOString().replaceAll(/[.:]/g, "-");
   if (typeof value !== "string") {
     return fallback;
   }
   const safe = value.replaceAll(/[^a-zA-Z0-9._-]/g, "-").slice(0, 96);
   return safe || fallback;
+}
+
+function contentTypeIsJson(value: string): boolean {
+  return value.toLowerCase().split(";", 1)[0].trim() === "application/json";
+}
+
+function headerValue(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sendPlainStatus(res: ServerResponse, statusCode: number, message: string): void {
+  res.statusCode = statusCode;
+  res.setHeader("content-type", "text/plain; charset=utf-8");
+  res.end(message);
 }

@@ -11,6 +11,7 @@ import type { ScoreBreakdown, ScoreEvent } from "./scoring";
 
 export const DAILY_RESULTS_STORAGE_KEY = "downtown-mayhem:daily-results";
 const DAILY_RESULTS_VERSION = 1;
+const DAILY_RESULTS_MAX_ENTRIES = 120;
 
 export interface RunVariant {
   id: string;
@@ -458,10 +459,10 @@ export function recordDailyResult(
   saveDailyResults(
     {
       version: DAILY_RESULTS_VERSION,
-      entries: {
+      entries: trimDailyResultEntries({
         ...state.entries,
         [key]: next
-      }
+      })
     },
     storage
   );
@@ -886,18 +887,18 @@ function normalizeDailyResults(value: unknown): DailyResultsState {
     return createEmptyDailyResults();
   }
   const raw = value as Partial<DailyResultsState>;
-  const entries: Record<string, DailyResultEntry> = {};
+  const normalizedEntries: Record<string, DailyResultEntry> = {};
   if (raw.entries && typeof raw.entries === "object") {
     for (const [key, entry] of Object.entries(raw.entries)) {
       const normalized = normalizeDailyResultEntry(entry);
-      if (normalized) {
-        entries[key] = normalized;
+      if (normalized && key === dailyResultEntryKey(normalized)) {
+        normalizedEntries[key] = normalized;
       }
     }
   }
   return {
     version: DAILY_RESULTS_VERSION,
-    entries
+    entries: trimDailyResultEntries(normalizedEntries)
   };
 }
 
@@ -909,21 +910,24 @@ function normalizeDailyResultEntry(value: unknown): DailyResultEntry | null {
   if (
     typeof raw.dateKey !== "string" ||
     typeof raw.levelId !== "string" ||
-    typeof raw.projectileId !== "string" ||
+    !isProjectileId(raw.projectileId) ||
     typeof raw.contractId !== "string"
   ) {
+    return null;
+  }
+  if (!isSafeDailyDateKey(raw.dateKey) || !isSafeDailyIdentifier(raw.levelId) || !isSafeDailyIdentifier(raw.contractId)) {
     return null;
   }
   return {
     dateKey: raw.dateKey,
     levelId: raw.levelId,
-    projectileId: raw.projectileId as ProjectileId,
+    projectileId: raw.projectileId,
     contractId: raw.contractId,
     attempts: clampWholeNumber(raw.attempts),
     bestScore: clampWholeNumber(raw.bestScore),
     bestStars: normalizeStars(raw.bestStars),
     bestContractCompleted: Boolean(raw.bestContractCompleted),
-    bestRating: typeof raw.bestRating === "string" ? raw.bestRating : ""
+    bestRating: typeof raw.bestRating === "string" ? raw.bestRating.slice(0, 80) : ""
   };
 }
 
@@ -950,6 +954,30 @@ function createEmptyDailyResult(contract: DailyContractDefinition): DailyResultE
 
 function dailyResultKey(contract: DailyContractDefinition): string {
   return `${contract.dateKey}:${contract.levelId}:${contract.projectileId}:${contract.contract.id}`;
+}
+
+function dailyResultEntryKey(entry: DailyResultEntry): string {
+  return `${entry.dateKey}:${entry.levelId}:${entry.projectileId}:${entry.contractId}`;
+}
+
+function trimDailyResultEntries(entries: Record<string, DailyResultEntry>): Record<string, DailyResultEntry> {
+  const sorted = Object.entries(entries).sort(([leftKey, left], [rightKey, right]) => {
+    const dateOrder = left.dateKey.localeCompare(right.dateKey);
+    return dateOrder === 0 ? leftKey.localeCompare(rightKey) : dateOrder;
+  });
+  return Object.fromEntries(sorted.slice(-DAILY_RESULTS_MAX_ENTRIES));
+}
+
+function isProjectileId(value: unknown): value is ProjectileId {
+  return typeof value === "string" && LATE_GAME_PROJECTILE_ORDER.some((projectileId) => projectileId === value);
+}
+
+function isSafeDailyDateKey(value: string): boolean {
+  return /^\d{4}-(?:\d{2}-\d{2}|W\d{2})$/.test(value);
+}
+
+function isSafeDailyIdentifier(value: string): boolean {
+  return /^[a-zA-Z0-9:_-]{1,128}$/.test(value);
 }
 
 function maxStars(first: ArcadeStars, second: ArcadeStars): ArcadeStars {

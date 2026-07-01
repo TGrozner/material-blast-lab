@@ -5,6 +5,7 @@ import type { ScoreBreakdown, ScoreEvent } from "../../src/scoring";
 import {
   DAILY_RESULTS_STORAGE_KEY,
   dailyContractForDate,
+  dailyDateKey,
   loadDailyResult,
   mayhemContractForRun,
   projectileObjectiveForLevel,
@@ -341,6 +342,92 @@ describe("mayhem feature helpers", () => {
     });
   });
 
+  test("sanitizes malformed daily storage and caps retained entries", () => {
+    const levels = [{ id: "hazard-junction", mission: MISSION }];
+    const daily = dailyContractForDate(levels, new Date("2026-06-30T22:30:00.000Z"));
+    const storage = memoryStorage();
+
+    expect(daily).not.toBeNull();
+    if (!daily) {
+      return;
+    }
+
+    const validEntry = {
+      dateKey: daily.dateKey,
+      levelId: daily.levelId,
+      projectileId: daily.projectileId,
+      contractId: daily.contract.id,
+      attempts: 1,
+      bestScore: 222_000,
+      bestStars: 2,
+      bestContractCompleted: false,
+      bestRating: "DISTRICT WRECKER"
+    };
+    storage.setItem(
+      DAILY_RESULTS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        entries: {
+          [dailyResultStorageKey(validEntry)]: validEntry,
+          [`${daily.dateKey}:${daily.levelId}:not-a-projectile:${daily.contract.id}`]: {
+            ...validEntry,
+            projectileId: "not-a-projectile",
+            bestScore: 999_999
+          },
+          [`${daily.dateKey}:<script>:${daily.projectileId}:${daily.contract.id}`]: {
+            ...validEntry,
+            levelId: "<script>",
+            bestScore: 888_888
+          },
+          "mismatched-key": {
+            ...validEntry,
+            bestScore: 777_777
+          }
+        }
+      })
+    );
+
+    expect(loadDailyResult(daily, storage)).toMatchObject({
+      bestScore: 222_000,
+      projectileId: daily.projectileId
+    });
+
+    const bloatedEntries = Object.fromEntries(
+      Array.from({ length: 130 }, (_, index) => {
+        const entry = {
+          dateKey: dailyDateKey(new Date(Date.UTC(2026, 0, index + 1))),
+          levelId: "hazard-junction",
+          projectileId: "slug" as const,
+          contractId: `contract-${index}`,
+          attempts: 1,
+          bestScore: index,
+          bestStars: 1,
+          bestContractCompleted: false,
+          bestRating: "SPARK SHOW"
+        };
+        return [dailyResultStorageKey(entry), entry];
+      })
+    );
+    storage.setItem(DAILY_RESULTS_STORAGE_KEY, JSON.stringify({ version: 1, entries: bloatedEntries }));
+
+    recordDailyResult(
+      daily,
+      {
+        score: score({ totalScore: 150_000 }),
+        stars: 2,
+        contractCompleted: false,
+        levelName: "Hazard Junction",
+        projectileLabel: "Normal"
+      },
+      storage
+    );
+
+    const savedEntries = JSON.parse(storage.getItem(DAILY_RESULTS_STORAGE_KEY) ?? "{}").entries as Record<string, unknown>;
+    expect(Object.keys(savedEntries)).toHaveLength(120);
+    expect(savedEntries["2026-01-01:hazard-junction:slug:contract-0"]).toBeUndefined();
+    expect(savedEntries[dailyResultStorageKey(validEntry)]).toBeDefined();
+  });
+
   test("returns actionable retry feedback for near misses", () => {
     const variant = runVariantForSeed("hazard-junction", 12345);
     const contract = mayhemContractForRun("hazard-junction", MISSION, "pulse", variant);
@@ -423,6 +510,15 @@ function memoryStorage(): Pick<Storage, "getItem" | "setItem"> {
       values.set(key, value);
     }
   };
+}
+
+function dailyResultStorageKey(entry: {
+  dateKey: string;
+  levelId: string;
+  projectileId: string;
+  contractId: string;
+}): string {
+  return `${entry.dateKey}:${entry.levelId}:${entry.projectileId}:${entry.contractId}`;
 }
 
 function throwingStorage(): Pick<Storage, "getItem" | "setItem"> {

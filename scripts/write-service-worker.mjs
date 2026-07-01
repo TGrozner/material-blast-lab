@@ -25,6 +25,7 @@ const CACHE_PREFIX = ${JSON.stringify(cachePrefix)};
 const CACHE_NAME = ${JSON.stringify(cacheName)};
 const BASE_PATH = ${JSON.stringify(basePath)};
 const PRECACHE_URLS = ${JSON.stringify(manifestEntries.map((entry) => entry.url), null, 2)};
+const PRECACHE_URL_SET = new Set(PRECACHE_URLS);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -57,7 +58,11 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(networkFirstNavigation(request));
     return;
   }
-  event.respondWith(cacheFirst(request));
+  const cacheKey = precacheKeyForUrl(url);
+  if (!cacheKey) {
+    return;
+  }
+  event.respondWith(cacheFirst(cacheKey));
 });
 
 async function networkFirstNavigation(request) {
@@ -65,7 +70,7 @@ async function networkFirstNavigation(request) {
     const response = await fetch(request);
     if (response.ok) {
       const cache = await caches.open(CACHE_NAME);
-      await cache.put(request, response.clone());
+      await cache.put(BASE_PATH, response.clone());
     }
     return response;
   } catch {
@@ -73,17 +78,27 @@ async function networkFirstNavigation(request) {
   }
 }
 
-async function cacheFirst(request) {
-  const cached = await caches.match(request);
+async function cacheFirst(cacheKey) {
+  const cached = await caches.match(cacheKey);
   if (cached) {
     return cached;
   }
-  const response = await fetch(request);
+  const response = await fetch(cacheKey);
   if (response.ok) {
     const cache = await caches.open(CACHE_NAME);
-    await cache.put(request, response.clone());
+    await cache.put(cacheKey, response.clone());
   }
   return response;
+}
+
+function precacheKeyForUrl(url) {
+  if (url.search) {
+    return null;
+  }
+  if (url.pathname === BASE_PATH) {
+    return BASE_PATH;
+  }
+  return PRECACHE_URL_SET.has(url.pathname) ? url.pathname : null;
 }
 `;
 

@@ -37,7 +37,8 @@ import {
 } from "./mayhemFeatures";
 import { MaterialCatalog, type MaterialId } from "./materialCatalog";
 import { formatCompactScore } from "./numberFormat";
-import { perfMonitor, type PerfFrameSnapshot, type PerfReport } from "./perf";
+import { perfMonitor, type PerfReport } from "./perf";
+import { summarizePerfReport, type PerfDiskLogSummary } from "./perfSummary";
 import { PhysicsWorld, type PhysicsObject } from "./physics";
 import {
   IGNITE_UNLOCK_LEVEL_COUNT,
@@ -50,6 +51,7 @@ import {
 } from "./projectile";
 import { SeededRandom, createRunSeed, randomRange } from "./random";
 import { ShotRunState } from "./runState";
+import { escapeHtml as escapeShellHtml } from "./sanitize";
 import { ScorePopupLayer } from "./scorePopups";
 import { ShotScoreTracker, type ScoreBreakdown, type ScoreEvent } from "./scoring";
 import {
@@ -1404,15 +1406,6 @@ function weeklyEntryToFixedContract(entry: WeeklyMayhemRouteEntry): DailyContrac
   };
 }
 
-function escapeShellHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 let appShellStylesInstalled = false;
 
 function installAppShellStyles(): void {
@@ -1969,78 +1962,7 @@ interface GameOptions {
 
 const PERF_DISK_LOG_ENDPOINT = "/__downtown-mayhem/perf-log";
 const PERF_DISK_LOG_INTERVAL_MS = 900;
-
-interface PerfFrameSummary {
-  frame: number;
-  totalMs: number;
-  deltaMs: number;
-  bodyCount: number;
-  dynamicBodyCount: number;
-  awakeBodyCount: number;
-  debrisBodyCount: number;
-  awakeDebrisBodyCount: number;
-  activeDebrisCount: number;
-  frozenDebrisCount: number;
-  pendingSupportReleaseCount: number;
-  accountedMs: number;
-  unattributedMs: number;
-  renderMs: number;
-  physicsStepMs: number;
-  rapierMs: number;
-  impactsMs: number;
-  fractureMs: number;
-  queuedFractureMs: number;
-  addBoxMs: number;
-  vfxExplodeMs: number;
-  fragments: number;
-  dynamicBoxes: number;
-  particles: number;
-  visualOnlyFragments: number;
-  physicalFragments: number;
-  boxCacheMiss: number;
-  childBoxCacheMiss: number;
-  frozenRubbleBuckets: number;
-  stagedActivated: number;
-  droppedSubsteps: number;
-}
-
-interface PerfDiskLogSummary {
-  frameCount: number;
-  slowFrameCount: number;
-  slowRatioPercent: number;
-  shotFrameCount: number;
-  maxFrame: PerfFrameSummary | null;
-  shotMax: {
-    totalMs: number;
-    renderMs: number;
-    physicsStepMs: number;
-    rapierMs: number;
-    fractureMs: number;
-    queuedFractureMs: number;
-    addBoxMs: number;
-    particlesInFrame: number;
-    visualOnlyFragmentsInFrame: number;
-    physicalFragmentsInFrame: number;
-    fragmentsInFrame: number;
-    boxCacheMissesInFrame: number;
-    childBoxCacheMissesInFrame: number;
-    droppedSubstepsInFrame: number;
-  };
-  shotTotals: {
-    fragments: number;
-    dynamicBoxes: number;
-    particles: number;
-    visualOnlyFragments: number;
-    physicalFragments: number;
-    boxCacheMisses: number;
-    childBoxCacheMisses: number;
-    frozenRubbleBuckets: number;
-    stagedActivated: number;
-    droppedSubsteps: number;
-  };
-  topShotSlowFrames: PerfFrameSummary[];
-  topAllSlowFrames: PerfFrameSummary[];
-}
+const PERF_LOG_HREF_QUERY_ALLOWLIST = ["smoke", "perf", "perfFull", "fullWarmup"] as const;
 
 class PerfDiskLogger {
   private readonly sessionId = createPerfDiskSessionId();
@@ -2078,7 +2000,10 @@ class PerfDiskLogger {
     this.inFlight = true;
     void fetch(PERF_DISK_LOG_ENDPOINT, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-downtown-mayhem-perf-log": "1"
+      },
       body
     })
       .catch((error: unknown) => {
@@ -2113,7 +2038,7 @@ class PerfDiskLogger {
       reason,
       createdAt: new Date().toISOString(),
       pageTimeMs: Math.round(performance.now() * 10) / 10,
-      href: location.href,
+      href: redactedPerfLogHref(),
       stats: this.game.getPerfLogRenderStats(this.shouldCaptureFullStats(reason)),
       warmup: this.game.getRenderWarmupState(),
       summary: summarizePerfReport(report)
@@ -2127,117 +2052,6 @@ class PerfDiskLogger {
   private shouldCaptureFullStats(reason: string): boolean {
     return this.includeFullReport || reason === "manual" || reason === "score-finalized";
   }
-}
-
-function summarizePerfReport(report: PerfReport): PerfDiskLogSummary {
-  const frames = report.recentSlowFrames;
-  const shotFrames = frames.filter(isShotPerfFrame);
-  return {
-    frameCount: report.frameCount,
-    slowFrameCount: report.slowFrameCount,
-    slowRatioPercent: Math.round((report.slowFrameCount / Math.max(1, report.frameCount)) * 1000) / 10,
-    shotFrameCount: shotFrames.length,
-    maxFrame: report.maxFrame ? summarizePerfFrame(report.maxFrame) : null,
-    shotMax: {
-      totalMs: maxPerfValue(shotFrames, (frame) => frame.totalMs),
-      renderMs: maxPerfValue(shotFrames, (frame) => frame.timings["renderer.render"]),
-      physicsStepMs: maxPerfValue(shotFrames, (frame) => frame.timings["physics.step"]),
-      rapierMs: maxPerfValue(shotFrames, (frame) => frame.timings["physics.rapierStep"]),
-      fractureMs: maxPerfValue(shotFrames, (frame) => frame.timings["destruction.fracture"]),
-      queuedFractureMs: maxPerfValue(shotFrames, (frame) => frame.timings["destruction.processQueuedFractures"]),
-      addBoxMs: maxPerfValue(shotFrames, (frame) => frame.timings["physics.addDynamicBox"]),
-      particlesInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["vfx.particlesSpawned"]),
-      visualOnlyFragmentsInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["destruction.visualOnlyFragmentsCreated"]),
-      physicalFragmentsInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["destruction.physicalFragmentsCreated"]),
-      fragmentsInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["destruction.fragmentsCreated"]),
-      boxCacheMissesInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["render.boxGeometryCacheMiss"]),
-      childBoxCacheMissesInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["render.childBoxGeometryCacheMiss"]),
-      droppedSubstepsInFrame: maxPerfValue(shotFrames, (frame) => frame.counters["physics.substepsDropped"])
-    },
-    shotTotals: {
-      fragments: sumPerfValue(shotFrames, (frame) => frame.counters["destruction.fragmentsCreated"]),
-      dynamicBoxes: sumPerfValue(shotFrames, (frame) => frame.counters["physics.dynamicBoxesAdded"]),
-      particles: sumPerfValue(shotFrames, (frame) => frame.counters["vfx.particlesSpawned"]),
-      visualOnlyFragments: sumPerfValue(shotFrames, (frame) => frame.counters["destruction.visualOnlyFragmentsCreated"]),
-      physicalFragments: sumPerfValue(shotFrames, (frame) => frame.counters["destruction.physicalFragmentsCreated"]),
-      boxCacheMisses: sumPerfValue(shotFrames, (frame) => frame.counters["render.boxGeometryCacheMiss"]),
-      childBoxCacheMisses: sumPerfValue(shotFrames, (frame) => frame.counters["render.childBoxGeometryCacheMiss"]),
-      frozenRubbleBuckets: sumPerfValue(shotFrames, (frame) => frame.counters["physics.frozenRubbleBucketsCreated"]),
-      stagedActivated: sumPerfValue(shotFrames, (frame) => frame.counters["render.stagedVisualActivationsActivated"]),
-      droppedSubsteps: sumPerfValue(shotFrames, (frame) => frame.counters["physics.substepsDropped"])
-    },
-    topShotSlowFrames: topPerfFrames(shotFrames),
-    topAllSlowFrames: topPerfFrames(frames)
-  };
-}
-
-function summarizePerfFrame(frame: PerfFrameSnapshot): PerfFrameSummary {
-  return {
-    frame: frame.frame,
-    totalMs: frame.totalMs,
-    deltaMs: frame.deltaMs,
-    bodyCount: frame.bodyCount,
-    dynamicBodyCount: frame.dynamicBodyCount,
-    awakeBodyCount: frame.awakeBodyCount,
-    debrisBodyCount: frame.debrisBodyCount,
-    awakeDebrisBodyCount: frame.awakeDebrisBodyCount,
-    activeDebrisCount: frame.activeDebrisCount,
-    frozenDebrisCount: frame.frozenDebrisCount,
-    pendingSupportReleaseCount: frame.pendingSupportReleaseCount,
-    accountedMs: frame.accountedMs,
-    unattributedMs: frame.unattributedMs,
-    renderMs: frame.timings["renderer.render"] ?? 0,
-    physicsStepMs: frame.timings["physics.step"] ?? 0,
-    rapierMs: frame.timings["physics.rapierStep"] ?? 0,
-    impactsMs: frame.timings["game.processDebrisImpacts"] ?? 0,
-    fractureMs: frame.timings["destruction.fracture"] ?? 0,
-    queuedFractureMs: frame.timings["destruction.processQueuedFractures"] ?? 0,
-    addBoxMs: frame.timings["physics.addDynamicBox"] ?? 0,
-    vfxExplodeMs: frame.timings["vfx.explode"] ?? 0,
-    fragments: frame.counters["destruction.fragmentsCreated"] ?? 0,
-    dynamicBoxes: frame.counters["physics.dynamicBoxesAdded"] ?? 0,
-    particles: frame.counters["vfx.particlesSpawned"] ?? 0,
-    visualOnlyFragments: frame.counters["destruction.visualOnlyFragmentsCreated"] ?? 0,
-    physicalFragments: frame.counters["destruction.physicalFragmentsCreated"] ?? 0,
-    boxCacheMiss: frame.counters["render.boxGeometryCacheMiss"] ?? 0,
-    childBoxCacheMiss: frame.counters["render.childBoxGeometryCacheMiss"] ?? 0,
-    frozenRubbleBuckets: frame.counters["physics.frozenRubbleBucketsCreated"] ?? 0,
-    stagedActivated: frame.counters["render.stagedVisualActivationsActivated"] ?? 0,
-    droppedSubsteps: frame.counters["physics.substepsDropped"] ?? 0
-  };
-}
-
-function isShotPerfFrame(frame: PerfFrameSnapshot): boolean {
-  return Boolean(
-    frame.timings["physics.step"] ||
-      frame.timings["game.projectiles"] ||
-      frame.timings["destruction.explode"] ||
-      frame.counters["collision.chainDrained"] ||
-      frame.counters["collision.surfaceDrained"] ||
-      frame.counters["destruction.fragmentsCreated"] ||
-      frame.counters["physics.dynamicBoxesAdded"] ||
-      frame.counters["destruction.fracturesQueued"]
-  );
-}
-
-function topPerfFrames(frames: PerfFrameSnapshot[]): PerfFrameSummary[] {
-  return frames
-    .slice()
-    .sort((a, b) => b.totalMs - a.totalMs)
-    .slice(0, 10)
-    .map(summarizePerfFrame);
-}
-
-function maxPerfValue(frames: PerfFrameSnapshot[], readValue: (frame: PerfFrameSnapshot) => number | undefined): number {
-  let max = 0;
-  for (const frame of frames) {
-    max = Math.max(max, readValue(frame) ?? 0);
-  }
-  return max;
-}
-
-function sumPerfValue(frames: PerfFrameSnapshot[], readValue: (frame: PerfFrameSnapshot) => number | undefined): number {
-  return Math.round(frames.reduce((total, frame) => total + (readValue(frame) ?? 0), 0) * 10) / 10;
 }
 
 function createPerfDiskSessionId(): string {
@@ -2254,6 +2068,22 @@ function shouldIncludeFullPerfDiskReport(): boolean {
     return new URLSearchParams(globalThis.location?.search ?? "").has("perfFull");
   } catch {
     return false;
+  }
+}
+
+function redactedPerfLogHref(): string {
+  try {
+    const url = new URL(globalThis.location?.href ?? "");
+    const params = new URLSearchParams();
+    for (const key of PERF_LOG_HREF_QUERY_ALLOWLIST) {
+      if (url.searchParams.has(key)) {
+        params.set(key, "1");
+      }
+    }
+    const query = params.toString();
+    return `${url.origin}${url.pathname}${query ? `?${query}` : ""}`;
+  } catch {
+    return "";
   }
 }
 
@@ -5637,7 +5467,9 @@ async function startLevelFromShell(
       hideLoading: () => shell.hide()
     });
     activeGame = game;
-    installDebugApi(game);
+    if (shouldInstallDebugApi()) {
+      installDebugApi(game);
+    }
     shell.updateLoadingStatus("Warming renderer pipelines");
     await game.waitForRenderWarmup();
     if (!isActiveStart(shell, token) || activeGame !== game) {
@@ -5692,6 +5524,10 @@ function installDebugApi(game: Game): void {
     freezeForCapture: () => game.freezeForCapture(),
     resume: () => game.resume()
   };
+}
+
+function shouldInstallDebugApi(): boolean {
+  return import.meta.env.DEV;
 }
 
 function clampInitialLevelIndex(index: number | undefined, highestUnlockedLevel: number): number {

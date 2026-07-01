@@ -3,6 +3,7 @@ import type { ArcadeMissionFields } from "./levels";
 import type { DailyResultMeta, RunFeedback } from "./mayhemFeatures";
 import type { ProjectileDefinition, ProjectileId } from "./projectile";
 import { LATE_GAME_PROJECTILE_ORDER, PROJECTILES } from "./projectile";
+import { escapeHtml } from "./sanitize";
 import type { ScoreBreakdown } from "./scoring";
 import {
   COMFORT_GAME_SETTINGS,
@@ -324,7 +325,7 @@ export class GameUI {
       button.setAttribute("aria-label", definition.shortName);
       button.title = `${definition.key}: ${definition.name} - ${definition.role}. ${definition.usageTip}`;
       button.style.setProperty("--projectile", `#${definition.color.getHexString()}`);
-      button.innerHTML = `<span>${definition.shortName}</span><small>${definition.key} / ${escapeHtml(definition.role)}</small>`;
+      button.innerHTML = `<span>${escapeHtml(definition.shortName)}</span><small>${escapeHtml(definition.key)} / ${escapeHtml(definition.role)}</small>`;
       button.addEventListener("click", () => this.callbacks.selectProjectile(id));
       projectileRoot.appendChild(button);
       this.projectileButtons.set(id, button);
@@ -1479,15 +1480,6 @@ function setTitle(element: HTMLElement, value: string): void {
   if (element.title !== value) {
     element.title = value;
   }
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 let stylesInstalled = false;
